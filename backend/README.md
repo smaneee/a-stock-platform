@@ -1,0 +1,160 @@
+# A 股实时分析平台后端
+
+> ⚠️ **免责声明**：本项目所有分析结果仅用于研究，不构成投资建议。
+
+一个面向 A 股市场的实时分析平台后端，第一版聚焦于**实时行情监控 + 信号提醒 + 历史回测 + 模拟交易**，**禁止真实下单**。
+
+## 功能特性
+
+- A 股实时行情监控（免费源约 3 秒轮询自选股）
+- 自选股管理
+- 技术指标计算（MA / EMA / MACD / RSI / 成交量均线 / 涨跌幅 / 振幅 / 量比）
+- 策略信号生成（MA 交叉、放量突破、RSI 超买超卖、MACD 金叉死叉）
+- 历史回测（T+1、涨跌停、停牌、手续费、滑点、无未来数据）
+- 模拟交易（含风控：仓位、日亏损、回撤、T+1、信号幂等）
+- WebSocket 实时推送（行情 + 信号）
+
+## 技术栈
+
+| 组件 | 版本约束 |
+|------|----------|
+| Python | 3.11+ |
+| FastAPI | >=0.115,<1.0 |
+| SQLAlchemy | >=2.0,<3.0 |
+| Pydantic | >=2.8,<3.0 |
+| Alembic | >=1.13,<2.0 |
+| APScheduler | >=3.10,<4.0 |
+| pandas / numpy | 兼容范围见 requirements.txt |
+| 数据库 | 开发 SQLite / 生产 PostgreSQL |
+
+## 项目结构
+
+```
+a-stock-platform/
+├── backend/
+│   ├── app/
+│   │   ├── main.py                 # 应用入口
+│   │   ├── config.py               # 配置
+│   │   ├── logging_config.py       # 日志（含脱敏）
+│   │   ├── validation.py           # 股票代码校验
+│   │   ├── database/               # ORM 模型与会话
+│   │   ├── api/                    # REST 接口
+│   │   ├── market_data/            # 行情数据源
+│   │   ├── realtime/               # 缓存/调度/WebSocket/信号引擎
+│   │   ├── indicators/             # 技术指标
+│   │   ├── strategies/             # 交易策略
+│   │   ├── backtest/               # 回测引擎
+│   │   ├── paper_trading/          # 模拟交易
+│   │   └── risk/                   # 风控
+│   ├── migrations/                 # Alembic 迁移
+│   ├── tests/                      # pytest 测试
+│   ├── requirements.txt
+│   └── .env.example
+├── scripts/
+│   ├── start_backend.ps1           # Windows 一键启动
+│   └── test_backend.ps1            # Windows 一键测试
+└── outputs/                        # 回测输出目录
+```
+
+## 快速开始
+
+### Windows（一键启动）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start_backend.ps1
+```
+
+服务启动后访问：http://127.0.0.1:8000
+API 文档：http://127.0.0.1:8000/docs
+
+### 手动启动
+
+```bash
+cd backend
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+copy .env.example .env
+.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+### 运行测试
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/test_backend.ps1
+```
+
+或手动：
+
+```bash
+cd backend
+.venv\Scripts\python -m pytest -v
+```
+
+## 环境变量
+
+复制 `backend/.env.example` 为 `backend/.env`，关键配置：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `DATABASE_URL` | 数据库连接串 | `sqlite:///./a_stock.db` |
+| `MARKET_PROVIDERS` | 数据源优先级 | `tencent,akshare,mock` |
+| `QUOTE_POLL_INTERVAL` | 轮询间隔（秒） | `3` |
+| `ROLLING_WINDOW_SIZE` | 滚动窗口大小 | `300` |
+| `SIGNAL_COOLDOWN_SECONDS` | 信号冷却时间 | `60` |
+
+## API 概览
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/health` | 健康检查 |
+| GET | `/api/market/providers` | 数据源状态 |
+| GET | `/api/quotes/{symbol}` | 单只行情 |
+| POST | `/api/quotes/batch` | 批量行情 |
+| GET/POST | `/api/watchlists` | 自选股列表 |
+| POST | `/api/watchlists/{id}/symbols` | 添加自选股 |
+| DELETE | `/api/watchlists/{id}/symbols/{symbol}` | 删除自选股 |
+| GET | `/api/signals` | 信号列表 |
+| GET | `/api/strategies` | 策略列表 |
+| POST | `/api/strategies/{id}/enable` | 启用策略 |
+| POST | `/api/strategies/{id}/disable` | 禁用策略 |
+| POST | `/api/backtests` | 创建回测 |
+| GET | `/api/backtests/{id}` | 回测结果 |
+| GET/POST | `/api/paper/accounts` | 模拟账户 |
+| POST | `/api/paper/orders` | 模拟下单 |
+| GET | `/api/paper/positions` | 持仓 |
+| GET | `/api/paper/trades` | 成交记录 |
+| WS | `/ws/quotes` | 行情推送 |
+| WS | `/ws/signals` | 信号推送 |
+
+## 行情数据源
+
+| 数据源 | 用途 | 说明 |
+|--------|------|------|
+| QMT/xtdata | 正式实时行情 | 可选，推送模式，延迟 <1s |
+| 腾讯行情 | 免费轮询 | 默认主数据源 |
+| AKShare | 历史数据 | 备用数据源 |
+| Mock | 演示/测试 | 非交易时段也能演示 |
+
+数据源按 `MARKET_PROVIDERS` 优先级故障转移，严禁静默混合来源。全部失败时返回缓存数据并标记 `is_stale=true`。
+
+## 已知限制
+
+1. **腾讯免费接口无历史 K 线**，历史回测依赖 AKShare（需联网）。
+2. **QMT 数据源需本地 xtdata 客户端**，未登录时自动降级。
+3. **T+1 解冻**：模拟交易通过日终结算（`settle_t1`）解冻，暂未自动定时解冻。
+4. **北交所涨跌停幅度**（30%）未单独区分，统一按主板 10% 处理（可配置）。
+5. **回测为单股票单策略**，暂不支持组合回测。
+6. **限流为单机内存实现**，多实例部署需改为 Redis。
+
+## 第三方代码与许可证
+
+本项目自行实现，未直接复制第三方代码。参考了以下开源项目的架构思路：
+
+| 项目 | 许可证 |
+|------|--------|
+| [Quanti](https://github.com/coo-moon/quanti) | MIT |
+| [StockPro](https://github.com/Shadowell/StockPro) | MIT |
+| [InStock](https://github.com/myhhub/stock) | Apache-2.0 |
+| [AKShare](https://github.com/akfamily/akshare) | MIT（作为可选依赖） |
+
+如后续复制或修改上述项目代码，将保留对应版权与许可证声明。
