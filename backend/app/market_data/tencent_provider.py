@@ -89,6 +89,31 @@ def _parse_quote(text: str) -> QuoteData | None:
         return None
 
 
+def _validate_quote(quote: QuoteData) -> bool:
+    """Provider 级数据合理性校验，防止单数据源被中间人注入。
+
+    与上层 QuoteScheduler._validate 形成两层防护：此处独立校验腾讯原始解析结果，
+    上层校验保证跨数据源一致性。
+    """
+    if not quote.symbol or quote.price <= 0:
+        return False
+    if quote.high > 0 and quote.low > 0 and quote.high < quote.low:
+        return False
+    # 单日涨跌幅不应超过 ±20%（A 股 ±10% 正常，±20% 含临时扩幅）
+    if quote.previous_close > 0:
+        if not (
+            0.8 * quote.previous_close
+            <= quote.price
+            <= 1.2 * quote.previous_close
+        ):
+            return False
+    # 名称不应包含 HTML 注入字符
+    name = quote.name or ""
+    if any(ch in name for ch in ("<", ">", "&", '"', "'")):
+        return False
+    return True
+
+
 class TencentProvider(MarketDataProvider):
     """腾讯免费行情数据源。"""
 
@@ -123,7 +148,7 @@ class TencentProvider(MarketDataProvider):
             if not line or "=" not in line:
                 continue
             quote = _parse_quote(line)
-            if quote is not None:
+            if quote is not None and _validate_quote(quote):
                 result[quote.symbol] = quote
         return result
 

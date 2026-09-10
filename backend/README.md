@@ -16,16 +16,16 @@
 
 ## 技术栈
 
-| 组件 | 版本约束 |
-|------|----------|
-| Python | 3.11+ |
-| FastAPI | >=0.115,<1.0 |
-| SQLAlchemy | >=2.0,<3.0 |
-| Pydantic | >=2.8,<3.0 |
-| Alembic | >=1.13,<2.0 |
-| APScheduler | >=3.10,<4.0 |
-| pandas / numpy | 兼容范围见 requirements.txt |
-| 数据库 | 开发 SQLite / 生产 PostgreSQL |
+| 组件             | 版本约束                      |
+| -------------- | ------------------------- |
+| Python         | 3.11+                     |
+| FastAPI        | >=0.115,<1.0              |
+| SQLAlchemy     | >=2.0,<3.0                |
+| Pydantic       | >=2.8,<3.0                |
+| Alembic        | >=1.13,<2.0               |
+| APScheduler    | >=3.10,<4.0               |
+| pandas / numpy | 兼容范围见 requirements.txt    |
+| 数据库            | 开发 SQLite / 生产 PostgreSQL |
 
 ## 项目结构
 
@@ -64,8 +64,8 @@ a-stock-platform/
 powershell -ExecutionPolicy Bypass -File scripts/start_backend.ps1
 ```
 
-服务启动后访问：http://127.0.0.1:8000
-API 文档：http://127.0.0.1:8000/docs
+服务启动后访问：<http://127.0.0.1:8000>  
+API 文档：<http://127.0.0.1:8000/docs>
 
 ### 手动启动
 
@@ -94,17 +94,17 @@ cd backend
 
 复制 `backend/.env.example` 为 `backend/.env`，关键配置：
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `DATABASE_URL` | 数据库连接串 | `sqlite:///./a_stock.db` |
-| `AUTO_CREATE_TABLES` | 启动时自动建表（仅测试/演示） | `false` |
-| `MARKET_PROVIDERS` | 数据源优先级 | `tencent,akshare` |
-| `QUOTE_POLL_INTERVAL` | 轮询间隔（秒） | `3` |
-| `ROLLING_WINDOW_SIZE` | 滚动窗口大小 | `300` |
-| `SIGNAL_COOLDOWN_SECONDS` | 信号冷却时间 | `60` |
-| `MAX_QUOTE_AGE_SECONDS` | 行情时效阈值（超过则拒绝成交） | `15` |
-| `RATE_LIMIT_PER_MINUTE` | 单 IP 每分钟最大请求数（0 关闭） | `300` |
-| `WS_MAX_SUBSCRIPTIONS` | 单 WebSocket 最大订阅数 | `200` |
+| 变量                        | 说明                  | 默认值                      |
+| ------------------------- | ------------------- | ------------------------ |
+| `DATABASE_URL`            | 数据库连接串              | `sqlite:///./a_stock.db` |
+| `AUTO_CREATE_TABLES`      | 启动时自动建表（仅测试/演示）     | `false`                  |
+| `MARKET_PROVIDERS`        | 数据源优先级              | `tencent,akshare`        |
+| `QUOTE_POLL_INTERVAL`     | 轮询间隔（秒）             | `3`                      |
+| `ROLLING_WINDOW_SIZE`     | 滚动窗口大小              | `300`                    |
+| `SIGNAL_COOLDOWN_SECONDS` | 信号冷却时间              | `60`                     |
+| `MAX_QUOTE_AGE_SECONDS`   | 行情时效阈值（超过则拒绝成交）     | `15`                     |
+| `RATE_LIMIT_PER_MINUTE`   | 单 IP 每分钟最大请求数（0 关闭） | `300`                    |
+| `WS_MAX_SUBSCRIPTIONS`    | 单 WebSocket 最大订阅数   | `200`                    |
 
 ## 数据库迁移
 
@@ -133,46 +133,46 @@ cd backend
 
 按 K8s 探针语义拆分：
 
-| 端点 | 用途 | 失败含义 |
-|------|------|----------|
-| `GET /api/health/live` | 进程存活探针，永远 200 | 进程崩溃 |
+| 端点                      | 用途                  | 失败含义      |
+| ----------------------- | ------------------- | --------- |
+| `GET /api/health/live`  | 进程存活探针，永远 200       | 进程崩溃      |
 | `GET /api/health/ready` | 就绪探针：DB 可用 + 调度器已启动 | 503（不接流量） |
-| `GET /api/health` | 详细状态：DB、调度器、各数据源健康 | 监控/排障用 |
+| `GET /api/health`       | 详细状态：DB、调度器、各数据源健康  | 监控/排障用    |
 
 ## API 概览
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/health` | 详细健康检查（DB + 调度器 + 数据源） |
-| GET | `/api/health/live` | 进程存活探针（K8s liveness） |
-| GET | `/api/health/ready` | 就绪探针（K8s readiness，503 表示不接流量） |
-| GET | `/api/market/providers` | 数据源状态 |
-| GET | `/api/quotes/{symbol}` | 单只行情 |
-| POST | `/api/quotes/batch` | 批量行情 |
-| GET/POST | `/api/watchlists` | 自选股列表 |
-| POST | `/api/watchlists/{id}/symbols` | 添加自选股 |
-| DELETE | `/api/watchlists/{id}/symbols/{symbol}` | 删除自选股 |
-| GET | `/api/signals` | 信号列表 |
-| GET | `/api/strategies` | 策略列表 |
-| POST | `/api/strategies/{id}/enable` | 启用策略 |
-| POST | `/api/strategies/{id}/disable` | 禁用策略 |
-| POST | `/api/backtests` | 创建回测 |
-| GET | `/api/backtests/{id}` | 回测结果 |
-| GET/POST | `/api/paper/accounts` | 模拟账户 |
-| POST | `/api/paper/orders` | 模拟下单 |
-| GET | `/api/paper/positions` | 持仓 |
-| GET | `/api/paper/trades` | 成交记录 |
-| WS | `/ws/quotes` | 行情推送 |
-| WS | `/ws/signals` | 信号推送 |
+| 方法       | 路径                                      | 说明                             |
+| -------- | --------------------------------------- | ------------------------------ |
+| GET      | `/api/health`                           | 详细健康检查（DB + 调度器 + 数据源）         |
+| GET      | `/api/health/live`                      | 进程存活探针（K8s liveness）           |
+| GET      | `/api/health/ready`                     | 就绪探针（K8s readiness，503 表示不接流量） |
+| GET      | `/api/market/providers`                 | 数据源状态                          |
+| GET      | `/api/quotes/{symbol}`                  | 单只行情                           |
+| POST     | `/api/quotes/batch`                     | 批量行情                           |
+| GET/POST | `/api/watchlists`                       | 自选股列表                          |
+| POST     | `/api/watchlists/{id}/symbols`          | 添加自选股                          |
+| DELETE   | `/api/watchlists/{id}/symbols/{symbol}` | 删除自选股                          |
+| GET      | `/api/signals`                          | 信号列表                           |
+| GET      | `/api/strategies`                       | 策略列表                           |
+| POST     | `/api/strategies/{id}/enable`           | 启用策略                           |
+| POST     | `/api/strategies/{id}/disable`          | 禁用策略                           |
+| POST     | `/api/backtests`                        | 创建回测                           |
+| GET      | `/api/backtests/{id}`                   | 回测结果                           |
+| GET/POST | `/api/paper/accounts`                   | 模拟账户                           |
+| POST     | `/api/paper/orders`                     | 模拟下单                           |
+| GET      | `/api/paper/positions`                  | 持仓                             |
+| GET      | `/api/paper/trades`                     | 成交记录                           |
+| WS       | `/ws/quotes`                            | 行情推送                           |
+| WS       | `/ws/signals`                           | 信号推送                           |
 
 ## 行情数据源
 
-| 数据源 | 用途 | 说明 |
-|--------|------|------|
-| QMT/xtdata | 正式实时行情 | 可选，推送模式，延迟 <1s |
-| 腾讯行情 | 免费轮询 | 默认主数据源 |
-| AKShare | 历史数据 | 备用数据源 |
-| Mock | 演示/测试 | 仅在 `MARKET_PROVIDERS=mock` 时显式启用 |
+| 数据源        | 用途     | 说明                               |
+| ---------- | ------ | -------------------------------- |
+| QMT/xtdata | 正式实时行情 | 可选，推送模式，延迟 <1s                   |
+| 腾讯行情       | 免费轮询   | 默认主数据源                           |
+| AKShare    | 历史数据   | 备用数据源                            |
+| Mock       | 演示/测试  | 仅在 `MARKET_PROVIDERS=mock` 时显式启用 |
 
 数据源按 `MARKET_PROVIDERS` 优先级故障转移，严禁静默混合来源。全部失败时返回缓存数据并标记 `is_stale=true`。Mock 不参与真实数据源的默认兜底，避免把随机价格误认为真实行情。
 
@@ -189,11 +189,12 @@ cd backend
 
 本项目自行实现，未直接复制第三方代码。参考了以下开源项目的架构思路：
 
-| 项目 | 许可证 |
-|------|--------|
-| [Quanti](https://github.com/coo-moon/quanti) | MIT |
-| [StockPro](https://github.com/Shadowell/StockPro) | MIT |
-| [InStock](https://github.com/myhhub/stock) | Apache-2.0 |
-| [AKShare](https://github.com/akfamily/akshare) | MIT（作为可选依赖） |
+| 项目                                                | 许可证         |
+| ------------------------------------------------- | ----------- |
+| [Quanti](https://github.com/coo-moon/quanti)      | MIT         |
+| [StockPro](https://github.com/Shadowell/StockPro) | MIT         |
+| [InStock](https://github.com/myhhub/stock)        | Apache-2.0  |
+| [AKShare](https://github.com/akfamily/akshare)    | MIT（作为可选依赖） |
 
 如后续复制或修改上述项目代码，将保留对应版权与许可证声明。
+
