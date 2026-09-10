@@ -42,6 +42,17 @@ logs/
 .cache/
 *.cache
 
+# 运行期 PID 与数据库备份
+.run/
+backups/
+
+# Vite/TSC 构建中间产物
+frontend/vite.config.js.timestamp-*.mjs
+frontend/vite.config.js
+frontend/vite.config.d.ts
+frontend/tsconfig.tsbuildinfo
+frontend/tsconfig.node.tsbuildinfo
+
 # 输出目录（回测结果等）
 outputs/
 

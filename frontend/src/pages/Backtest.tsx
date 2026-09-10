@@ -11,6 +11,7 @@ import {
 } from "recharts";
 
 import {
+  cancelBacktest,
   createBacktest,
   fetchBacktest,
   listStrategies,
@@ -64,7 +65,14 @@ export default function BacktestPage() {
     enabled: currentId !== null,
     refetchInterval: (q) => {
       const data = q.state.data as BacktestResponse | undefined;
-      return data?.status === "PENDING" || data?.status === "RUNNING" ? 2000 : false;
+      return data?.status === "queued" || data?.status === "running" ? 1500 : false;
+    },
+  });
+
+  const cancelMut = useMutation({
+    mutationFn: () => cancelBacktest(currentId!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["backtest", currentId] });
     },
   });
 
@@ -179,10 +187,38 @@ export default function BacktestPage() {
         <div className="bg-slate-900 rounded-lg p-4 border border-slate-800 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="font-medium">回测结果 · ID #{result.id}</h2>
-            <StatusBadge status={result.status} />
+            <div className="flex items-center gap-2">
+              {(result.status === "queued" || result.status === "running") && (
+                <button
+                  onClick={() => cancelMut.mutate()}
+                  disabled={cancelMut.isPending}
+                  className="text-xs px-2 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded"
+                >
+                  取消
+                </button>
+              )}
+              <StatusBadge status={result.status} />
+            </div>
           </div>
 
-          {result.status === "DONE" && result.result && (
+          {(result.status === "queued" || result.status === "running") && (
+            <div>
+              <div className="flex justify-between text-xs text-slate-400 mb-1">
+                <span>
+                  {result.status === "queued" ? "排队中" : "回测进行中"}
+                </span>
+                <span>{result.progress ?? 0}%</span>
+              </div>
+              <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-sky-500 transition-all"
+                  style={{ width: `${result.progress ?? 0}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {result.status === "succeeded" && result.result && (
             <>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <Stat label="总收益率" value={pct(result.result.total_return)} highlight />
@@ -288,7 +324,7 @@ export default function BacktestPage() {
                             {t.commission.toFixed(2)}
                           </td>
                           <td className="text-right numeric">
-                            {t.stamp_tax.toFixed(2)}
+                            {t.stamp_tax != null ? t.stamp_tax.toFixed(2) : "—"}
                           </td>
                           <td
                             className={`text-right numeric ${
@@ -310,14 +346,14 @@ export default function BacktestPage() {
             </>
           )}
 
-          {result.status === "FAILED" && (
-            <p className="text-rose-400">
-              回测失败：{JSON.stringify(result.result)}
+          {result.status === "failed" && (
+            <p className="text-rose-400 text-sm">
+              回测失败：{result.error_message ?? "未知错误"}
             </p>
           )}
 
-          {(result.status === "PENDING" || result.status === "RUNNING") && (
-            <p className="text-slate-400">回测进行中...</p>
+          {result.status === "cancelled" && (
+            <p className="text-amber-400 text-sm">回测已取消</p>
           )}
         </div>
       )}
@@ -364,13 +400,25 @@ function Stat({
 
 function StatusBadge({ status }: { status: string }) {
   const color =
-    status === "DONE"
+    status === "succeeded"
       ? "bg-emerald-500/20 text-emerald-300"
-      : status === "FAILED"
+      : status === "failed"
         ? "bg-rose-500/20 text-rose-300"
-        : "bg-amber-500/20 text-amber-300";
+        : status === "cancelled"
+          ? "bg-slate-500/20 text-slate-300"
+          : "bg-amber-500/20 text-amber-300";
+  const label =
+    status === "queued"
+      ? "排队中"
+      : status === "running"
+        ? "运行中"
+        : status === "succeeded"
+          ? "已完成"
+          : status === "failed"
+            ? "失败"
+            : "已取消";
   return (
-    <span className={`text-xs px-2 py-1 rounded ${color}`}>{status}</span>
+    <span className={`text-xs px-2 py-1 rounded ${color}`}>{label}</span>
   );
 }
 

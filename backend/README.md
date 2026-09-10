@@ -128,6 +128,10 @@ cd backend
 
 - `0001_initial.py`：全部 10 张表
 - `0002_paper_trade_idempotency.py`：为 `paper_trades` 加 `(account_id, signal_id)` UNIQUE 约束，从数据库层杜绝同一信号重复成交
+- `0003_trading_calendar.py`：交易日历表
+- `0004_historical_bars.py`：历史行情本地缓存表（含复权类型）
+- `0005_backtest_tasks.py`：回测任务可恢复字段（进度/幂等键/时间戳/错误摘要）
+- `0006_paper_order_state_machine.py`：订单状态机与盈亏字段（拒绝原因、已实现盈亏）
 
 ## 健康检查
 
@@ -146,6 +150,7 @@ cd backend
 | GET      | `/api/health`                           | 详细健康检查（DB + 调度器 + 数据源）         |
 | GET      | `/api/health/live`                      | 进程存活探针（K8s liveness）           |
 | GET      | `/api/health/ready`                     | 就绪探针（K8s readiness，503 表示不接流量） |
+| GET      | `/api/metrics`                          | 可观测性指标（数据源/WebSocket/任务）        |
 | GET      | `/api/market/providers`                 | 数据源状态                          |
 | GET      | `/api/quotes/{symbol}`                  | 单只行情                           |
 | POST     | `/api/quotes/batch`                     | 批量行情                           |
@@ -156,12 +161,18 @@ cd backend
 | GET      | `/api/strategies`                       | 策略列表                           |
 | POST     | `/api/strategies/{id}/enable`           | 启用策略                           |
 | POST     | `/api/strategies/{id}/disable`          | 禁用策略                           |
-| POST     | `/api/backtests`                        | 创建回测                           |
-| GET      | `/api/backtests/{id}`                   | 回测结果                           |
+| POST     | `/api/backtests`                        | 创建回测任务（异步队列，支持幂等键）          |
+| GET      | `/api/backtests`                        | 回测任务列表                         |
+| GET      | `/api/backtests/{id}`                   | 回测任务详情（进度/结果/错误摘要）            |
+| POST     | `/api/backtests/{id}/cancel`            | 取消回测任务                         |
 | GET/POST | `/api/paper/accounts`                   | 模拟账户                           |
 | POST     | `/api/paper/orders`                     | 模拟下单                           |
-| GET      | `/api/paper/positions`                  | 持仓                             |
-| GET      | `/api/paper/trades`                     | 成交记录                           |
+| GET      | `/api/paper/orders`                     | 委托单列表（含状态/拒绝原因）               |
+| POST     | `/api/paper/orders/{id}/cancel`         | 取消委托                           |
+| GET      | `/api/paper/positions`                  | 持仓（含已实现盈亏）                     |
+| GET      | `/api/paper/trades`                     | 成交记录（含已实现盈亏）                   |
+| POST     | `/api/paper/accounts/{id}/settle`       | 日终结算（T+1 解冻 + 资产快照）            |
+| GET      | `/api/paper/accounts/{id}/assets`       | 账户资产与盈亏                        |
 | WS       | `/ws/quotes`                            | 行情推送                           |
 | WS       | `/ws/signals`                           | 信号推送                           |
 
@@ -180,10 +191,41 @@ cd backend
 
 1. **腾讯免费接口无历史 K 线**，历史回测依赖 AKShare（需联网）。
 2. **QMT 数据源需本地 xtdata 客户端**，未登录时自动降级。
-3. **T+1 解冻**：模拟交易通过日终结算（`settle_t1`）解冻，暂未自动定时解冻。
-4. **北交所涨跌停幅度**（30%）未单独区分，统一按主板 10% 处理（可配置）。
-5. **回测为单股票单策略**，暂不支持组合回测。
-6. **限流为单机内存实现**，多实例部署需改为 Redis。
+3. **日终结算需手动触发**：模拟交易通过 `POST /api/paper/accounts/{id}/settle` 解冻 T+1，暂未自动定时解冻。
+4. **限流为单机内存实现**，多实例部署需改为 Redis。
+
+## 运维脚本
+
+```powershell
+# 一键启动（迁移优先：alembic upgrade -> 后端 -> 前端）
+powershell -ExecutionPolicy Bypass -File scripts/start_all.ps1
+
+# 按 PID 停止全部服务
+powershell -ExecutionPolicy Bypass -File scripts/stop_all.ps1
+
+# 数据库备份 / 恢复（SQLite 在线安全备份）
+python scripts/db_backup.py
+python scripts/db_restore.py backups/a_stock_YYYYmmdd_HHMMSS.db
+
+# 端到端冒烟测试（需先启动服务）
+python scripts/e2e_smoke.py
+```
+
+## 验收标准（12 项真实命令）
+
+提交前必须逐项通过：
+
+1. `python -m compileall app tests` — 无语法错误
+2. `python -m pytest -q` — 全部测试通过
+3. `python -m pytest --cov=app` — 覆盖率报告
+4. `alembic upgrade head`（空库 + 从 0002 升级）— 迁移可用
+5. `npm run type-check` — 前端类型零错误
+6. `npm run build` — 前端可构建
+7. `scripts/start_all.ps1` — 一键启动
+8. `python scripts/e2e_smoke.py` — 端到端冒烟通过
+9. `scripts/stop_all.ps1` — 停止后无残留进程
+10. `git diff --check` — 无空白错误
+11. `git status` — 工作区干净
 
 ## 第三方代码与许可证
 

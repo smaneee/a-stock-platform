@@ -11,9 +11,11 @@ import {
 } from "recharts";
 
 import {
+  cancelPaperOrder,
   createPaperAccount,
   fetchAssetCurve,
   listPaperAccounts,
+  listPaperOrders,
   listPaperPositions,
   listPaperTrades,
   placePaperOrder,
@@ -53,6 +55,12 @@ export default function PaperTradingPage() {
   const { data: trades } = useQuery({
     queryKey: ["paper-trades", selectedId],
     queryFn: () => listPaperTrades(selectedId!, 30),
+    enabled: selectedId !== null,
+  });
+
+  const { data: orders } = useQuery({
+    queryKey: ["paper-orders", selectedId],
+    queryFn: () => listPaperOrders(selectedId!, 50),
     enabled: selectedId !== null,
   });
 
@@ -98,7 +106,16 @@ export default function PaperTradingPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["paper-positions", selectedId] });
       queryClient.invalidateQueries({ queryKey: ["paper-trades", selectedId] });
+      queryClient.invalidateQueries({ queryKey: ["paper-orders", selectedId] });
       queryClient.invalidateQueries({ queryKey: ["paper-assets", selectedId] });
+      queryClient.invalidateQueries({ queryKey: ["paper-accounts"] });
+    },
+  });
+
+  const cancelOrderMut = useMutation({
+    mutationFn: (orderId: number) => cancelPaperOrder(orderId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["paper-orders", selectedId] });
       queryClient.invalidateQueries({ queryKey: ["paper-accounts"] });
     },
   });
@@ -360,6 +377,7 @@ export default function PaperTradingPage() {
                     <th className="text-right px-4 py-2">数量</th>
                     <th className="text-right px-4 py-2">佣金</th>
                     <th className="text-right px-4 py-2">印花税</th>
+                    <th className="text-right px-4 py-2">已实现盈亏</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -390,6 +408,78 @@ export default function PaperTradingPage() {
                       </td>
                       <td className="px-4 py-2 text-right numeric text-slate-400">
                         {t.stamp_tax.toFixed(2)}
+                      </td>
+                      <td
+                        className={`px-4 py-2 text-right numeric ${
+                          t.realized_pnl > 0
+                            ? "text-up"
+                            : t.realized_pnl < 0
+                              ? "text-down"
+                              : "text-slate-400"
+                        }`}
+                      >
+                        {t.realized_pnl.toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* 委托单 */}
+          <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden">
+            <div className="px-4 py-2 border-b border-slate-800">
+              <h2 className="font-medium">委托单</h2>
+            </div>
+            {!orders || orders.orders.length === 0 ? (
+              <div className="px-4 py-6 text-slate-500 text-sm text-center">
+                暂无委托
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="text-xs text-slate-500 uppercase bg-slate-950">
+                  <tr>
+                    <th className="text-left px-4 py-2">时间</th>
+                    <th className="text-left px-4 py-2">代码</th>
+                    <th className="text-left px-4 py-2">方向</th>
+                    <th className="text-right px-4 py-2">数量</th>
+                    <th className="text-left px-4 py-2">状态</th>
+                    <th className="text-left px-4 py-2">拒绝原因</th>
+                    <th className="text-right px-4 py-2">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orders.orders.map((o) => (
+                    <tr key={o.id} className="border-b border-slate-800/50">
+                      <td className="px-4 py-2 text-slate-500 text-xs">
+                        {new Date(o.created_at).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-2 numeric">{o.symbol}</td>
+                      <td
+                        className={`px-4 py-2 ${
+                          o.side === "BUY" ? "text-up" : "text-down"
+                        }`}
+                      >
+                        {o.side}
+                      </td>
+                      <td className="px-4 py-2 text-right numeric">
+                        {o.quantity}
+                      </td>
+                      <td className="px-4 py-2 text-xs">{o.status}</td>
+                      <td className="px-4 py-2 text-xs text-rose-400">
+                        {o.reject_reason ?? "—"}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        {o.status === "SUBMITTED" && (
+                          <button
+                            onClick={() => cancelOrderMut.mutate(o.id)}
+                            disabled={cancelOrderMut.isPending}
+                            className="text-xs px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded"
+                          >
+                            取消
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
