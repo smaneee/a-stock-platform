@@ -36,6 +36,7 @@ from app.realtime.quote_scheduler import QuoteScheduler
 from app.realtime.signal_engine import SignalEngine
 from app.realtime.websocket_manager import ConnectionManager
 from app.strategies import registry
+from app.tasks.worker import BacktestWorker
 from app.validation import sanitize_symbols
 
 settings = get_settings()
@@ -142,10 +143,15 @@ async def lifespan(app: FastAPI):
     scheduler: QuoteScheduler = app.state.scheduler
     scheduler.start()
 
+    # 启动后台回测任务 worker（含遗留 running 任务恢复）
+    worker: BacktestWorker = app.state.backtest_worker
+    await worker.start()
+
     logger.info("A 股实时分析平台后端已启动")
     try:
         yield
     finally:
+        await worker.stop()
         scheduler.shutdown()
         await app.state.connection_manager.close()
         await app.state.provider_manager.close()
@@ -190,12 +196,14 @@ def create_app() -> FastAPI:
         get_symbols=_get_watch_symbols,
         on_quotes=signal_engine.process_quotes,
     )
+    backtest_worker = BacktestWorker()
 
     app.state.provider_manager = provider_manager
     app.state.quote_cache = quote_cache
     app.state.connection_manager = connection_manager
     app.state.signal_engine = signal_engine
     app.state.scheduler = scheduler
+    app.state.backtest_worker = backtest_worker
 
     # 注册路由
     app.include_router(health_router)

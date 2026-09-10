@@ -1,19 +1,24 @@
-"""历史回测接口。"""
+"""历史回测接口（任务化）。
+
+回测创建后进入数据库队列，由后台 BacktestWorker 执行。
+支持幂等键、进度查询、取消。
+"""
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.backtest.engine import BacktestEngine
 from app.database.models import Backtest
-from app.database.session import SessionLocal, get_db
+from app.database.session import get_db
 from app.strategies import registry
+from app.tasks.status import CANCELLABLE_STATES, CANCELLED, QUEUED
+from app.time_utils import utc_now
 from app.validation import validate_symbol
 
 logger = logging.getLogger(__name__)
@@ -27,15 +32,15 @@ class BacktestRequest(BaseModel):
     start_time: datetime
     end_time: datetime
     initial_cash: float = Field(100_000.0, gt=0)
+    idempotency_key: str | None = Field(None, max_length=64, description="幂等键，避免重复创建")
 
 
 @router.post("/backtests", status_code=202)
-async def create_backtest(
+def create_backtest(
     body: BacktestRequest,
-    request: Request,
     db: Session = Depends(get_db),
 ) -> dict:
-    """创建回测任务，立即返回任务 ID（后台异步执行）。"""
+    """创建回测任务，入队由后台 worker 执行。"""
     if not validate_symbol(body.symbol):
         raise HTTPException(status_code=422, detail="非法股票代码")
     if body.start_time >= body.end_time:
@@ -44,83 +49,80 @@ async def create_backtest(
     if strategy is None:
         raise HTTPException(status_code=404, detail="策略不存在")
 
+    # 幂等：同一 idempotency_key 不重复创建
+    if body.idempotency_key:
+        existing = db.scalars(
+            select(Backtest).where(Backtest.idempotency_key == body.idempotency_key)
+        ).first()
+        if existing:
+            return {"id": existing.id, "status": existing.status, "duplicate": True}
+
     backtest = Backtest(
         symbol=body.symbol,
         strategy_name=body.strategy_name,
         start_time=body.start_time,
         end_time=body.end_time,
         initial_cash=body.initial_cash,
-        status="PENDING",
+        status=QUEUED,
+        idempotency_key=body.idempotency_key,
     )
     db.add(backtest)
     db.commit()
     db.refresh(backtest)
+    return {"id": backtest.id, "status": backtest.status}
 
-    provider_manager = request.app.state.provider_manager
-    asyncio.create_task(
-        _run_backtest(backtest.id, body, provider_manager)
-    )
-    return {"id": backtest.id, "status": "PENDING"}
+
+@router.get("/backtests")
+def list_backtests(
+    db: Session = Depends(get_db),
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """列出回测任务（按创建时间倒序）。"""
+    limit = max(1, min(limit, 200))
+    rows = db.scalars(
+        select(Backtest).order_by(Backtest.id.desc()).offset(offset).limit(limit)
+    ).all()
+    return {"items": [_summary(b) for b in rows], "count": len(rows)}
 
 
 @router.get("/backtests/{backtest_id}")
 def get_backtest(backtest_id: int, db: Session = Depends(get_db)) -> dict:
-    """查询回测结果。"""
+    """查询回测任务详情（含进度、时间戳、错误摘要）。"""
     backtest = db.get(Backtest, backtest_id)
     if backtest is None:
         raise HTTPException(status_code=404, detail="回测任务不存在")
     result = json.loads(backtest.result) if backtest.result else None
+    data = _summary(backtest)
+    data["result"] = result
+    return data
+
+
+@router.post("/backtests/{backtest_id}/cancel")
+def cancel_backtest(backtest_id: int, db: Session = Depends(get_db)) -> dict:
+    """取消尚未完成的任务。"""
+    backtest = db.get(Backtest, backtest_id)
+    if backtest is None:
+        raise HTTPException(status_code=404, detail="回测任务不存在")
+    if backtest.status not in CANCELLABLE_STATES:
+        raise HTTPException(status_code=409, detail=f"任务已处于终态 {backtest.status}，无法取消")
+    backtest.status = CANCELLED
+    backtest.finished_at = utc_now()
+    db.commit()
+    return {"id": backtest.id, "status": backtest.status}
+
+
+def _summary(b: Backtest) -> dict:
     return {
-        "id": backtest.id,
-        "symbol": backtest.symbol,
-        "strategy_name": backtest.strategy_name,
-        "start_time": backtest.start_time.isoformat(),
-        "end_time": backtest.end_time.isoformat(),
-        "status": backtest.status,
-        "result": result,
+        "id": b.id,
+        "symbol": b.symbol,
+        "strategy_name": b.strategy_name,
+        "start_time": b.start_time.isoformat(),
+        "end_time": b.end_time.isoformat(),
+        "status": b.status,
+        "progress": b.progress or 0,
+        "error_message": b.error_message,
+        "started_at": b.started_at.isoformat() if b.started_at else None,
+        "finished_at": b.finished_at.isoformat() if b.finished_at else None,
+        "created_at": b.created_at.isoformat() if b.created_at else None,
     }
-
-
-async def _run_backtest(backtest_id: int, body: BacktestRequest, provider_manager) -> None:
-    """后台执行回测。"""
-    db = SessionLocal()
-    try:
-        backtest = db.get(Backtest, backtest_id)
-        if backtest is None:
-            return
-        backtest.status = "RUNNING"
-        db.commit()
-
-        # 获取历史数据
-        history = await provider_manager.get_history(
-            body.symbol, "daily", body.start_time, body.end_time
-        )
-        if not history:
-            backtest.status = "FAILED"
-            backtest.result = '{"error": "未获取到历史数据"}'
-            db.commit()
-            return
-
-        # 运行回测
-        strategy = registry.get_strategy(body.strategy_name)
-        engine = BacktestEngine(strategy=strategy, initial_cash=body.initial_cash)
-        result = engine.run(history)
-
-        backtest.status = "DONE"
-        backtest.result = json.dumps(result.to_dict(), ensure_ascii=False)
-        db.commit()
-    except Exception as exc:  # noqa: BLE001
-        logger.error("回测失败: %s", exc)
-        db.rollback()
-        try:
-            backtest = db.get(Backtest, backtest_id)
-            if backtest:
-                backtest.status = "FAILED"
-                backtest.result = json.dumps(
-                    {"error": "回测执行失败，请检查服务日志"}, ensure_ascii=False
-                )
-                db.commit()
-        except Exception:  # noqa: BLE001
-            pass
-    finally:
-        db.close()

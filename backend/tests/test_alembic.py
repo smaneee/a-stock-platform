@@ -91,6 +91,29 @@ def test_alembic_0003_creates_trading_calendar(isolated_db):
     assert "trade_date" in (pk.get("constrained_columns") or [])
 
 
+def test_alembic_0005_backtest_tasks(isolated_db):
+    """0005 迁移必须为 backtests 添加任务列与幂等键唯一约束。"""
+    cfg = _make_config()
+    command.upgrade(cfg, "head")
+
+    insp = inspect(create_engine(isolated_db))
+    cols = {c["name"] for c in insp.get_columns("backtests")}
+    expected_cols = {
+        "status",
+        "progress",
+        "idempotency_key",
+        "error_message",
+        "started_at",
+        "finished_at",
+    }
+    assert expected_cols.issubset(cols), f"缺少列: {expected_cols - cols}"
+
+    constraints = {c.get("name") for c in insp.get_unique_constraints("backtests")}
+    assert "uq_backtest_idempotency" in constraints, (
+        f"未找到幂等约束，实际约束: {constraints}"
+    )
+
+
 def test_alembic_roundtrip(isolated_db):
     """升级 → 降级 → 升级：迁移必须可逆且可重复。"""
     cfg = _make_config()

@@ -182,9 +182,12 @@ class AssetRecord(Base):
 
 
 class Backtest(Base):
-    """历史回测任务。"""
+    """历史回测任务（可恢复，落库）。"""
 
     __tablename__ = "backtests"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_backtest_idempotency"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -192,8 +195,13 @@ class Backtest(Base):
     start_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     end_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     initial_cash: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="PENDING")  # PENDING/RUNNING/DONE/FAILED
+    status: Mapped[str] = mapped_column(String(20), default="queued")  # queued/running/succeeded/failed/cancelled
+    progress: Mapped[int] = mapped_column(Integer, default=0)  # 0-100
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     result: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON 序列化的结果
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)  # 错误摘要
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 

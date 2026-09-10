@@ -4,6 +4,16 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
+class _NoopWorker:
+    """禁用后台执行的假 worker，避免 API 测试被轮询线程干扰。"""
+
+    async def start(self) -> None:
+        pass
+
+    async def stop(self) -> None:
+        pass
+
+
 def test_health():
     with TestClient(app) as client:
         resp = client.get("/api/health")
@@ -168,6 +178,117 @@ def test_paper_account_create_and_list():
 def test_disclaimer_present():
     """所有接口必须包含免责声明（由应用描述体现）。"""
     assert "不构成投资建议" in app.description
+
+
+# ──────── 回测任务接口 ────────
+
+
+def test_backtest_create_and_query_flow(monkeypatch):
+    """创建回测任务（202 queued），可查询详情与列表。"""
+    monkeypatch.setattr(app.state, "backtest_worker", _NoopWorker())
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/backtests",
+            json={
+                "symbol": "600000",
+                "strategy_name": "ma_cross",
+                "start_time": "2026-01-01T00:00:00",
+                "end_time": "2026-01-10T00:00:00",
+                "initial_cash": 100000,
+            },
+        )
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["status"] == "queued"
+        assert body["id"] > 0
+
+        # 详情
+        resp = client.get(f"/api/backtests/{body['id']}")
+        assert resp.status_code == 200
+        detail = resp.json()
+        assert detail["symbol"] == "600000"
+        assert detail["status"] == "queued"
+
+        # 列表
+        resp = client.get("/api/backtests")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert any(item["id"] == body["id"] for item in items)
+
+
+def test_backtest_validation_errors(monkeypatch):
+    """非法代码、未知策略、非法时间范围分别返回 422/404/422。"""
+    monkeypatch.setattr(app.state, "backtest_worker", _NoopWorker())
+    with TestClient(app) as client:
+        base = {
+            "symbol": "600000",
+            "strategy_name": "ma_cross",
+            "start_time": "2026-01-01T00:00:00",
+            "end_time": "2026-01-10T00:00:00",
+        }
+        resp = client.post("/api/backtests", json={**base, "symbol": "abc"})
+        assert resp.status_code == 422
+
+        resp = client.post("/api/backtests", json={**base, "strategy_name": "nope"})
+        assert resp.status_code == 404
+
+        resp = client.post(
+            "/api/backtests",
+            json={
+                **base,
+                "start_time": "2026-01-10T00:00:00",
+                "end_time": "2026-01-01T00:00:00",
+            },
+        )
+        assert resp.status_code == 422
+
+
+def test_backtest_idempotency(monkeypatch):
+    """同一幂等键重复创建应返回 duplicate，不产生新记录。"""
+    monkeypatch.setattr(app.state, "backtest_worker", _NoopWorker())
+    with TestClient(app) as client:
+        payload = {
+            "symbol": "000001",
+            "strategy_name": "ma_cross",
+            "start_time": "2026-01-01T00:00:00",
+            "end_time": "2026-01-10T00:00:00",
+            "idempotency_key": "demo-key-1",
+        }
+        first = client.post("/api/backtests", json=payload)
+        assert first.status_code == 202
+        first_id = first.json()["id"]
+
+        second = client.post("/api/backtests", json=payload)
+        assert second.status_code == 202
+        assert second.json()["duplicate"] is True
+        assert second.json()["id"] == first_id
+
+        # 总数仍为 1
+        items = client.get("/api/backtests").json()["items"]
+        assert len([i for i in items if i["id"] == first_id]) == 1
+
+
+def test_backtest_cancel_and_terminal_conflict(monkeypatch):
+    """queued 任务可取消；已取消（终态）再取消返回 409。"""
+    monkeypatch.setattr(app.state, "backtest_worker", _NoopWorker())
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/backtests",
+            json={
+                "symbol": "600036",
+                "strategy_name": "ma_cross",
+                "start_time": "2026-01-01T00:00:00",
+                "end_time": "2026-01-10T00:00:00",
+            },
+        )
+        backtest_id = resp.json()["id"]
+
+        cancel = client.post(f"/api/backtests/{backtest_id}/cancel")
+        assert cancel.status_code == 200
+        assert cancel.json()["status"] == "cancelled"
+
+        again = client.post(f"/api/backtests/{backtest_id}/cancel")
+        assert again.status_code == 409
 
 
 def test_websocket_quote_connection_can_subscribe():
