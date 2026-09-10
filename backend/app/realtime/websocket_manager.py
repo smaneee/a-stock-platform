@@ -16,6 +16,7 @@ from fastapi import WebSocket
 
 from app.config import get_settings
 from app.market_data.base import QuoteData
+from app.observability.metrics import metrics
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -56,6 +57,7 @@ class ConnectionManager:
         )
         async with self._lock:
             self._connections.add(conn)
+        metrics.record_ws_connect()
         conn.sender_task = asyncio.create_task(
             self._sender(conn), name=f"websocket-sender-{id(websocket)}"
         )
@@ -69,6 +71,7 @@ class ConnectionManager:
                     break
             if removed is not None:
                 self._connections.discard(removed)
+                metrics.record_ws_disconnect()
 
         task = removed.sender_task if removed else None
         if task and task is not asyncio.current_task() and not task.done():
@@ -127,6 +130,7 @@ class ConnectionManager:
                     with suppress(asyncio.QueueEmpty, asyncio.QueueFull):
                         conn.queue.get_nowait()
                         conn.queue.put_nowait(text)
+                    metrics.record_ws_drop()
             except Exception:  # noqa: BLE001
                 continue
 

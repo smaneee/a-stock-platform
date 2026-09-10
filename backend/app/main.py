@@ -17,6 +17,7 @@ from starlette.responses import JSONResponse
 
 from app.api.backtests import router as backtests_router
 from app.api.health import router as health_router
+from app.api.metrics import router as metrics_router
 from app.api.paper_accounts import router as paper_router
 from app.api.quotes import router as quotes_router
 from app.api.signals import router as signals_router
@@ -207,6 +208,7 @@ def create_app() -> FastAPI:
 
     # 注册路由
     app.include_router(health_router)
+    app.include_router(metrics_router)
     app.include_router(quotes_router)
     app.include_router(watchlists_router)
     app.include_router(signals_router)

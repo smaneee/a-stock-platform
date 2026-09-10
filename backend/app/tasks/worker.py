@@ -20,6 +20,7 @@ from app.backtest.engine import BacktestEngine
 from app.database.models import Backtest
 from app.database.session import SessionLocal
 from app.history.service import HistoricalDataService
+from app.observability.metrics import metrics
 from app.strategies import registry
 from app.time_utils import utc_now
 from app.tasks.status import (
@@ -177,6 +178,7 @@ class BacktestWorker:
             backtest.result = json.dumps(result_obj.to_dict(), ensure_ascii=False)
             backtest.finished_at = utc_now()
             db.commit()
+            metrics.record_task_result(SUCCEEDED)
             logger.info("回测任务 #%d 成功", backtest_id)
         except Exception as exc:  # noqa: BLE001
             logger.error("回测任务 #%d 失败: %s", backtest_id, exc)
@@ -195,6 +197,7 @@ class BacktestWorker:
                 backtest.error_message = error[:500]
                 backtest.finished_at = utc_now()
                 db.commit()
+                metrics.record_task_result(FAILED)
         finally:
             db.close()
 

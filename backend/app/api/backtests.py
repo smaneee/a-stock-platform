@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.database.models import Backtest
 from app.database.session import get_db
+from app.observability.metrics import metrics
 from app.strategies import registry
 from app.tasks.status import CANCELLABLE_STATES, CANCELLED, QUEUED
 from app.time_utils import utc_now
@@ -109,6 +110,7 @@ def cancel_backtest(backtest_id: int, db: Session = Depends(get_db)) -> dict:
     backtest.status = CANCELLED
     backtest.finished_at = utc_now()
     db.commit()
+    metrics.record_task_result(CANCELLED)
     return {"id": backtest.id, "status": backtest.status}
 
 

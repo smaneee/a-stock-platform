@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 
 from app.market_data.base import MarketDataProvider, QuoteData
+from app.observability.metrics import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -46,15 +48,20 @@ class ProviderManager:
 
         for provider in self._providers:
             try:
+                start = time.perf_counter()
                 result = await provider.get_quotes(symbols)
+                elapsed = time.perf_counter() - start
                 if result:
                     # 校验：必须覆盖所有请求的 symbol，否则视为不完整
                     if all(s in result for s in symbols):
                         await self._update_cache(result)
+                        metrics.record_provider_success(provider.name, elapsed)
                         return result
                     logger.warning("数据源 %s 返回不完整结果", provider.name)
+                    metrics.record_provider_failure(provider.name)
             except Exception as exc:  # noqa: BLE001 - 数据源异常需兜底
                 logger.warning("数据源 %s 获取行情失败: %s", provider.name, exc)
+                metrics.record_provider_failure(provider.name)
                 continue
 
         # 全部失败，返回缓存
@@ -73,11 +80,15 @@ class ProviderManager:
         """获取历史行情，按优先级尝试数据源。"""
         for provider in self._providers:
             try:
+                start = time.perf_counter()
                 data = await provider.get_history(symbol, period, start_time, end_time)
+                elapsed = time.perf_counter() - start
                 if data:
+                    metrics.record_provider_success(provider.name, elapsed)
                     return data
             except Exception as exc:  # noqa: BLE001
                 logger.warning("数据源 %s 获取历史行情失败: %s", provider.name, exc)
+                metrics.record_provider_failure(provider.name)
                 continue
         return []
 
