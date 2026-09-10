@@ -1,11 +1,10 @@
 """MACD 金叉死叉策略。"""
 from __future__ import annotations
 
-from datetime import datetime
-
 from app.indicators.macd import macd
 from app.market_data.base import QuoteData
 from app.strategies.base import Signal, Strategy
+from app.time_utils import utc_now
 
 
 class MacdCrossStrategy(Strategy):
@@ -40,7 +39,7 @@ class MacdCrossStrategy(Strategy):
                 return None
 
         latest = history[-1]
-        source_time = latest.market_time or latest.received_at or datetime.utcnow()
+        source_time = latest.market_time or latest.received_at or utc_now()
 
         # 金叉：DIF 上穿 DEA
         if prev_dif <= prev_dea and cur_dif > cur_dea:

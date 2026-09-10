@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime
 
 from sqlalchemy.orm import Session
 
@@ -16,6 +15,7 @@ from app.market_data.base import QuoteData
 from app.realtime.quote_cache import QuoteCache
 from app.realtime.websocket_manager import ConnectionManager
 from app.strategies.base import Signal, Strategy
+from app.time_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class SignalEngine:
                 strength=signal.strength,
                 reason=signal.reason,
                 price=signal.price,
-                source_time=signal.source_time or datetime.utcnow(),
+                source_time=signal.source_time or utc_now(),
                 strategy_version=signal.strategy_version,
             )
             db.add(record)

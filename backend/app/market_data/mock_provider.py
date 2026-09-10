@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Callable
 
 from app.market_data.base import MarketDataProvider, QuoteData
+from app.time_utils import utc_now
 
 
 class MockProvider(MarketDataProvider):
@@ -22,6 +23,8 @@ class MockProvider(MarketDataProvider):
         self._rng = random.Random(seed)
         # 每只股票维护一个当前价格，用于产生连续变化
         self._prices: dict[str, float] = {}
+        self._volumes: dict[str, float] = {}
+        self._amounts: dict[str, float] = {}
         self._names: dict[str, str] = {}
         self._history: dict[str, list[QuoteData]] = {}
         self._subscribers: dict[str, list[Callable[[QuoteData], None]]] = {}
@@ -31,7 +34,7 @@ class MockProvider(MarketDataProvider):
         return result.get(symbol)
 
     async def get_quotes(self, symbols: list[str]) -> dict[str, QuoteData]:
-        now = datetime.utcnow()
+        now = utc_now()
         result: dict[str, QuoteData] = {}
         for symbol in symbols:
             result[symbol] = self._generate_quote(symbol, now)
@@ -70,6 +73,9 @@ class MockProvider(MarketDataProvider):
         open_price = round(prev_close * (1 + self._rng.uniform(-0.01, 0.01)), 2)
         high = round(max(open_price, price) * (1 + self._rng.uniform(0, 0.01)), 2)
         low = round(min(open_price, price) * (1 - self._rng.uniform(0, 0.01)), 2)
+        volume_delta = float(self._rng.randint(1_000, 50_000))
+        self._volumes[symbol] = self._volumes.get(symbol, 0.0) + volume_delta
+        self._amounts[symbol] = self._amounts.get(symbol, 0.0) + price * volume_delta
 
         return QuoteData(
             symbol=symbol,
@@ -79,8 +85,8 @@ class MockProvider(MarketDataProvider):
             high=high,
             low=low,
             previous_close=round(prev_close, 2),
-            volume=float(self._rng.randint(100_000, 5_000_000)),
-            amount=float(price * self._rng.randint(100_000, 5_000_000)),
+            volume=self._volumes[symbol],
+            amount=self._amounts[symbol],
             bid_price=round(price - 0.01, 2),
             ask_price=round(price + 0.01, 2),
             source=self.name,

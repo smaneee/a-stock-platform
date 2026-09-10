@@ -91,6 +91,22 @@ class ProviderManager:
                 status[provider.name] = False
         return status
 
+    async def close(self) -> None:
+        """释放数据源持有的连接池等资源。"""
+        closers = []
+        for provider in self._providers:
+            close = getattr(provider, "close", None)
+            if callable(close):
+                closers.append(close())
+        if closers:
+            results = await asyncio.gather(*closers, return_exceptions=True)
+            for provider, result in zip(
+                [p for p in self._providers if callable(getattr(p, "close", None))],
+                results,
+            ):
+                if isinstance(result, Exception):
+                    logger.warning("关闭数据源 %s 失败: %s", provider.name, result)
+
     async def _update_cache(self, quotes: dict[str, QuoteData]) -> None:
         """更新本地缓存（仅记录非 stale 数据）。"""
         async with self._lock:

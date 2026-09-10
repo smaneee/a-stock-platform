@@ -1,9 +1,10 @@
 """测试辅助函数。"""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from app.market_data.base import QuoteData
+from app.time_utils import utc_now
 
 
 def make_quote(
@@ -32,8 +33,8 @@ def make_quote(
         bid_price=price - 0.01,
         ask_price=price + 0.01,
         source="mock",
-        market_time=market_time or datetime.utcnow(),
-        received_at=datetime.utcnow(),
+        market_time=market_time or utc_now(),
+        received_at=utc_now(),
         is_stale=is_stale,
     )
 
@@ -42,11 +43,11 @@ def make_history(
     symbol: str = "600000",
     n: int = 100,
     base_price: float = 10.0,
-    start: datetime | None = None,
+    start=None,
 ) -> list[QuoteData]:
     """生成递增的历史行情序列。"""
     if start is None:
-        start = datetime.utcnow() - timedelta(days=n)
+        start = utc_now() - timedelta(days=n)
     history = []
     for i in range(n):
         price = base_price + i * 0.05

@@ -5,8 +5,9 @@ QMT（迅投）提供正式实时行情与推送模式，目标延迟不超过 1
 """
 from __future__ import annotations
 
+import asyncio
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Callable
 
 from app.market_data.base import MarketDataProvider, QuoteData
@@ -34,13 +35,35 @@ class QmtProvider(MarketDataProvider):
     async def get_quotes(self, symbols: list[str]) -> dict[str, QuoteData]:
         if not _QMT_AVAILABLE:
             return {}
-        try:
-            # xtdata.get_full_tick 返回逐笔委托快照
-            data = xtdata.get_full_tick(symbols)
+
+        def _qmt_symbol(symbol: str) -> str:
+            if "." in symbol:
+                return symbol
+            suffix = "SH" if symbol.startswith(("5", "6", "9")) else "SZ"
+            if symbol.startswith(("4", "8")) or symbol.startswith("92"):
+                suffix = "BJ"
+            return f"{symbol}.{suffix}"
+
+        def _best_price(value) -> float:
+            if isinstance(value, (list, tuple)):
+                value = value[0] if value else 0
+            return float(value or 0)
+
+        def _fetch() -> dict[str, QuoteData]:
+            qmt_symbols = {symbol: _qmt_symbol(symbol) for symbol in symbols}
+            data = xtdata.get_full_tick(list(qmt_symbols.values()))
             result: dict[str, QuoteData] = {}
-            for symbol, tick in (data or {}).items():
+            for symbol, qmt_symbol in qmt_symbols.items():
+                tick = (data or {}).get(qmt_symbol) or (data or {}).get(symbol)
                 if not tick:
                     continue
+                tick_time = tick.get("time")
+                market_time = datetime.now(UTC).replace(tzinfo=None)
+                if tick_time:
+                    timestamp = float(tick_time)
+                    if timestamp > 10_000_000_000:
+                        timestamp /= 1000
+                    market_time = datetime.fromtimestamp(timestamp, UTC).replace(tzinfo=None)
                 result[symbol] = QuoteData(
                     symbol=symbol,
                     name=str(tick.get("instrumentName", "")),
@@ -51,14 +74,18 @@ class QmtProvider(MarketDataProvider):
                     previous_close=float(tick.get("lastClose", 0) or 0),
                     volume=float(tick.get("volume", 0) or 0),
                     amount=float(tick.get("amount", 0) or 0),
-                    bid_price=float(tick.get("bidPrice", 0) or 0),
-                    ask_price=float(tick.get("askPrice", 0) or 0),
+                    bid_price=_best_price(tick.get("bidPrice")),
+                    ask_price=_best_price(tick.get("askPrice")),
                     source=self.name,
-                    market_time=datetime.utcnow(),
-                    received_at=datetime.utcnow(),
+                    market_time=market_time,
+                    received_at=datetime.now(UTC).replace(tzinfo=None),
                     is_stale=False,
                 )
             return result
+
+        try:
+            # xtdata 是同步 API，放入线程避免阻塞 FastAPI 事件循环。
+            return await asyncio.to_thread(_fetch)
         except Exception as exc:  # noqa: BLE001
             logger.warning("QMT 获取行情失败: %s", exc)
             return {}

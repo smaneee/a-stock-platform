@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
+from datetime import datetime
 
 from app.config import get_settings
 from app.market_data.base import QuoteData
@@ -23,15 +24,60 @@ class QuoteCache:
         # 最新行情：symbol -> QuoteData
         self._latest: dict[str, QuoteData] = {}
         # 滚动窗口：symbol -> OrderedDict[market_time, QuoteData]
-        self._windows: dict[str, OrderedDict] = {}
+        self._windows: dict[str, OrderedDict[datetime, QuoteData]] = {}
+        # 实时源通常返回当日累计量，用它换算每次轮询的增量。
+        self._cumulative: dict[str, tuple[object, str, float, float]] = {}
 
     def update(self, quote: QuoteData) -> None:
-        """更新单条行情。"""
+        """更新最新快照，并按自然分钟聚合为 K 线。"""
         with self._lock:
             self._latest[quote.symbol] = quote
             window = self._windows.setdefault(quote.symbol, OrderedDict())
-            key = quote.market_time or quote.received_at
-            window[key] = quote
+            timestamp = quote.market_time or quote.received_at
+            key = timestamp.replace(second=0, microsecond=0)
+
+            previous_cumulative = self._cumulative.get(quote.symbol)
+            current_marker = (timestamp.date(), quote.source)
+            volume_delta = 0.0
+            amount_delta = 0.0
+            if previous_cumulative and previous_cumulative[:2] == current_marker:
+                volume_delta = max(0.0, quote.volume - previous_cumulative[2])
+                amount_delta = max(0.0, quote.amount - previous_cumulative[3])
+            self._cumulative[quote.symbol] = (
+                current_marker[0],
+                current_marker[1],
+                quote.volume,
+                quote.amount,
+            )
+
+            current_bar = window.get(key)
+            if current_bar is None:
+                previous_close = next(reversed(window.values())).price if window else quote.previous_close
+                window[key] = quote.model_copy(
+                    update={
+                        "open": quote.price,
+                        "high": quote.price,
+                        "low": quote.price,
+                        "previous_close": previous_close,
+                        "volume": volume_delta,
+                        "amount": amount_delta,
+                        "market_time": key,
+                    }
+                )
+            else:
+                window[key] = current_bar.model_copy(
+                    update={
+                        "price": quote.price,
+                        "high": max(current_bar.high, quote.price),
+                        "low": min(current_bar.low, quote.price),
+                        "volume": current_bar.volume + volume_delta,
+                        "amount": current_bar.amount + amount_delta,
+                        "bid_price": quote.bid_price,
+                        "ask_price": quote.ask_price,
+                        "received_at": quote.received_at,
+                        "is_stale": quote.is_stale,
+                    }
+                )
             # 修剪滚动窗口
             while len(window) > self._window_size:
                 window.popitem(last=False)
@@ -66,3 +112,4 @@ class QuoteCache:
         with self._lock:
             self._latest.clear()
             self._windows.clear()
+            self._cumulative.clear()

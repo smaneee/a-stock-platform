@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -18,17 +19,20 @@ router = APIRouter(prefix="/api/paper", tags=["paper"])
 
 
 class AccountCreate(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=100)
     initial_cash: float = Field(100_000.0, gt=0)
 
 
 class OrderCreate(BaseModel):
     account_id: int
     symbol: str
-    side: str  # BUY / SELL
+    side: Literal["BUY", "SELL", "buy", "sell"]
     quantity: int = Field(..., gt=0)
-    price: float | None = None
-    signal_id: str | None = None
+    price: float | None = Field(
+        None,
+        description="已弃用；第一版始终按服务端获取的当前盘口价模拟成交",
+    )
+    signal_id: str | None = Field(None, max_length=64)
 
 
 @router.get("/accounts")
@@ -77,15 +81,13 @@ async def place_order(
     if quote is None:
         raise HTTPException(status_code=400, detail="无法获取行情，拒绝下单")
 
-    price = body.price if body.price is not None else quote.price
-
     broker = PaperBroker(db)
     order, error = broker.place_order(
         account_id=body.account_id,
         symbol=body.symbol,
         side=body.side,
         quantity=body.quantity,
-        price=price,
+        price=quote.price,
         quote=quote,
         signal_id=body.signal_id,
     )
@@ -128,7 +130,7 @@ def list_positions(
 @router.get("/trades")
 def list_trades(
     account_id: int,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=1000),
     db: Session = Depends(get_db),
 ) -> dict:
     """查询成交记录。"""

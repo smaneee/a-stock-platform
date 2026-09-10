@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     # 数据库
     database_url: str = "sqlite:///./a_stock.db"
+    auto_create_tables: bool = False
 
     # 服务
     host: str = "127.0.0.1"
@@ -25,10 +26,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # 行情数据源优先级
-    market_providers: str = "tencent,akshare,mock"
+    # Mock 只能由测试或演示环境显式启用，禁止真实行情失败时返回随机价格。
+    market_providers: str = "tencent,akshare"
     quote_poll_interval: float = 3.0
     rolling_window_size: int = 300
     signal_cooldown_seconds: float = 60.0
+    max_quote_age_seconds: float = 15.0
 
     # 各数据源密钥（仅通过环境变量提供）
     qmt_api_key: str = "YOUR_API_KEY"

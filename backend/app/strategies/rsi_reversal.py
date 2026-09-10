@@ -1,11 +1,10 @@
 """RSI 超买超卖预警策略。"""
 from __future__ import annotations
 
-from datetime import datetime
-
 from app.indicators.rsi import rsi
 from app.market_data.base import QuoteData
 from app.strategies.base import Signal, Strategy
+from app.time_utils import utc_now
 
 
 class RsiReversalStrategy(Strategy):
@@ -35,7 +34,7 @@ class RsiReversalStrategy(Strategy):
             return None
 
         latest = history[-1]
-        source_time = latest.market_time or latest.received_at or datetime.utcnow()
+        source_time = latest.market_time or latest.received_at or utc_now()
 
         # 超买：RSI 从上方下穿超买线
         if prev >= self._overbought > cur:

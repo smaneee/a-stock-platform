@@ -23,13 +23,14 @@ if (-not (Test-Path ".venv")) {
     python -m venv .venv
 }
 
-# 3. Install dependencies
+# 3. Install dependencies from a mainland China mirror
 Write-Host "Installing dependencies..."
-& ".venv\Scripts\python.exe" -m pip install --upgrade pip
-& ".venv\Scripts\pip.exe" install -r requirements.txt
+& ".venv\Scripts\python.exe" -m pip install `
+    --index-url "https://pypi.tuna.tsinghua.edu.cn/simple" `
+    -r requirements.txt
 
-# 4. Run database migration (optional, dev uses create_all)
-# & ".venv\Scripts\alembic.exe" upgrade head
+# 4. Run database migrations
+& ".venv\Scripts\python.exe" -m alembic upgrade head
 
 # 5. Start server
 Write-Host "Starting uvicorn on http://127.0.0.1:8000 ..."

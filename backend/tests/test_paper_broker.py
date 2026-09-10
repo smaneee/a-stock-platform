@@ -1,4 +1,5 @@
 """模拟交易（Paper Broker）测试。"""
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -126,5 +127,31 @@ def test_buy_stale_quote_rejected(db_session):
     quote = make_quote(symbol="600000", price=10.0, is_stale=True)
 
     order, error = broker.place_order(account.id, "600000", "BUY", 100, 10.0, quote=quote)
+    assert order is None
+    assert "过期" in error
+
+
+def test_client_cannot_choose_an_arbitrary_fill_price(db_session):
+    """客户端传入低价不能绕过资金与仓位风控。"""
+    account = _create_account(db_session)
+    broker = PaperBroker(db_session)
+    quote = make_quote(symbol="600000", price=10.0)
+
+    order, error = broker.place_order(
+        account.id, "600000", "BUY", 100, 0.01, quote=quote
+    )
+    assert order is not None, error
+    assert float(order.price) == pytest.approx(quote.ask_price)
+
+
+def test_received_quote_too_old_is_rejected(db_session):
+    account = _create_account(db_session)
+    broker = PaperBroker(db_session)
+    quote = make_quote(symbol="600000", price=10.0)
+    quote.received_at -= timedelta(minutes=1)
+
+    order, error = broker.place_order(
+        account.id, "600000", "BUY", 100, 10.0, quote=quote
+    )
     assert order is None
     assert "过期" in error

@@ -13,6 +13,7 @@ from typing import Callable
 import httpx
 
 from app.market_data.base import MarketDataProvider, QuoteData
+from app.time_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ def _parse_quote(text: str) -> QuoteData | None:
             ask_price=ask_price,
             source="tencent",
             market_time=market_time,
-            received_at=datetime.utcnow(),
+            received_at=utc_now(),
             is_stale=False,
         )
     except (ValueError, IndexError, TypeError):

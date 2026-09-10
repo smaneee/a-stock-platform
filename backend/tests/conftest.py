@@ -13,6 +13,7 @@ if str(BACKEND_DIR) not in sys.path:
 # 测试环境使用内存 SQLite，避免污染真实数据
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("MARKET_PROVIDERS", "mock")
+os.environ.setdefault("AUTO_CREATE_TABLES", "true")
 
 import pytest  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402

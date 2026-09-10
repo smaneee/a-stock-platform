@@ -1,10 +1,11 @@
 """策略触发测试。"""
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from app.strategies.breakout import BreakoutStrategy
 from app.strategies.ma_cross import MaCrossStrategy
 from app.strategies.macd_cross import MacdCrossStrategy
 from app.strategies.rsi_reversal import RsiReversalStrategy
+from app.time_utils import utc_now
 
 from tests.helpers import make_history, make_quote
 
@@ -18,7 +19,7 @@ def test_ma_cross_insufficient_data():
 def test_ma_cross_golden_cross():
     """前 21 根持平，最后一根跳涨，触发 MA5 上穿 MA20 金叉。"""
     strategy = MaCrossStrategy()
-    start = datetime.utcnow() - timedelta(days=22)
+    start = utc_now() - timedelta(days=22)
     history = []
     for i in range(21):
         history.append(make_quote(symbol="600000", price=10.0, market_time=start + timedelta(minutes=i)))
@@ -51,7 +52,7 @@ def test_breakout_insufficient_data():
 def test_breakout_signal():
     """放量突破前 20 根高点。"""
     strategy = BreakoutStrategy(lookback=20, volume_ratio=1.5)
-    start = datetime.utcnow() - timedelta(days=22)
+    start = utc_now() - timedelta(days=22)
     history = []
     for i in range(21):
         history.append(
@@ -105,7 +106,7 @@ def test_macd_returns_none_or_signal():
     """MACD 策略在合理数据下不抛异常。"""
     strategy = MacdCrossStrategy()
     # 先跌后涨的 V 型数据
-    start = datetime.utcnow() - timedelta(days=50)
+    start = utc_now() - timedelta(days=50)
     history = []
     for i in range(50):
         if i < 25:

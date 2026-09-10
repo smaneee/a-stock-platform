@@ -1,11 +1,10 @@
 """均线交叉策略：MA5 上穿 MA20（金叉）产生买入信号。"""
 from __future__ import annotations
 
-from datetime import datetime
-
 from app.indicators.moving_average import latest_valid, ma
 from app.market_data.base import QuoteData
 from app.strategies.base import Signal, Strategy
+from app.time_utils import utc_now
 
 
 class MaCrossStrategy(Strategy):
@@ -34,7 +33,7 @@ class MaCrossStrategy(Strategy):
             return None
 
         latest = history[-1]
-        source_time = latest.market_time or latest.received_at or datetime.utcnow()
+        source_time = latest.market_time or latest.received_at or utc_now()
 
         # 金叉：前一日 MA5 <= MA20，当日 MA5 > MA20
         if prev_ma5 <= prev_ma20 and cur_ma5 > cur_ma20:

@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 from app.backtest.engine import BacktestEngine
 from app.backtest.execution import ExecutionConfig, ExecutionSimulator
+from app.strategies.base import Signal, Strategy
 from app.strategies.ma_cross import MaCrossStrategy
 
 from tests.helpers import make_history, make_quote
@@ -83,3 +84,36 @@ def test_execution_sell_stamp_tax():
     result = sim.try_fill("SELL", 100, bar)
     assert result.filled is True
     assert result.stamp_tax > 0
+
+
+class _BuyThenSellStrategy(Strategy):
+    name = "buy_then_sell"
+
+    def analyze(self, history):
+        latest = history[-1]
+        if len(history) == 1:
+            direction = "BUY"
+        elif len(history) == 2:
+            direction = "SELL"
+        else:
+            return None
+        return Signal(
+            symbol=latest.symbol,
+            strategy_name=self.name,
+            direction=direction,
+            reason="测试 T+1",
+            price=latest.price,
+            source_time=latest.market_time,
+        )
+
+
+def test_intraday_next_bar_does_not_unlock_t1_position():
+    """分钟回测中，下一分钟不等于下一个交易日。"""
+    start = datetime(2026, 9, 9, 9, 30)
+    history = [
+        make_quote(market_time=start + timedelta(minutes=index), price=10 + index * 0.01)
+        for index in range(3)
+    ]
+    result = BacktestEngine(_BuyThenSellStrategy()).run(history)
+    assert result.trade_count == 1
+    assert result.trades[0]["side"] == "BUY"

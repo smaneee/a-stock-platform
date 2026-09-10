@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextlib import suppress
 from dataclasses import dataclass, field
 
 from fastapi import WebSocket
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-@dataclass
+@dataclass(eq=False)
 class _Connection:
     """单个 WebSocket 连接的内部状态。"""
 
@@ -29,6 +30,7 @@ class _Connection:
     channel: str = "quotes"  # quotes / signals / all
     symbols: set[str] = field(default_factory=set)
     max_subscriptions: int = 200
+    sender_task: asyncio.Task[None] | None = field(default=None, repr=False)
 
     def can_subscribe(self, new_symbols: set[str]) -> bool:
         merged = self.symbols | new_symbols
@@ -54,11 +56,34 @@ class ConnectionManager:
         )
         async with self._lock:
             self._connections.add(conn)
-        asyncio.create_task(self._sender(conn))
+        conn.sender_task = asyncio.create_task(
+            self._sender(conn), name=f"websocket-sender-{id(websocket)}"
+        )
 
     async def disconnect(self, websocket: WebSocket) -> None:
+        removed: _Connection | None = None
         async with self._lock:
-            self._connections = {c for c in self._connections if c.websocket is not websocket}
+            for conn in self._connections:
+                if conn.websocket is websocket:
+                    removed = conn
+                    break
+            if removed is not None:
+                self._connections.discard(removed)
+
+        task = removed.sender_task if removed else None
+        if task and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    async def close(self) -> None:
+        """关闭所有连接并回收发送任务。"""
+        async with self._lock:
+            connections = list(self._connections)
+        for conn in connections:
+            with suppress(Exception):
+                await conn.websocket.close(code=1001)
+            await self.disconnect(conn.websocket)
 
     async def subscribe(self, websocket: WebSocket, symbols: list[str]) -> bool:
         """订阅股票，返回是否成功。"""
@@ -99,11 +124,9 @@ class ConnectionManager:
                 try:
                     conn.queue.put_nowait(text)
                 except asyncio.QueueFull:
-                    try:
+                    with suppress(asyncio.QueueEmpty, asyncio.QueueFull):
                         conn.queue.get_nowait()
                         conn.queue.put_nowait(text)
-                    except asyncio.QueueFull:
-                        pass
             except Exception:  # noqa: BLE001
                 continue
 
@@ -113,6 +136,8 @@ class ConnectionManager:
             while True:
                 text = await conn.queue.get()
                 await conn.websocket.send_text(text)
+        except asyncio.CancelledError:
+            raise
         except Exception:  # noqa: BLE001 - 客户端断开
             pass
         finally:

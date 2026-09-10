@@ -7,8 +7,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from decimal import Decimal
+import math
+from datetime import UTC, datetime
+from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -19,11 +20,16 @@ from app.database.models import (
     PaperPosition,
     PaperTrade,
 )
+from app.config import get_settings
 from app.market_data.base import QuoteData
 from app.paper_trading.portfolio import PortfolioService
 from app.risk.risk_manager import RiskManager
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
+
+_MONEY_QUANT = Decimal("0.01")
+_PRICE_QUANT = Decimal("0.0001")
 
 
 class PaperBroker:
@@ -62,16 +68,35 @@ class PaperBroker:
         # 幂等检查：同一信号不能重复成交
         if signal_id:
             existing = self._db.scalars(
-                select(PaperTrade).where(PaperTrade.signal_id == signal_id)
+                select(PaperTrade).where(
+                    PaperTrade.account_id == account_id,
+                    PaperTrade.signal_id == signal_id,
+                )
             ).first()
             if existing:
                 return None, "该信号已成交，不可重复下单"
 
-        # 行情校验（数据过期禁止成交）
+        # 行情校验（数据过期、代码错配或异常价格均禁止成交）
         if quote is None:
             return None, "缺少行情数据"
         if quote.is_stale:
             return None, "行情数据过期，禁止成交"
+        if quote.symbol != symbol:
+            return None, "行情代码与委托代码不一致"
+        received_at = quote.received_at
+        if received_at.tzinfo is None:
+            received_at = received_at.replace(tzinfo=UTC)
+        quote_age = (datetime.now(UTC) - received_at).total_seconds()
+        if quote_age > settings.max_quote_age_seconds or quote_age < -5:
+            return None, "行情时间异常或已过期，禁止成交"
+
+        # 第一版只支持按当前盘口立即模拟成交，不接受客户端自报成交价。
+        market_price = quote.ask_price if side == "BUY" else quote.bid_price
+        if not math.isfinite(market_price) or market_price <= 0:
+            market_price = quote.price
+        if not math.isfinite(market_price) or market_price <= 0:
+            return None, "行情价格无效，禁止成交"
+        price = market_price
 
         snapshot = self._portfolio.calculate_snapshot(account, {symbol: quote})
 
@@ -104,7 +129,7 @@ class PaperBroker:
         except Exception as exc:  # noqa: BLE001
             self._db.rollback()
             logger.error("成交失败: %s", exc)
-            return None, f"成交失败: {exc}"
+            return None, "成交失败，请检查服务日志"
 
         self._db.add(order)
         self._db.add(trade)
@@ -144,14 +169,23 @@ class PaperBroker:
         self._db.add(order)
         self._db.flush()
 
-        value = quantity * price
-        commission = max(value * self._risk.limits.commission_rate, self._risk.limits.min_commission)
-        stamp_tax = self._risk.stamp_tax(value) if side == "SELL" else 0.0
+        price_decimal = Decimal(str(price)).quantize(_PRICE_QUANT, rounding=ROUND_HALF_UP)
+        value = price_decimal * quantity
+        commission = max(
+            value * Decimal(str(self._risk.limits.commission_rate)),
+            Decimal(str(self._risk.limits.min_commission)),
+        ).quantize(_MONEY_QUANT, rounding=ROUND_HALF_UP)
+        stamp_tax = (
+            value * Decimal(str(self._risk.limits.stamp_tax_rate))
+            if side == "SELL"
+            else Decimal("0")
+        ).quantize(_MONEY_QUANT, rounding=ROUND_HALF_UP)
 
         if side == "BUY":
             total_cost = value + commission
-            account.available_cash = Decimal(str(float(account.available_cash) - total_cost))
-            account.frozen_cash = Decimal(str(float(account.frozen_cash)))
+            account.available_cash = (account.available_cash - total_cost).quantize(
+                _MONEY_QUANT, rounding=ROUND_HALF_UP
+            )
             # 更新持仓
             position = self._portfolio.get_position(account.id, symbol)
             if position is None:
@@ -165,14 +199,18 @@ class PaperBroker:
                 self._db.add(position)
                 self._db.flush()
             # 更新平均成本
-            old_total_cost = float(position.avg_cost) * position.quantity
+            old_total_cost = position.avg_cost * position.quantity
             new_quantity = position.quantity + quantity
-            position.avg_cost = Decimal(str((old_total_cost + total_cost) / new_quantity))
+            position.avg_cost = ((old_total_cost + total_cost) / new_quantity).quantize(
+                _PRICE_QUANT, rounding=ROUND_HALF_UP
+            )
             position.quantity = new_quantity
             # T+1：当日买入的股票不可卖，available_quantity 不增加
         else:
             total_proceeds = value - commission - stamp_tax
-            account.available_cash = Decimal(str(float(account.available_cash) + total_proceeds))
+            account.available_cash = (account.available_cash + total_proceeds).quantize(
+                _MONEY_QUANT, rounding=ROUND_HALF_UP
+            )
             position = self._portfolio.get_position(account.id, symbol)
             if position is None:
                 raise ValueError("持仓不存在")
@@ -185,10 +223,10 @@ class PaperBroker:
             symbol=symbol,
             side=side,
             quantity=quantity,
-            price=price,
-            commission=Decimal(str(commission)),
-            stamp_tax=Decimal(str(stamp_tax)),
+            price=price_decimal,
+            commission=commission,
+            stamp_tax=stamp_tax,
             signal_id=signal_id,
-            executed_at=datetime.utcnow(),
+            executed_at=datetime.now(UTC).replace(tzinfo=None),
         )
         return order, trade

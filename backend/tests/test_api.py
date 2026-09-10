@@ -11,6 +11,59 @@ def test_health():
         data = resp.json()
         assert data["status"] == "ok"
         assert "不构成投资建议" in data["disclaimer"]
+        # 详细健康检查应包含组件状态
+        assert "database" in data
+        assert "scheduler" in data
+        assert "providers" in data
+        assert data["database"]["ok"] is True
+        assert data["scheduler"]["running"] is True
+
+
+def test_liveness():
+    """进程存活探针：永远返回 ok。"""
+    with TestClient(app) as client:
+        resp = client.get("/api/health/live")
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ok"}
+
+
+def test_readiness_ok():
+    """就绪探针：DB + 调度器都正常时返回 200。"""
+    with TestClient(app) as client:
+        resp = client.get("/api/health/ready")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert body["database"] is True
+        assert body["scheduler"] is True
+
+
+def test_readiness_scheduler_down():
+    """就绪探针：调度器标记为停止时返回 503。"""
+    with TestClient(app) as client:
+        # 临时把 scheduler 替换成不运行的假对象，避免破坏全局状态
+        real_scheduler = client.app.state.scheduler
+        from app.realtime.quote_scheduler import QuoteScheduler
+
+        class _StoppedScheduler(QuoteScheduler):
+            @property
+            def is_running(self) -> bool:  # type: ignore[override]
+                return False
+
+        client.app.state.scheduler = _StoppedScheduler(
+            provider_manager=real_scheduler._provider_manager,
+            quote_cache=real_scheduler._cache,
+            connection_manager=real_scheduler._ws,
+            get_symbols=real_scheduler._get_symbols,
+        )
+        try:
+            resp = client.get("/api/health/ready")
+            assert resp.status_code == 503
+            body = resp.json()["detail"]
+            assert body["status"] == "not_ready"
+            assert body["scheduler"] is False
+        finally:
+            client.app.state.scheduler = real_scheduler
 
 
 def test_market_providers():
@@ -115,3 +168,10 @@ def test_paper_account_create_and_list():
 def test_disclaimer_present():
     """所有接口必须包含免责声明（由应用描述体现）。"""
     assert "不构成投资建议" in app.description
+
+
+def test_websocket_quote_connection_can_subscribe():
+    """连接对象必须可注册，订阅路径不能在握手后崩溃。"""
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/quotes") as websocket:
+            websocket.send_json({"action": "subscribe", "symbols": ["600000"]})

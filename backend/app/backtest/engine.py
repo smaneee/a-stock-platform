@@ -49,15 +49,19 @@ class BacktestEngine:
         strategy: Strategy,
         initial_cash: float = 100_000.0,
         config: ExecutionConfig | None = None,
+        analysis_window: int = 300,
     ):
         self.strategy = strategy
         self.initial_cash = initial_cash
         self.simulator = ExecutionSimulator(config)
+        self.analysis_window = max(60, analysis_window)
 
     def run(self, history: list[QuoteData]) -> BacktestResult:
         """运行回测，返回结果。"""
         if not history:
             return BacktestResult()
+
+        history = sorted(history, key=lambda item: item.market_time or item.received_at)
 
         cash = self.initial_cash
         position = 0  # 总持仓
@@ -68,11 +72,14 @@ class BacktestEngine:
         equity_curve: list[float] = []
         trades: list[dict] = []
         closed_trades: list[dict] = []  # 已平仓，用于胜率/盈亏比
+        previous_trading_date = None
 
         for i, bar in enumerate(history):
-            # T+1 解冻：前一根 K 线买入的股票在本根变为可卖
-            available_position += today_bought
-            today_bought = 0
+            trading_date = (bar.market_time or bar.received_at).date()
+            # T+1 按交易日解冻，分钟回测不能在下一分钟提前解冻。
+            if previous_trading_date is not None and trading_date != previous_trading_date:
+                available_position += today_bought
+                today_bought = 0
 
             # 1) 处理上一根 K 线产生的 pending 信号，在本根开盘价成交
             if pending_signal is not None:
@@ -84,13 +91,15 @@ class BacktestEngine:
                 pending_signal = None
 
             # 2) 用截至本根的历史数据生成信号（收盘后才知道）
-            signal = self.strategy.analyze(history[: i + 1])
+            start_index = max(0, i + 1 - self.analysis_window)
+            signal = self.strategy.analyze(history[start_index : i + 1])
             if signal is not None:
                 pending_signal = signal
 
             # 3) 记录资金曲线（按收盘价估值）
             total_asset = cash + position * bar.price
             equity_curve.append(total_asset)
+            previous_trading_date = trading_date
 
         result = BacktestResult(equity_curve=equity_curve, trades=trades)
         result.trade_count = len(trades)
@@ -121,8 +130,17 @@ class BacktestEngine:
 
         if signal.direction == "BUY":
             # 按 100 股整数手，用可用现金买入
-            price = bar.open * (1 + self.simulator.config.slippage)
-            affordable = int(cash // (price * 100)) * 100 if price > 0 else 0
+            estimated_price = bar.open * (1 + self.simulator.config.slippage)
+            affordable = int(cash // (estimated_price * 100)) * 100 if estimated_price > 0 else 0
+            while affordable >= 100:
+                value = estimated_price * affordable
+                commission = max(
+                    value * self.simulator.config.commission_rate,
+                    self.simulator.config.min_commission,
+                )
+                if value + commission <= cash:
+                    break
+                affordable -= 100
             if affordable < 100:
                 return cash, position, available_position, today_bought, avg_cost, realized
 
@@ -163,6 +181,8 @@ class BacktestEngine:
             pnl = (result.price - avg_cost) * result.quantity - result.commission - result.stamp_tax
             position -= result.quantity
             available_position -= result.quantity
+            if position == 0:
+                avg_cost = 0.0
 
             realized["trades"].append(
                 {

@@ -127,8 +127,9 @@ def _get_watch_symbols() -> list[str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：初始化数据库与调度器。"""
-    # 初始化数据库表（开发环境；生产使用 Alembic 迁移）
-    Base.metadata.create_all(bind=engine)
+    # 仅测试或一次性演示环境允许 create_all；正常启动必须使用 Alembic。
+    if settings.auto_create_tables:
+        Base.metadata.create_all(bind=engine)
 
     # 同步策略表
     db = SessionLocal()
@@ -142,10 +143,13 @@ async def lifespan(app: FastAPI):
     scheduler.start()
 
     logger.info("A 股实时分析平台后端已启动")
-    yield
-
-    scheduler.shutdown()
-    logger.info("后端已关闭")
+    try:
+        yield
+    finally:
+        scheduler.shutdown()
+        await app.state.connection_manager.close()
+        await app.state.provider_manager.close()
+        logger.info("后端已关闭")
 
 
 def create_app() -> FastAPI:

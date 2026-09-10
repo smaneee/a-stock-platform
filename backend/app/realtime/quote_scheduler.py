@@ -62,6 +62,11 @@ class QuoteScheduler:
             self._scheduler.shutdown(wait=False)
         self._running = False
 
+    @property
+    def is_running(self) -> bool:
+        """是否在运行（供健康检查查询）。"""
+        return self._running and self._scheduler.running
+
     async def poll_once(self) -> dict[str, QuoteData]:
         """执行一次轮询。"""
         symbols = self._get_symbols()
@@ -76,6 +81,10 @@ class QuoteScheduler:
                 continue
             if not self._validate(quote):
                 logger.warning("跳过非法行情: %s", symbol)
+                continue
+            # 过期行情可以推送给前端展示断流状态，但不能进入指标和策略管道。
+            if quote.is_stale:
+                await self._ws.broadcast_quote(quote)
                 continue
             self._cache.update(quote)
             valid_quotes[symbol] = quote

@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Callable
 
 from app.market_data.base import MarketDataProvider, QuoteData
+from app.time_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ class AkshareProvider(MarketDataProvider):
                             ask_price=0.0,
                             source=self.name,
                             market_time=datetime.strptime(str(row.get("日期")), "%Y-%m-%d"),
-                            received_at=datetime.utcnow(),
+                            received_at=utc_now(),
                             is_stale=False,
                         )
                     )

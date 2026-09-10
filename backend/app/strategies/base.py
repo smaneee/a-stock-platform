@@ -8,6 +8,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.market_data.base import QuoteData
+from app.time_utils import utc_now
 
 
 class Signal(BaseModel):
@@ -24,7 +25,7 @@ class Signal(BaseModel):
     reason: str
     price: float
     source_time: datetime
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
     strategy_version: str = "1.0.0"
 
 

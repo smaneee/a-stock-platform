@@ -11,6 +11,8 @@ from typing import Callable
 
 from pydantic import BaseModel, Field
 
+from app.time_utils import utc_now
+
 
 class QuoteData(BaseModel):
     """统一行情数据结构。
@@ -31,7 +33,7 @@ class QuoteData(BaseModel):
     ask_price: float = Field(0.0, description="卖一价")
     source: str = Field("", description="数据来源标识")
     market_time: datetime | None = Field(None, description="行情时间")
-    received_at: datetime = Field(default_factory=datetime.utcnow, description="接收时间")
+    received_at: datetime = Field(default_factory=utc_now, description="接收时间")
     is_stale: bool = Field(False, description="是否为过期缓存数据")
 
     @property

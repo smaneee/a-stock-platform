@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 
@@ -13,6 +14,7 @@ from app.backtest.engine import BacktestEngine
 from app.database.models import Backtest
 from app.database.session import SessionLocal, get_db
 from app.strategies import registry
+from app.validation import validate_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,10 @@ async def create_backtest(
     db: Session = Depends(get_db),
 ) -> dict:
     """创建回测任务，立即返回任务 ID（后台异步执行）。"""
+    if not validate_symbol(body.symbol):
+        raise HTTPException(status_code=422, detail="非法股票代码")
+    if body.start_time >= body.end_time:
+        raise HTTPException(status_code=422, detail="开始时间必须早于结束时间")
     strategy = registry.get_strategy(body.strategy_name)
     if strategy is None:
         raise HTTPException(status_code=404, detail="策略不存在")
@@ -63,8 +69,6 @@ def get_backtest(backtest_id: int, db: Session = Depends(get_db)) -> dict:
     backtest = db.get(Backtest, backtest_id)
     if backtest is None:
         raise HTTPException(status_code=404, detail="回测任务不存在")
-    import json
-
     result = json.loads(backtest.result) if backtest.result else None
     return {
         "id": backtest.id,
@@ -102,8 +106,6 @@ async def _run_backtest(backtest_id: int, body: BacktestRequest, provider_manage
         engine = BacktestEngine(strategy=strategy, initial_cash=body.initial_cash)
         result = engine.run(history)
 
-        import json
-
         backtest.status = "DONE"
         backtest.result = json.dumps(result.to_dict(), ensure_ascii=False)
         db.commit()
@@ -114,7 +116,9 @@ async def _run_backtest(backtest_id: int, body: BacktestRequest, provider_manage
             backtest = db.get(Backtest, backtest_id)
             if backtest:
                 backtest.status = "FAILED"
-                backtest.result = f'{{"error": "{exc}"}}'
+                backtest.result = json.dumps(
+                    {"error": "回测执行失败，请检查服务日志"}, ensure_ascii=False
+                )
                 db.commit()
         except Exception:  # noqa: BLE001
             pass

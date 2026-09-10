@@ -1,10 +1,9 @@
 """放量突破策略：放量突破最近 N 根 K 线高点产生买入信号。"""
 from __future__ import annotations
 
-from datetime import datetime
-
 from app.market_data.base import QuoteData
 from app.strategies.base import Signal, Strategy
+from app.time_utils import utc_now
 
 
 class BreakoutStrategy(Strategy):
@@ -40,7 +39,7 @@ class BreakoutStrategy(Strategy):
         if latest.volume < avg_volume * self._volume_ratio:
             return None
 
-        source_time = latest.market_time or latest.received_at or datetime.utcnow()
+        source_time = latest.market_time or latest.received_at or utc_now()
         return self._build_signal(
             symbol=latest.symbol,
             direction="BUY",

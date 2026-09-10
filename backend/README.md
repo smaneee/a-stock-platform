@@ -97,16 +97,55 @@ cd backend
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `DATABASE_URL` | 数据库连接串 | `sqlite:///./a_stock.db` |
-| `MARKET_PROVIDERS` | 数据源优先级 | `tencent,akshare,mock` |
+| `AUTO_CREATE_TABLES` | 启动时自动建表（仅测试/演示） | `false` |
+| `MARKET_PROVIDERS` | 数据源优先级 | `tencent,akshare` |
 | `QUOTE_POLL_INTERVAL` | 轮询间隔（秒） | `3` |
 | `ROLLING_WINDOW_SIZE` | 滚动窗口大小 | `300` |
 | `SIGNAL_COOLDOWN_SECONDS` | 信号冷却时间 | `60` |
+| `MAX_QUOTE_AGE_SECONDS` | 行情时效阈值（超过则拒绝成交） | `15` |
+| `RATE_LIMIT_PER_MINUTE` | 单 IP 每分钟最大请求数（0 关闭） | `300` |
+| `WS_MAX_SUBSCRIPTIONS` | 单 WebSocket 最大订阅数 | `200` |
+
+## 数据库迁移
+
+项目使用 [Alembic](https://alembic.sqlalchemy.org/) 管理 schema 变更：
+
+```bash
+# 升级到最新版本
+cd backend
+.venv\Scripts\alembic upgrade head
+
+# 降级一个版本
+.venv\Scripts\alembic downgrade -1
+
+# 完整回滚
+.venv\Scripts\alembic downgrade base
+```
+
+生产环境**不会**自动建表，必须先跑迁移；只有把 `AUTO_CREATE_TABLES=true`（测试/演示场景）才会在启动时 `Base.metadata.create_all`。
+
+迁移脚本位于 `backend/migrations/versions/`，已包含：
+
+- `0001_initial.py`：全部 10 张表
+- `0002_paper_trade_idempotency.py`：为 `paper_trades` 加 `(account_id, signal_id)` UNIQUE 约束，从数据库层杜绝同一信号重复成交
+
+## 健康检查
+
+按 K8s 探针语义拆分：
+
+| 端点 | 用途 | 失败含义 |
+|------|------|----------|
+| `GET /api/health/live` | 进程存活探针，永远 200 | 进程崩溃 |
+| `GET /api/health/ready` | 就绪探针：DB 可用 + 调度器已启动 | 503（不接流量） |
+| `GET /api/health` | 详细状态：DB、调度器、各数据源健康 | 监控/排障用 |
 
 ## API 概览
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/health` | 健康检查 |
+| GET | `/api/health` | 详细健康检查（DB + 调度器 + 数据源） |
+| GET | `/api/health/live` | 进程存活探针（K8s liveness） |
+| GET | `/api/health/ready` | 就绪探针（K8s readiness，503 表示不接流量） |
 | GET | `/api/market/providers` | 数据源状态 |
 | GET | `/api/quotes/{symbol}` | 单只行情 |
 | POST | `/api/quotes/batch` | 批量行情 |
@@ -133,9 +172,9 @@ cd backend
 | QMT/xtdata | 正式实时行情 | 可选，推送模式，延迟 <1s |
 | 腾讯行情 | 免费轮询 | 默认主数据源 |
 | AKShare | 历史数据 | 备用数据源 |
-| Mock | 演示/测试 | 非交易时段也能演示 |
+| Mock | 演示/测试 | 仅在 `MARKET_PROVIDERS=mock` 时显式启用 |
 
-数据源按 `MARKET_PROVIDERS` 优先级故障转移，严禁静默混合来源。全部失败时返回缓存数据并标记 `is_stale=true`。
+数据源按 `MARKET_PROVIDERS` 优先级故障转移，严禁静默混合来源。全部失败时返回缓存数据并标记 `is_stale=true`。Mock 不参与真实数据源的默认兜底，避免把随机价格误认为真实行情。
 
 ## 已知限制
 

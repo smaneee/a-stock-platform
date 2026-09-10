@@ -21,6 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.session import Base
+from app.time_utils import utc_now
 
 
 class Watchlist(Base):
@@ -30,7 +31,7 @@ class Watchlist(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     symbols: Mapped[list["WatchlistSymbol"]] = relationship(
         back_populates="watchlist", cascade="all, delete-orphan"
@@ -51,7 +52,7 @@ class WatchlistSymbol(Base):
     )
     symbol: Mapped[str] = mapped_column(String(16), nullable=False)
     name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     watchlist: Mapped["Watchlist"] = relationship(back_populates="symbols")
 
@@ -66,7 +67,7 @@ class Strategy(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     version: Mapped[str] = mapped_column(String(20), default="1.0.0")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class Signal(Base):
@@ -83,7 +84,7 @@ class Signal(Base):
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
     source_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     strategy_version: Mapped[str] = mapped_column(String(20), default="1.0.0")
 
 
@@ -97,7 +98,7 @@ class PaperAccount(Base):
     initial_cash: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
     available_cash: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
     frozen_cash: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     positions: Mapped[list["PaperPosition"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
@@ -139,13 +140,16 @@ class PaperOrder(Base):
     price: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="PENDING")  # PENDING/FILLED/CANCELLED/REJECTED
     signal_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class PaperTrade(Base):
     """模拟成交记录。"""
 
     __tablename__ = "paper_trades"
+    __table_args__ = (
+        UniqueConstraint("account_id", "signal_id", name="uq_paper_trade_account_signal"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     account_id: Mapped[int] = mapped_column(
@@ -159,7 +163,7 @@ class PaperTrade(Base):
     commission: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
     stamp_tax: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
     signal_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    executed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    executed_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class AssetRecord(Base):
@@ -172,7 +176,7 @@ class AssetRecord(Base):
         ForeignKey("paper_accounts.id", ondelete="CASCADE"), nullable=False
     )
     total_asset: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
-    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class Backtest(Base):
@@ -188,4 +192,4 @@ class Backtest(Base):
     initial_cash: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="PENDING")  # PENDING/RUNNING/DONE/FAILED
     result: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON 序列化的结果
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
