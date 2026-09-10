@@ -37,12 +37,17 @@ WAIT_SUCCEEDED_TIMEOUT_S = 90.0
 WAIT_POLL_INTERVAL_S = 1.0
 USE_MOCK = os.environ.get("E2E_USE_MOCK", "true").lower() in ("1", "true", "yes")
 
+# 仓库根目录：从当前脚本位置向上 1 级（scripts/ 的父目录）
+REPO_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_DIR = REPO_ROOT / "backend"
+FRONTEND_DIR = REPO_ROOT / "frontend"
+A_STOCK_DB = BACKEND_DIR / "a_stock.db"
+
 # 临时 SQLite 数据库路径（专用、不污染 a_stock.db）
 TEMP_DB_PATH = os.environ.get(
     "E2E_DB_PATH",
     str(Path(tempfile.gettempdir()) / f"e2e_smoke_{uuid.uuid4().hex[:8]}.db"),
 )
-A_STOCK_DB = Path("E:/workbuddy work/2026-09-09-15-34-54/a-stock-platform/backend/a_stock.db")
 
 # Run 标记
 RUN_ID = f"smoke-{uuid.uuid4().hex[:8]}"
@@ -136,15 +141,27 @@ async def verify_ws_subscription(symbol: str, res: SmokeResult) -> None:
 
 
 def start_backend_with_temp_db(backend_dir: Path) -> subprocess.Popen:
-    """启动后端，使用专用临时 SQLite DB，避免污染 a_stock.db。"""
+    """启动后端，使用专用临时 SQLite DB，避免污染 a_stock.db。
+
+    使用 sys.executable 调用 uvicorn 模块，确保使用当前 Python 解释器（任何 venv 都可工作）。
+    启动时使用 CREATE_NEW_PROCESS_GROUP（Windows）便于 kill 整组。
+    """
     log_path = Path(tempfile.gettempdir()) / f"e2e_backend_{RUN_ID}.log"
     env = os.environ.copy()
     env["DATABASE_URL"] = f"sqlite:///{TEMP_DB_PATH}"
     env["E2E_USE_MOCK"] = "true" if USE_MOCK else "false"
     log_file = open(log_path, "w", encoding="utf-8")
+    kwargs: dict = {
+        "cwd": str(backend_dir),
+        "stdout": log_file,
+        "stderr": subprocess.STDOUT,
+        "env": env,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     proc = subprocess.Popen(
         [
-            str(backend_dir / ".venv" / "Scripts" / "python.exe"),
+            sys.executable,
             "-m",
             "uvicorn",
             "app.main:app",
@@ -153,35 +170,45 @@ def start_backend_with_temp_db(backend_dir: Path) -> subprocess.Popen:
             "--port",
             "8000",
         ],
-        cwd=str(backend_dir),
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        env=env,
+        **kwargs,
     )
     print(f"  后端 PID={proc.pid}, log={log_path}")
     return proc
 
 
 def start_frontend(frontend_dir: Path) -> subprocess.Popen:
+    """启动前端 dev server。
+
+    npm.cmd 会 spawn 子 node.exe，必须用 CREATE_NEW_PROCESS_GROUP 启动便于
+    kill 时通过 CTRL_BREAK_EVENT 通知整个进程组。
+    """
     log_path = Path(tempfile.gettempdir()) / f"e2e_frontend_{RUN_ID}.log"
     log_file = open(log_path, "w", encoding="utf-8")
+    kwargs: dict = {
+        "cwd": str(frontend_dir),
+        "stdout": log_file,
+        "stderr": subprocess.STDOUT,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     proc = subprocess.Popen(
         ["npm.cmd", "run", "dev", "--", "--host", "127.0.0.1", "--port", "5173"],
-        cwd=str(frontend_dir),
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
+        **kwargs,
     )
     print(f"  前端 PID={proc.pid}, log={log_path}")
     return proc
 
 
 def init_temp_db(backend_dir: Path) -> None:
-    """运行 alembic upgrade head 在临时 DB 上建表。"""
+    """运行 alembic upgrade head 在临时 DB 上建表。
+
+    使用 sys.executable -m alembic 调用迁移，不依赖任何特定 venv。
+    """
     env = os.environ.copy()
     env["DATABASE_URL"] = f"sqlite:///{TEMP_DB_PATH}"
     print(f"  初始化临时数据库：{TEMP_DB_PATH}")
     result = subprocess.run(
-        [str(backend_dir / ".venv" / "Scripts" / "alembic.exe"), "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=str(backend_dir),
         env=env,
         capture_output=True,
@@ -210,17 +237,32 @@ def wait_for_http(url: str, timeout: float = 60.0) -> bool:
 
 
 def kill_process(proc: subprocess.Popen, name: str, errors: list[str]) -> None:
-    if proc.poll() is None:
-        try:
-            proc.send_signal(signal.SIGTERM)
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
+    """终止进程及其进程组（前端 npm.cmd 会 spawn 子 node.exe，必须 kill 整组）。"""
+    if proc.poll() is not None:
+        return  # 已退出
+    try:
+        # 先用 CTRL_BREAK_EVENT 通知进程组优雅退出（仅 Windows）
+        if os.name == "nt" and hasattr(signal, "CTRL_BREAK_EVENT"):
             try:
-                proc.kill()
+                proc.send_signal(signal.CTRL_BREAK_EVENT)
+            except Exception:
+                pass
+        else:
+            proc.terminate()
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            # 强 kill：连同进程组
+            try:
+                if hasattr(os, "kill") and hasattr(os, "getpgid"):
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                else:
+                    proc.kill()
+                proc.wait(timeout=5)
             except Exception as exc:
                 errors.append(f"{name} 强制 kill 失败: {exc}")
-        except Exception as exc:
-            errors.append(f"{name} 终止失败: {exc}")
+    except Exception as exc:
+        errors.append(f"{name} 终止失败: {exc}")
 
 
 def delete_temp_db(errors: list[str]) -> None:
@@ -247,6 +289,38 @@ def verify_no_residue(errors: list[str]) -> None:
 
     if Path(TEMP_DB_PATH).exists():
         errors.append(f"临时 DB 仍存在：{TEMP_DB_PATH}")
+
+
+def _record_a_stock_db_signature() -> tuple[int, float] | None:
+    """记录 a_stock.db 当前时刻的大小 + mtime，用于清理时校验未被修改。"""
+    if not A_STOCK_DB.exists():
+        return None
+    stat = A_STOCK_DB.stat()
+    return (stat.st_size, stat.st_mtime)
+
+
+# 初始签名：模块加载时立刻记录，作为整次 E2E 的「基准态」
+A_STOCK_DB_INITIAL_SIG: tuple[int, float] | None = _record_a_stock_db_signature()
+
+
+def _verify_a_stock_db_unchanged(errors: list[str]) -> None:
+    """校验 a_stock.db 在 E2E 期间未被修改：与模块加载时记录的 A_STOCK_DB_INITIAL_SIG 对比。"""
+    if A_STOCK_DB_INITIAL_SIG is None:
+        return
+    if not A_STOCK_DB.exists():
+        errors.append(
+            f"a_stock.db 在 E2E 启动时存在 (size={A_STOCK_DB_INITIAL_SIG[0]})，"
+            "结束时却消失（被删除或搬迁）"
+        )
+        return
+    size0, mtime0 = A_STOCK_DB_INITIAL_SIG
+    cur = A_STOCK_DB.stat()
+    if cur.st_size != size0 or cur.st_mtime != mtime0:
+        errors.append(
+            f"a_stock.db 在 E2E 期间被修改："
+            f"原 (size={size0}, mtime={mtime0:.0f}) "
+            f"现 (size={cur.st_size}, mtime={cur.st_mtime:.0f})"
+        )
 
 
 # ──────────────── 主流程 ────────────────
@@ -284,7 +358,15 @@ async def run_checks(res: SmokeResult) -> None:
         except Exception as exc:
             res.check("详细健康 /health", False, str(exc))
 
-        # 4. 指标 + data_status 严格匹配
+        # 4a. warmup：先触发一次报价请求，让 provider 至少有一次成功记录
+        try:
+            await client.post(
+                f"{BACKEND}/api/quotes/batch", json={"symbols": ["600000"]}
+            )
+        except Exception:
+            pass
+
+        # 4b. 指标 + data_status 严格匹配
         try:
             r = await client.get(f"{BACKEND}/api/metrics")
             data = r.json()
@@ -298,7 +380,7 @@ async def run_checks(res: SmokeResult) -> None:
         except Exception as exc:
             res.check("指标 /metrics", False, str(exc))
 
-        # 5. 批量行情
+        # 5. 批量行情（再次调用验证稳定性）
         try:
             r = await client.post(
                 f"{BACKEND}/api/quotes/batch", json={"symbols": ["600000", "000001"]}
@@ -484,25 +566,56 @@ async def run_checks(res: SmokeResult) -> None:
 
 
 async def main_managed() -> int:
-    """完整生命周期：启动服务 → 运行测试 → 关闭服务 → 清理 DB（清理失败即失败）。"""
+    """完整生命周期：迁移 → 启动服务 → 测试 → 关闭服务 → 清理 DB。
+
+    整个流程在单个 try/finally 中：
+    - 迁移失败：清理临时 DB（如果迁移部分创建了文件）
+    - 部分启动（只有 backend 或只有 frontend）：清理已启动的进程
+    - 未启动：只清理临时 DB
+    - 全部启动并跑完测试：清理进程 + DB + 验证残留
+
+    清理失败归入 cleanup_errors 并使测试失败。
+    """
     print(f"=== A 股平台端到端冒烟测试 (run={RUN_ID}) ===")
     print(f"  E2E_USE_MOCK={USE_MOCK}, DB={TEMP_DB_PATH}")
+    print(f"  REPO_ROOT={REPO_ROOT}")
 
-    backend_dir = Path("E:/workbuddy work/2026-09-09-15-34-54/a-stock-platform/backend")
-    frontend_dir = Path("E:/workbuddy work/2026-09-09-15-34-54/a-stock-platform/frontend")
-
-    # 保护：不能使用 a_stock.db
+    # 保护：拒绝 a_stock.db
     if TEMP_DB_PATH == str(A_STOCK_DB):
         raise RuntimeError("E2E 拒绝使用 a_stock.db，必须使用专用临时 DB")
-
-    init_temp_db(backend_dir)
-
-    backend = start_backend_with_temp_db(backend_dir)
-    frontend = start_frontend(frontend_dir)
+    if TEMP_DB_PATH.startswith(str(A_STOCK_DB)):
+        raise RuntimeError(f"E2E 临时 DB 路径 {TEMP_DB_PATH} 与 a_stock.db 冲突")
 
     res = SmokeResult()
+    backend: subprocess.Popen | None = None
+    frontend: subprocess.Popen | None = None
+    db_initialized = False
+    startup_error: Exception | None = None
+
     try:
-        # 等待 readiness
+        # 阶段 1：迁移（失败时直接跳到 finally）
+        try:
+            init_temp_db(BACKEND_DIR)
+            db_initialized = True
+        except Exception as exc:
+            startup_error = exc
+            res.check(
+                "managed: alembic 迁移", False, f"alembic upgrade 失败: {exc}"
+            )
+            return 1
+
+        # 阶段 2：启动进程（任何一个启动失败都跳到 finally）
+        try:
+            backend = start_backend_with_temp_db(BACKEND_DIR)
+            frontend = start_frontend(FRONTEND_DIR)
+        except Exception as exc:
+            startup_error = exc
+            res.check(
+                "managed: 进程启动", False, f"启动进程失败: {exc}"
+            )
+            return 1
+
+        # 阶段 3：等待就绪
         backend_ok = wait_for_http(f"{BACKEND}/api/health/ready", timeout=60)
         frontend_ok = wait_for_http(FRONTEND, timeout=30)
         if not backend_ok:
@@ -512,18 +625,27 @@ async def main_managed() -> int:
             res.check("前端启动就绪", False, "30 秒内未就绪")
             return 1
 
+        # 阶段 4：执行测试
         await run_checks(res)
 
     finally:
-        # 关闭服务
-        kill_process(backend, "后端", res.cleanup_errors)
-        kill_process(frontend, "前端", res.cleanup_errors)
-        # 等待端口释放
-        time.sleep(2)
-        # 删除临时 DB
-        delete_temp_db(res.cleanup_errors)
-        # 残留检查
+        # 清理：处理 3 种清理路径（未启动 / 部分启动 / 全启动）
+        # 1) 后端进程清理
+        if backend is not None:
+            kill_process(backend, "后端", res.cleanup_errors)
+        # 2) 前端进程清理
+        if frontend is not None:
+            kill_process(frontend, "前端", res.cleanup_errors)
+        # 3) 端口释放等待
+        if backend is not None or frontend is not None:
+            time.sleep(2)
+        # 4) 临时 DB 删除（即使迁移失败、没启动进程也要清）
+        if db_initialized:
+            delete_temp_db(res.cleanup_errors)
+        # 5) 残留检查：端口释放 + 临时 DB 不存在
         verify_no_residue(res.cleanup_errors)
+        # 6) a_stock.db 未被修改（取大小 + mtime 与初始一致）
+        _verify_a_stock_db_unchanged(res.cleanup_errors)
 
     passed, total = res.summary()
     cleanup_ok = len(res.cleanup_errors) == 0
