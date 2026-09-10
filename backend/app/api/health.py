@@ -40,23 +40,39 @@ def liveness() -> dict:
 
 @router.get("/health/ready")
 def readiness(request: Request) -> dict:
-    """就绪探针：DB 可用 + 行情调度器已启动才接流量。"""
+    """就绪探针：DB 可用 + 行情调度器已启动 + 交易日历非空才接流量。"""
     db_ok, db_error = _check_database()
     scheduler = getattr(request.app.state, "scheduler", None)
     scheduler_running = bool(scheduler and scheduler.is_running)
+    settlement_scheduler = getattr(request.app.state, "settlement_scheduler", None)
+    settlement_running = bool(settlement_scheduler and settlement_scheduler.is_running)
 
-    ready = db_ok and scheduler_running
+    # 交易日历非空：否则未同步，禁止静默启动
+    from app.market_rules.calendar import TradingCalendar
+    from app.database.session import SessionLocal
+    calendar_db = SessionLocal()
+    try:
+        calendar = TradingCalendar(calendar_db)
+        calendar_ready = not calendar.is_empty()
+        calendar_total = calendar.count()
+    finally:
+        calendar_db.close()
+
+    ready = db_ok and scheduler_running and settlement_running and calendar_ready
     body = {
         "status": "ok" if ready else "not_ready",
         "database": db_ok,
         "scheduler": scheduler_running,
+        "settlement_scheduler": settlement_running,
+        "trading_calendar": {
+            "ready": calendar_ready,
+            "total": calendar_total,
+        },
     }
     if db_error:
         body["database_error"] = db_error
     if not ready:
-        # K8s readiness probe 依赖 HTTP 状态码区分
         from fastapi import HTTPException
-
         raise HTTPException(status_code=503, detail=body)
     return body
 
@@ -68,11 +84,23 @@ async def health(request: Request) -> dict:
     provider_status = await provider_manager.health_check()
     db_ok, db_error = _check_database()
     scheduler = getattr(request.app.state, "scheduler", None)
+    settlement_scheduler = getattr(request.app.state, "settlement_scheduler", None)
+
+    from app.market_rules.calendar import TradingCalendar
+    from app.database.session import SessionLocal
+    calendar_db = SessionLocal()
+    try:
+        calendar = TradingCalendar(calendar_db)
+        calendar_info = {"total": calendar.count()}
+    finally:
+        calendar_db.close()
 
     return {
         "status": "ok",
         "disclaimer": "分析结果仅用于研究，不构成投资建议。",
         "database": {"ok": db_ok, **({"error": db_error} if db_error else {})},
         "scheduler": {"running": bool(scheduler and scheduler.is_running)},
+        "settlement_scheduler": {"running": bool(settlement_scheduler and settlement_scheduler.is_running)},
+        "trading_calendar": calendar_info,
         "providers": provider_status,
     }

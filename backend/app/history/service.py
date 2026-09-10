@@ -6,6 +6,7 @@
 - 网络失败回退到缓存，并明确提示数据更新时间
 - 连接/读取超时、有限重试与指数退避
 - 大批量分块处理
+- 缓存完整性基于交易日历校验（expected_count / actual_count / missing_dates）
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.database.models import HistoricalBar
 from app.history.quality import DataQualityChecker, QualityReport
 from app.market_data.base import QuoteData
+from app.market_rules.calendar import TradingCalendar
 from app.time_utils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -52,9 +54,16 @@ class HistoryResult:
 class HistoricalDataService:
     """历史行情本地化服务。"""
 
-    def __init__(self, db: Session, checker: DataQualityChecker | None = None):
+    def __init__(
+        self,
+        db: Session,
+        checker: DataQualityChecker | None = None,
+        provider_manager=None,
+    ):
         self._db = db
         self._checker = checker or DataQualityChecker()
+        # 显式注入 ProviderManager 时优先使用（含 mock 路径），否则直接调 AKShare
+        self._provider_manager = provider_manager
 
     async def get_history(
         self,
@@ -67,28 +76,39 @@ class HistoricalDataService:
     ) -> HistoryResult:
         """获取历史数据：优先本地缓存，缺失则增量同步。
 
+        - 完整性校验基于交易日历：返回 expected_count / actual_count / missing_dates。
         - 网络失败时返回缓存数据（source="cache"），并提示更新时间。
         - sync_if_incomplete=False 时只读缓存，不触发同步。
+        - 当本地交易日历为空时退化为端点判断（避免冷启动瞬间被静默）。
         """
         adjust = self._normalize_adjust(adjust)
+        start_date = start.date() if isinstance(start, datetime) else start
+        end_date = end.date() if isinstance(end, datetime) else end
+        calendar = TradingCalendar(self._db)
+        calendar_available = not calendar.is_empty()
         cached = self.get_cached(symbol, start, end, period, adjust)
 
-        if cached:
+        # 完整性检查：基于交易日历（若日历为空则用端点判断）
+        if calendar_available:
+            quality = self._checker.check(
+                cached, calendar, expected_start=start_date, expected_end=end_date
+            )
+            is_complete_by_calendar = quality.is_complete
+        else:
             quality = self._checker.check(cached)
+            is_complete_by_calendar = self._covers(cached, start, end)
+
+        if is_complete_by_calendar and cached:
             updated_at = max((b.received_at for b in cached), default=None)
-            # 缓存覆盖完整区间则直接返回
-            if self._covers(cached, start, end):
-                return HistoryResult(
-                    bars=cached,
-                    source="cache",
-                    data_updated_at=updated_at,
-                    is_complete=True,
-                    quality=quality,
-                )
+            return HistoryResult(
+                bars=cached,
+                source="cache",
+                data_updated_at=updated_at,
+                is_complete=True,
+                quality=quality,
+            )
 
         if not sync_if_incomplete:
-            # 只读模式：返回已有缓存并标记不完整
-            quality = self._checker.check(cached) if cached else QualityReport(total=0)
             updated_at = max((b.received_at for b in cached), default=None) if cached else None
             return HistoryResult(
                 bars=cached,
@@ -98,15 +118,27 @@ class HistoricalDataService:
                 quality=quality,
             )
 
-        # 尝试增量同步
+        # 增量同步：有日历则按缺口逐段下载；无日历则直接拉整个区间
         try:
-            added = await self.sync(symbol, start, end, period, adjust)
+            if calendar_available:
+                added = await self._sync_with_calendar(
+                    symbol, period, adjust, calendar, start_date, end_date
+                )
+            else:
+                added = await self.sync(symbol, start, end, period, adjust)
         except Exception as exc:  # noqa: BLE001
             logger.warning("历史数据同步失败，回退缓存: %s", exc)
             added = 0
 
         merged = self.get_cached(symbol, start, end, period, adjust)
-        quality = self._checker.check(merged)
+        if calendar_available:
+            quality = self._checker.check(
+                merged, calendar, expected_start=start_date, expected_end=end_date
+            )
+            is_complete_final = quality.is_complete
+        else:
+            quality = self._checker.check(merged)
+            is_complete_final = self._covers(merged, start, end)
         updated_at = max((b.received_at for b in merged), default=None) if merged else None
         source = "akshare" if added > 0 else "cache"
         if added > 0 and cached:
@@ -116,7 +148,7 @@ class HistoricalDataService:
             bars=merged,
             source=source,
             data_updated_at=updated_at,
-            is_complete=self._covers(merged, start, end),
+            is_complete=is_complete_final,
             quality=quality,
         )
 
@@ -214,12 +246,105 @@ class HistoricalDataService:
         logger.info("历史数据同步 %s (%s) 新增 %d 条", symbol, adjust, added)
         return added
 
+    async def _sync_with_calendar(
+        self,
+        symbol: str,
+        period: str,
+        adjust: str,
+        calendar: TradingCalendar,
+        start_date: date,
+        end_date: date,
+    ) -> int:
+        """基于交易日历定位缺口，合并连续区间，逐段下载。
+
+        返回新增条数。失败时返回 0，由调用方决定是否回退缓存。
+        """
+        if period != "daily":
+            logger.warning("历史数据服务当前仅支持日线同步，收到 period=%s", period)
+            return 0
+
+        existing_dates = self._existing_dates(symbol, period, adjust)
+        expected = calendar.trading_days_in_range(start_date, end_date)
+        missing = sorted(expected - existing_dates)
+        if not missing:
+            return 0
+
+        gap_ranges = merge_gap_ranges(missing)
+        total_added = 0
+        for gap_start, gap_end in gap_ranges:
+            bars = await self._fetch_with_retry(symbol, adjust, gap_start, gap_end)
+            if not bars:
+                continue
+
+            quality = self._checker.check(bars)
+            if not quality.is_clean:
+                logger.warning(
+                    "历史数据 %s 区间 %s~%s 发现 %d 类质量问题",
+                    symbol, gap_start, gap_end, len(quality.issue_codes),
+                )
+
+            good = _filter_valid_bars(bars)
+            added = 0
+            for bar in good:
+                trade_date = (bar.market_time or bar.received_at).date()
+                if trade_date in existing_dates:
+                    continue
+                self._db.add(
+                    HistoricalBar(
+                        symbol=symbol,
+                        period=period,
+                        adjust=adjust,
+                        trade_date=trade_date,
+                        open=Decimal(str(bar.open)),
+                        high=Decimal(str(bar.high)),
+                        low=Decimal(str(bar.low)),
+                        close=Decimal(str(bar.price)),
+                        volume=bar.volume,
+                        amount=bar.amount,
+                        source=bar.source or "akshare",
+                        fetched_at=utc_now(),
+                    )
+                )
+                added += 1
+                existing_dates.add(trade_date)
+            self._db.commit()
+            total_added += added
+            logger.info(
+                "历史数据同步 %s 区间 %s~%s 新增 %d 条", symbol, gap_start, gap_end, added
+            )
+
+        return total_added
+
     # ──────── 内部方法 ────────
 
     async def _fetch_with_retry(
         self, symbol: str, adjust: str, start: date, end: date
     ) -> list[QuoteData]:
-        """带超时与指数退避重试的 AKShare 拉取。"""
+        """带超时与指数退避重试的拉取。优先走 ProviderManager（含 mock 注入路径）。"""
+        # 优先走 ProviderManager（包含 mock / tencent / akshare 等所有已注册源）
+        if self._provider_manager is not None:
+            for attempt in range(_MAX_RETRIES):
+                try:
+                    start_dt = datetime.combine(start, datetime.min.time())
+                    end_dt = datetime.combine(end, datetime.max.time())
+                    bars = await asyncio.wait_for(
+                        self._provider_manager.get_history(
+                            symbol, "daily", start_dt, end_dt
+                        ),
+                        timeout=_FETCH_TIMEOUT_SECONDS,
+                    )
+                    if bars:
+                        return bars
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "ProviderManager 拉取 %s 第 %d 次失败: %s",
+                        symbol, attempt + 1, exc,
+                    )
+                if attempt < _MAX_RETRIES - 1:
+                    await asyncio.sleep(_RETRY_BASE_SECONDS * (2 ** attempt))
+            return []
+
+        # 回退：直接调 AKShare
         last_exc: Exception | None = None
         for attempt in range(_MAX_RETRIES):
             try:
@@ -378,3 +503,29 @@ def _filter_valid_bars(bars: list[QuoteData]) -> list[QuoteData]:
             seen.add(t)
         valid.append(b)
     return valid
+
+
+def merge_gap_ranges(
+    missing_dates: list[date], max_gap_days: int = 5
+) -> list[tuple[date, date]]:
+    """将缺失日期列表合并为连续下载区间。
+
+    - 相邻缺失日期跨度 ≤ max_gap_days 天 → 合并到同一区间
+    - 跨度 > max_gap_days 天 → 拆分为两段，避免一次拉太多浪费带宽
+    """
+    if not missing_dates:
+        return []
+    sorted_dates = sorted(missing_dates)
+    ranges: list[tuple[date, date]] = []
+    seg_start = sorted_dates[0]
+    seg_end = sorted_dates[0]
+    for d in sorted_dates[1:]:
+        gap = (d - seg_end).days
+        if gap <= max_gap_days:
+            seg_end = d
+        else:
+            ranges.append((seg_start, seg_end))
+            seg_start = d
+            seg_end = d
+    ranges.append((seg_start, seg_end))
+    return ranges

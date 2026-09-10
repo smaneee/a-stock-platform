@@ -164,11 +164,13 @@ def test_sell_records_realized_pnl(db_session):
     ).first()
     assert float(trade.realized_pnl) > 0
 
+    # 全部卖出后批次被删除（数量为 0 时不留记录）
     position = db_session.scalars(
         select(PaperPosition).where(PaperPosition.account_id == account.id)
     ).first()
-    assert position.quantity == 0
-    assert float(position.realized_pnl) > 0
+    assert position is None
+    # 已平仓盈亏记录在 PaperTrade 上
+    assert float(trade.realized_pnl) > 0
 
 
 def test_unrealized_pnl(db_session):

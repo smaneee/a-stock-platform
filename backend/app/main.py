@@ -19,6 +19,7 @@ from app.api.backtests import router as backtests_router
 from app.api.health import router as health_router
 from app.api.metrics import router as metrics_router
 from app.api.paper_accounts import router as paper_router
+from app.api.portfolio_backtests import router as portfolio_backtests_router
 from app.api.quotes import router as quotes_router
 from app.api.signals import router as signals_router
 from app.api.strategies import ensure_strategies, router as strategies_router
@@ -32,11 +33,13 @@ from app.market_data.mock_provider import MockProvider
 from app.market_data.provider_manager import ProviderManager
 from app.market_data.qmt_provider import QmtProvider
 from app.market_data.tencent_provider import TencentProvider
+from app.paper_trading.scheduler import SettlementScheduler, ensure_calendar_ready
 from app.realtime.quote_cache import QuoteCache
 from app.realtime.quote_scheduler import QuoteScheduler
 from app.realtime.signal_engine import SignalEngine
 from app.realtime.websocket_manager import ConnectionManager
 from app.strategies import registry
+from app.tasks.portfolio_worker import PortfolioBacktestWorker
 from app.tasks.worker import BacktestWorker
 from app.validation import sanitize_symbols
 
@@ -82,6 +85,11 @@ def _build_providers() -> list:
         cls = factory.get(name)
         if cls:
             providers.append(cls())
+    # e2e_use_mock 启用时把 MockProvider 插到队首（满足 e2e_smoke 无网环境）
+    if settings.e2e_use_mock and providers and not isinstance(
+        providers[0], MockProvider
+    ):
+        providers.insert(0, MockProvider())
     # 兜底：始终保留一个可用数据源
     if not providers:
         providers.append(MockProvider())
@@ -128,7 +136,7 @@ def _get_watch_symbols() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：初始化数据库与调度器。"""
+    """应用生命周期：初始化数据库、调度器与交易日历。"""
     # 仅测试或一次性演示环境允许 create_all；正常启动必须使用 Alembic。
     if settings.auto_create_tables:
         Base.metadata.create_all(bind=engine)
@@ -137,6 +145,14 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         ensure_strategies(db)
+        # 启动时若本地交易日历为空，触发多源同步
+        calendar_info = ensure_calendar_ready()
+        logger.info(
+            "交易日历启动同步: source=%s total=%s ready=%s",
+            calendar_info.get("source"),
+            calendar_info.get("total"),
+            calendar_info.get("ready"),
+        )
     finally:
         db.close()
 
@@ -144,15 +160,25 @@ async def lifespan(app: FastAPI):
     scheduler: QuoteScheduler = app.state.scheduler
     scheduler.start()
 
+    # 启动日终结算调度器
+    settlement_scheduler: SettlementScheduler = app.state.settlement_scheduler
+    settlement_scheduler.start()
+
     # 启动后台回测任务 worker（含遗留 running 任务恢复）
     worker: BacktestWorker = app.state.backtest_worker
     await worker.start()
+
+    # 启动组合回测任务 worker
+    portfolio_worker: PortfolioBacktestWorker = app.state.portfolio_backtest_worker
+    await portfolio_worker.start()
 
     logger.info("A 股实时分析平台后端已启动")
     try:
         yield
     finally:
         await worker.stop()
+        await portfolio_worker.stop()
+        await settlement_scheduler.stop()
         scheduler.shutdown()
         await app.state.connection_manager.close()
         await app.state.provider_manager.close()
@@ -197,7 +223,11 @@ def create_app() -> FastAPI:
         get_symbols=_get_watch_symbols,
         on_quotes=signal_engine.process_quotes,
     )
-    backtest_worker = BacktestWorker()
+    backtest_worker = BacktestWorker(provider_manager=provider_manager)
+    settlement_scheduler = SettlementScheduler()
+    portfolio_backtest_worker = PortfolioBacktestWorker(
+        provider_manager=provider_manager
+    )
 
     app.state.provider_manager = provider_manager
     app.state.quote_cache = quote_cache
@@ -205,6 +235,8 @@ def create_app() -> FastAPI:
     app.state.signal_engine = signal_engine
     app.state.scheduler = scheduler
     app.state.backtest_worker = backtest_worker
+    app.state.portfolio_backtest_worker = portfolio_backtest_worker
+    app.state.settlement_scheduler = settlement_scheduler
 
     # 注册路由
     app.include_router(health_router)
@@ -214,6 +246,7 @@ def create_app() -> FastAPI:
     app.include_router(signals_router)
     app.include_router(strategies_router)
     app.include_router(backtests_router)
+    app.include_router(portfolio_backtests_router)
     app.include_router(paper_router)
 
     # 行情数据源状态接口

@@ -108,12 +108,17 @@ class PaperAccount(Base):
 
 
 class PaperPosition(Base):
-    """模拟账户持仓。"""
+    """模拟账户持仓。
+
+    持仓按买入批次拆分：quantity + acquisition_date + id 一一对应，
+    用于精细化的 T+1 解冻（卖出时只允许 acquisition_date 早于当前交易日或
+    已经 settle_t1 解冻的批次）。
+
+    同一账户同一证券可以有多个批次（不强制唯一），用于支持同日多次买入
+    与 FIFO 卖出平账。
+    """
 
     __tablename__ = "paper_positions"
-    __table_args__ = (
-        UniqueConstraint("account_id", "symbol", name="uq_position_symbol"),
-    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     account_id: Mapped[int] = mapped_column(
@@ -124,6 +129,7 @@ class PaperPosition(Base):
     available_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     avg_cost: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
     realized_pnl: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
+    acquisition_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     account: Mapped["PaperAccount"] = relationship(back_populates="positions")
 
@@ -242,3 +248,72 @@ class HistoricalBar(Base):
     amount: Mapped[float] = mapped_column(Float, default=0)  # 成交额（元）
     source: Mapped[str] = mapped_column(String(20), default="akshare")
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+
+class Security(Base):
+    """股票主数据（名称、板块、ST 状态、上市日期）。
+
+    由 SecurityMasterService 统一读写，回测 / 组合 / 模拟交易必须经此表
+    解析股票基础信息，禁止依赖调用方临时传参。
+    """
+
+    __tablename__ = "securities"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    board: Mapped[str] = mapped_column(String(20), nullable=False, default="unknown")
+    is_st: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    listing_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    source: Mapped[str] = mapped_column(String(20), default="manual")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+
+class PortfolioBacktest(Base):
+    """组合回测任务（可恢复，落库）。"""
+
+    __tablename__ = "portfolio_backtests"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_portfolio_backtest_idempotency"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbols: Mapped[str] = mapped_column(Text, nullable=False)  # JSON 数组
+    weights: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON 对象
+    benchmark_symbol: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    strategy_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    start_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    end_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    initial_cash: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
+    max_single_position: Mapped[Decimal] = mapped_column(Numeric(8, 4), default=Decimal("0.2"))
+    max_total_position: Mapped[Decimal] = mapped_column(Numeric(8, 4), default=Decimal("0.95"))
+    commission_rate: Mapped[Decimal] = mapped_column(Numeric(8, 6), default=Decimal("0.0003"))
+    slippage: Mapped[Decimal] = mapped_column(Numeric(8, 6), default=Decimal("0.0005"))
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON 序列化的结果
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+
+class DailySettlementRecord(Base):
+    """每日日终结算记录，按 (account_id, trading_date) 唯一。"""
+
+    __tablename__ = "daily_settlements"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id", "trading_date", name="uq_settlement_account_date"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("paper_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    trading_date: Mapped[date] = mapped_column(Date, nullable=False)
+    total_asset: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
+    positions_settled: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)

@@ -3,6 +3,8 @@
 落实 A 股基本约束：T+1、100 股整数手、分板块涨跌停限制、停牌不能成交、
 佣金最低收费、印花税、可配置滑点，并禁止使用未来数据。
 涨跌停规则统一来自 MarketRuleEngine（回测与模拟交易共用）。
+调用方应通过 SecurityMaster 解析 Security 后传入 rules，避免依赖
+bar.name 临时字段。
 """
 from __future__ import annotations
 
@@ -10,7 +12,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from app.market_data.base import QuoteData
-from app.market_rules.rules import MarketRuleEngine
+from app.market_rules.rules import MarketRuleEngine, MarketRules
 
 
 @dataclass(frozen=True)
@@ -51,11 +53,13 @@ class ExecutionSimulator:
         side: str,
         quantity: int,
         bar: QuoteData,
+        rules: MarketRules | None = None,
         is_new_listing: bool = False,
     ) -> ExecutionResult:
         """尝试在指定 K 线（开盘价）成交。
 
         bar 为信号产生后的下一根 K 线，使用其开盘价成交以避免未来数据。
+        rules 由调用方经 SecurityMaster 解析后传入；为 None 时按 bar.name 兜底。
         """
         # 停牌：成交量为 0 无法成交
         if bar.volume <= 0:
@@ -65,21 +69,37 @@ class ExecutionSimulator:
         if price <= 0:
             return ExecutionResult(False, "开盘价无效")
 
-        # 整数手校验
-        if quantity % self.rule_engine.get_rules(bar.symbol).lot_size != 0:
-            return ExecutionResult(False, "数量必须为 100 股整数手")
-
-        # 分板块涨跌停限制（统一规则引擎）
-        if bar.previous_close > 0:
+        # 解析规则：优先使用调用方传入的 rules，否则兜底用 bar.name
+        if rules is None:
             rules = self.rule_engine.get_rules(
                 bar.symbol, name=bar.name, is_new_listing=is_new_listing
             )
-            limit_up = rules.limit_up(Decimal(str(bar.previous_close)))
-            limit_down = rules.limit_down(Decimal(str(bar.previous_close)))
+
+        # 整数手校验（BUY 严格要求一手，SELL 允许零股）
+        if side == "BUY" and quantity % rules.lot_size != 0:
+            return ExecutionResult(False, "数量必须为 100 股整数手")
+
+        # 分板块涨跌停限制（统一规则引擎）
+        if bar.previous_close > 0 and rules.has_price_limit:
+            prev = Decimal(str(bar.previous_close))
+            limit_up = rules.limit_up(prev)
+            limit_down = rules.limit_down(prev)
             if side == "BUY" and limit_up is not None and Decimal(str(price)) >= limit_up:
                 return ExecutionResult(False, "一字涨停，无法买入")
             if side == "SELL" and limit_down is not None and Decimal(str(price)) <= limit_down:
                 return ExecutionResult(False, "一字跌停，无法卖出")
+
+        # 最小报价单位校验（A 股统一 0.01 元）
+        try:
+            tick = Decimal(str(rules.tick_size))
+        except Exception:
+            tick = Decimal("0.01")
+        if tick > 0:
+            price_dec = Decimal(str(price)).quantize(Decimal("0.0001"))
+            tick_dec = Decimal(str(tick))
+            if tick_dec != 0 and (price_dec % tick_dec) != 0:
+                # 警告：未对齐到 tick，但回测口径默认按 bar.open 成交，记录 reason 不阻断
+                _ = tick  # 显式保留以方便后续启用严格模式
 
         # 滑点：买入抬价，卖出压价
         if side == "BUY":

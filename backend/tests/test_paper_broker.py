@@ -59,10 +59,11 @@ def test_buy_and_sell_after_settle(db_session):
     order, error = broker.place_order(account.id, "600000", "SELL", 100, 10.0, quote=quote)
     assert order is not None, error
 
-    position = db_session.scalars(
+    # 全部卖出后批次被删除（仓位为 0 不留记录）
+    positions = db_session.scalars(
         select(PaperPosition).where(PaperPosition.account_id == account.id)
-    ).first()
-    assert position.quantity == 0
+    ).all()
+    assert positions == []
 
 
 def test_sell_before_settle_rejected(db_session):

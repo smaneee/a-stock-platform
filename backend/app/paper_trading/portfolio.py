@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database.models import AssetRecord, PaperAccount, PaperPosition
@@ -25,11 +26,51 @@ class PortfolioService:
         return self._db.get(PaperAccount, account_id)
 
     def get_position(self, account_id: int, symbol: str) -> PaperPosition | None:
-        stmt = select(PaperPosition).where(
-            PaperPosition.account_id == account_id,
-            PaperPosition.symbol == symbol,
+        """返回指定账户+证券的聚合持仓视图（按批次汇总）。
+
+        多批次场景下，返回值是一个内存视图对象，其 quantity / available_quantity
+        为各批次之和，avg_cost 按持仓成本加权平均，acquisition_date 视为最早
+        一个交易日（用于 FIFO 辅助）。不落库。
+        """
+        positions = self._db.scalars(
+            select(PaperPosition).where(
+                PaperPosition.account_id == account_id,
+                PaperPosition.symbol == symbol,
+            )
+        ).all()
+        if not positions:
+            return None
+
+        total_qty = sum(p.quantity for p in positions)
+        total_available = sum(p.available_quantity for p in positions)
+        if total_qty > 0:
+            weighted_cost = sum(
+                p.avg_cost * Decimal(p.quantity) for p in positions
+            ) / Decimal(total_qty)
+        else:
+            weighted_cost = Decimal("0")
+
+        # 取最早非空 acquisition_date
+        dates = [p.acquisition_date for p in positions if p.acquisition_date is not None]
+        earliest = min(dates) if dates else None
+
+        # 构造一个轻量视图（不落库）
+        class _AggregatedPosition:
+            pass
+
+        agg = _AggregatedPosition()
+        agg.id = positions[0].id  # 取最早批次 id 用于日志/回溯
+        agg.account_id = account_id
+        agg.symbol = symbol
+        agg.quantity = total_qty
+        agg.available_quantity = total_available
+        agg.avg_cost = weighted_cost
+        agg.realized_pnl = sum(
+            (p.realized_pnl for p in positions),
+            Decimal("0"),
         )
-        return self._db.scalars(stmt).first()
+        agg.acquisition_date = earliest
+        return agg
 
     def unrealized_pnl(
         self, account_id: int, quotes: dict[str, QuoteData]

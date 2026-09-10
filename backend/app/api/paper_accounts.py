@@ -239,13 +239,35 @@ async def account_assets(
 async def settle_account(
     account_id: int,
     request: Request,
+    trading_date: str | None = Query(
+        None,
+        description="交易日 (YYYY-MM-DD)；缺省按当前北京时间自动选择（已收盘用当日，否则上一交易日）。",
+    ),
+    force: bool = Query(False, description="是否强制重算（覆盖幂等记录）"),
     db: Session = Depends(get_db),
 ) -> dict:
-    """日终结算：T+1 解冻 + 记录资产快照。"""
+    """日终结算：T+1 解冻 + 记录资产快照 + 写入幂等结算记录。
+
+    同一 (account_id, trading_date) 重复结算只返回首次结果，确保可重入。
+    """
+    from datetime import date as _date
+
+    from app.market_rules.calendar import TradingCalendar
+
     portfolio = PortfolioService(db)
     account = portfolio.get_account(account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="账户不存在")
+
+    parsed_date: _date | None = None
+    if trading_date:
+        try:
+            parsed_date = _date.fromisoformat(trading_date)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="trading_date 必须是 YYYY-MM-DD")
+        calendar = TradingCalendar(db)
+        if not calendar.is_trading_day(parsed_date):
+            raise HTTPException(status_code=400, detail=f"{trading_date} 非交易日")
 
     positions = db.scalars(
         select(PaperPosition).where(PaperPosition.account_id == account_id)
@@ -257,5 +279,7 @@ async def settle_account(
         quotes = await provider_manager.get_quotes(symbols)
 
     settlement = DailySettlement(db)
-    summary = settlement.settle_account(account, quotes)
+    summary = settlement.settle_account(
+        account, quotes, trading_date=parsed_date, force=force
+    )
     return summary

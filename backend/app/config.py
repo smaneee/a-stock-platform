@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     # 行情数据源优先级
     # Mock 只能由测试或演示环境显式启用，禁止真实行情失败时返回随机价格。
     market_providers: str = "tencent,akshare"
+    # e2e_smoke 启用：用 mock 作为最高优先级（无需 AKShare 网络）
+    e2e_use_mock: bool = False
     quote_poll_interval: float = 3.0
     rolling_window_size: int = 300
     signal_cooldown_seconds: float = 60.0

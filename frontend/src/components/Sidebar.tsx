@@ -6,6 +6,7 @@ const NAV_ITEMS = [
   { to: "/signals", label: "信号", icon: "🔔" },
   { to: "/strategies", label: "策略", icon: "⚙️" },
   { to: "/backtest", label: "回测", icon: "📈" },
+  { to: "/portfolio-backtest", label: "组合回测", icon: "🧮" },
   { to: "/paper", label: "模拟交易", icon: "💰" },
 ];
 

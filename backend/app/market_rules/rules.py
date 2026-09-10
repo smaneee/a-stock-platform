@@ -8,12 +8,16 @@
 - 最小报价单位与价格精度（Decimal）
 
 回测引擎与模拟交易共用本引擎，禁止各自实现规则。
+引擎无状态，可安全共享单例。新股上市日期由调用方提供。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
+
+from app.database.models import Security
 
 
 class Board(str, Enum):
@@ -44,6 +48,16 @@ TICK_SIZE = Decimal("0.01")  # 最小报价单位（元）
 
 # 无涨跌停限制的哨兵值（新股上市初期）
 NO_LIMIT = Decimal("0")
+
+# 各板块新股无涨跌停阶段的天数（按 A 股规则）
+NO_LIMIT_DAYS: dict[Board, int] = {
+    Board.SH_MAIN: 1,  # 主板首日
+    Board.SZ_MAIN: 1,
+    Board.CHINEXT: 5,  # 创业板前 5 个交易日
+    Board.STAR: 5,  # 科创板前 5 个交易日
+    Board.BSE: 5,  # 北交所前 5 个交易日
+    Board.UNKNOWN: 1,
+}
 
 
 @dataclass(frozen=True)
@@ -127,6 +141,52 @@ class MarketRuleEngine:
         board = self.classify(symbol)
         st = self.is_st_name(name) if is_st is None else is_st
 
+        if st:
+            price_limit = _ST_PRICE_LIMIT
+        elif is_new_listing:
+            price_limit = NO_LIMIT
+        else:
+            price_limit = _BOARD_PRICE_LIMITS[board]
+
+        return MarketRules(
+            board=board,
+            price_limit=price_limit,
+            lot_size=LOT_SIZE,
+            tick_size=TICK_SIZE,
+            is_st=st,
+            is_new_listing=is_new_listing,
+        )
+
+    def get_rules_from_security(
+        self,
+        security: Security | None,
+        current_date: date | None = None,
+        fallback_name: str = "",
+    ) -> MarketRules:
+        """根据 SecurityMaster 中的主数据计算规则快照。
+
+        - security 为 None 时按 fallback_name + 当前日期推导（用于回测环境无 DB 时）。
+        - 自动根据 listing_date + current_date + 板块判定新股无涨跌停阶段。
+        """
+        symbol = security.symbol if security else ""
+        name = (security.name if security else None) or fallback_name
+        is_st = security.is_st if security else None
+        board_str = security.board if security else self.classify(symbol).value
+        listing_date = security.listing_date if security else None
+
+        try:
+            board = Board(board_str)
+        except ValueError:
+            board = self.classify(symbol)
+
+        is_new_listing = False
+        if listing_date is not None and current_date is not None:
+            no_limit_days = NO_LIMIT_DAYS.get(board, 0)
+            if no_limit_days > 0:
+                delta = (current_date - listing_date).days
+                is_new_listing = 0 <= delta < no_limit_days
+
+        st = self.is_st_name(name) if is_st is None else is_st
         if st:
             price_limit = _ST_PRICE_LIMIT
         elif is_new_listing:

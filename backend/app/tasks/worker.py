@@ -39,8 +39,9 @@ _POLL_INTERVAL_SECONDS = 1.0
 class BacktestWorker:
     """后台回测任务执行器。"""
 
-    def __init__(self, session_factory: sessionmaker = SessionLocal):
+    def __init__(self, session_factory: sessionmaker = SessionLocal, provider_manager=None):
         self._session_factory = session_factory
+        self._provider_manager = provider_manager
         self._running = False
         self._task: asyncio.Task | None = None
 
@@ -140,7 +141,9 @@ class BacktestWorker:
                 return
 
             # 1) 获取历史数据（含缓存与增量同步）
-            history_svc = HistoricalDataService(db)
+            history_svc = HistoricalDataService(
+                db, provider_manager=self._provider_manager
+            )
             history = await history_svc.get_history(
                 backtest.symbol,
                 backtest.start_time,

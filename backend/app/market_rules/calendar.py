@@ -1,13 +1,21 @@
 """交易日历服务。
 
-从 AKShare 同步 A 股交易日到本地数据库缓存，并提供交易日判断、下一/上一交易日查询。
-T+1 解冻等逻辑必须依赖真实交易日，而非自然日或下一根 K 线。
+数据源（按优先级降级）：
+1. AKShare 实数据源：通过 `ak.tool_trade_date_hist_sina()` 同步最权威数据。
+2. exchange_calendars XSHG 基准日历：作为算法降级，避免 AKShare 不可用时无法启动。
+3. 本地数据库缓存：所有来源最终落库 `trading_calendar` 表。
+
+启动策略：
+- 进程启动时若本地交易日历为空，触发 AKShare 同步；
+- AKShare 失败时使用 exchange_calendars 兜底；
+- 兜底后仍为空则 readiness 探针返回 503，禁止静默启动。
 """
 from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database.models import TradingDate
@@ -16,6 +24,10 @@ logger = logging.getLogger(__name__)
 
 # 节假日最长连续休市约 8 天（春节），留足余量
 _MAX_LOOKAHEAD_DAYS = 30
+
+# 启动时同步的窗口天数
+_DEFAULT_SYNC_LOOKBACK_DAYS = 365
+_DEFAULT_SYNC_LOOKFORWARD_DAYS = 180
 
 
 class TradingCalendar:
@@ -27,6 +39,7 @@ class TradingCalendar:
     def __init__(self, db: Session):
         self._db = db
         self._cache: dict[date, bool] = {}
+        self._range_cache: dict[tuple, set[date]] = {}
 
     def is_trading_day(self, d: date) -> bool:
         """判断某日是否为交易日。"""
@@ -35,6 +48,24 @@ class TradingCalendar:
         row = self._db.get(TradingDate, d)
         result = row is not None
         self._cache[d] = result
+        return result
+
+    def trading_days_in_range(self, start: date, end: date) -> set[date]:
+        """返回 [start, end] 区间内（闭区间）的所有交易日。
+
+        利用单次 DB 查询批量读取范围内记录，避免逐日判断的 N 次查询。
+        """
+        key = (start, end)
+        if key in self._range_cache:
+            return set(self._range_cache[key])
+        rows = self._db.scalars(
+            select(TradingDate.trade_date).where(
+                TradingDate.trade_date >= start,
+                TradingDate.trade_date <= end,
+            )
+        ).all()
+        result = set(rows)
+        self._range_cache[key] = result
         return result
 
     def next_trading_day(self, d: date) -> date:
@@ -65,37 +96,87 @@ class TradingCalendar:
         """返回本地缓存中的交易日总数。"""
         return self._db.query(TradingDate).count()
 
+    def is_empty(self) -> bool:
+        """本地缓存是否为空。"""
+        return self.count() == 0
 
-def sync_trading_calendar(db: Session) -> int:
-    """从 AKShare 同步交易日历到本地数据库，返回新增条数。
 
-    AKShare 不可用或网络失败时返回 0，不抛异常（调用方据返回值提示）。
+def sync_trading_calendar(
+    db: Session,
+    lookback_days: int = _DEFAULT_SYNC_LOOKBACK_DAYS,
+    lookahead_days: int = _DEFAULT_SYNC_LOOKFORWARD_DAYS,
+) -> dict:
+    """多源同步交易日历到本地数据库。
+
+    优先级：AKShare → exchange_calendars XSHG → 本地缓存。
+    返回 {source, added, total}，source 为实际填充来源。
     """
+    added = 0
+    source = "none"
+
+    # 数据源 1：AKShare
     try:
         import akshare as ak  # type: ignore
-    except ImportError:
-        logger.warning("AKShare 未安装，无法同步交易日历")
-        return 0
 
-    try:
         df = ak.tool_trade_date_hist_sina()
+        if df is not None and not df.empty and "trade_date" in df.columns:
+            for raw in df["trade_date"].tolist():
+                try:
+                    d = raw.date() if hasattr(raw, "date") else date.fromisoformat(str(raw))
+                except (ValueError, TypeError):
+                    continue
+                if not _in_window(d, lookback_days, lookahead_days):
+                    continue
+                if db.get(TradingDate, d) is None:
+                    db.add(TradingDate(trade_date=d))
+                    added += 1
+            db.commit()
+            source = "akshare"
+            logger.info("交易日历同步：AKShare 新增 %d 条", added)
+            return {"source": source, "added": added, "total": _count(db)}
     except Exception as exc:  # noqa: BLE001
-        logger.warning("AKShare 同步交易日历失败: %s", exc)
-        return 0
+        logger.warning("AKShare 同步失败，转 exchange_calendars 兜底: %s", exc)
 
-    if df is None or df.empty:
-        return 0
+    # 数据源 2：exchange_calendars XSHG 兜底
+    try:
+        import exchange_calendars as ec  # type: ignore
 
-    added = 0
-    for raw in df["trade_date"].tolist():
-        try:
-            d = raw.date() if hasattr(raw, "date") else date.fromisoformat(str(raw))
-        except (ValueError, TypeError):
-            continue
-        if db.get(TradingDate, d) is None:
-            db.add(TradingDate(trade_date=d))
-            added += 1
+        xshg = ec.get_calendar("XSHG")
+        start = date.today() - timedelta(days=lookback_days)
+        end = date.today() + timedelta(days=lookahead_days)
+        valid_days = xshg.valid_days
+        # valid_days 返回 DatetimeIndex，过滤范围
+        from pandas import Timestamp  # noqa: F401
 
-    db.commit()
-    logger.info("交易日历同步完成，新增 %d 条", added)
-    return added
+        mask = (valid_days >= Timestamp(start)) & (valid_days <= Timestamp(end))
+        session_dates = valid_days[mask].date.tolist() if hasattr(valid_days[mask].date, "tolist") else [d.date() if hasattr(d, "date") else d for d in valid_days[mask]]
+        for d in session_dates:
+            if db.get(TradingDate, d) is None:
+                db.add(TradingDate(trade_date=d))
+                added += 1
+        db.commit()
+        if added > 0:
+            source = "exchange_calendars"
+            logger.info("交易日历同步：exchange_calendars XSHG 新增 %d 条", added)
+        else:
+            source = "exchange_calendars"
+            logger.info("交易日历同步：exchange_calendars 已存在，无新增")
+        return {"source": source, "added": added, "total": _count(db)}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("exchange_calendars 同步也失败: %s", exc)
+
+    # 数据源 3：本地缓存（无新增）
+    total = _count(db)
+    if total > 0:
+        return {"source": "local_cache", "added": 0, "total": total}
+
+    return {"source": "empty", "added": 0, "total": 0}
+
+
+def _in_window(d: date, lookback: int, lookahead: int) -> bool:
+    today = date.today()
+    return today - timedelta(days=lookback) <= d <= today + timedelta(days=lookahead)
+
+
+def _count(db: Session) -> int:
+    return db.query(TradingDate).count()
