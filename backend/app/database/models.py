@@ -12,6 +12,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     Numeric,
@@ -202,3 +203,31 @@ class TradingDate(Base):
     __tablename__ = "trading_calendar"
 
     trade_date: Mapped[date] = mapped_column(Date, primary_key=True)
+
+
+class HistoricalBar(Base):
+    """历史 K 线（本地缓存，供回测使用）。
+
+    以 (symbol, period, adjust, trade_date) 唯一，支持增量同步与多复权方式并存。
+    """
+
+    __tablename__ = "historical_bars"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol", "period", "adjust", "trade_date", name="uq_historical_bar"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    period: Mapped[str] = mapped_column(String(10), nullable=False, default="daily")
+    adjust: Mapped[str] = mapped_column(String(10), nullable=False, default="none")  # none/qfq/hfq
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    open: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
+    high: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
+    low: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
+    close: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
+    volume: Mapped[float] = mapped_column(Float, default=0)  # 成交量（单位与数据源一致）
+    amount: Mapped[float] = mapped_column(Float, default=0)  # 成交额（元）
+    source: Mapped[str] = mapped_column(String(20), default="akshare")
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)

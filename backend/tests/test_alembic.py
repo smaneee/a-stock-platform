@@ -53,6 +53,7 @@ def test_alembic_upgrade_creates_all_tables(isolated_db):
         "asset_records",
         "backtests",
         "trading_calendar",
+        "historical_bars",
     }
     actual_tables = set(insp.get_table_names())
     assert expected_tables.issubset(actual_tables), (
