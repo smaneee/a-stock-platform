@@ -48,7 +48,8 @@ def patched_app(monkeypatch):
 
     app = create_app()
 
-    class _NoopWorker:
+    # 每个组件的 noop stub 必须与其真实接口签名一致：start 同步/异步、stop 异步
+    class _NoopBacktestWorker:
         async def start(self) -> None:
             pass
 
@@ -59,10 +60,22 @@ def patched_app(monkeypatch):
         def is_running(self) -> bool:
             return True
 
-    noop = _NoopWorker()
-    app.state.backtest_worker = noop
-    app.state.portfolio_backtest_worker = noop
-    app.state.settlement_scheduler = noop
+    class _NoopSettlementScheduler:
+        # SettlementScheduler.start() 在真实实现中是同步方法（APScheduler.start）
+        # 测试替身必须保持同步签名，否则会出现 "coroutine was never awaited"
+        def start(self) -> None:
+            pass
+
+        async def stop(self) -> None:
+            pass
+
+        @property
+        def is_running(self) -> bool:
+            return True
+
+    app.state.backtest_worker = _NoopBacktestWorker()
+    app.state.portfolio_backtest_worker = _NoopBacktestWorker()
+    app.state.settlement_scheduler = _NoopSettlementScheduler()
 
     def _override_db():
         db = TestSessionLocal()

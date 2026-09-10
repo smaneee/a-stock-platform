@@ -33,6 +33,7 @@ from app.market_data.mock_provider import MockProvider
 from app.market_data.provider_manager import ProviderManager
 from app.market_data.qmt_provider import QmtProvider
 from app.market_data.tencent_provider import TencentProvider
+from app.observability.metrics import metrics
 from app.paper_trading.scheduler import SettlementScheduler, ensure_calendar_ready
 from app.realtime.quote_cache import QuoteCache
 from app.realtime.quote_scheduler import QuoteScheduler
@@ -94,6 +95,12 @@ def _build_providers() -> list:
     if not providers:
         providers.append(MockProvider())
     return providers
+
+
+def _register_active_providers(provider_manager: ProviderManager) -> None:
+    """把实际在跑的 provider 列表注册到 metrics，便于 data_status 准确判定。"""
+    names = [p.name for p in provider_manager.providers]
+    metrics.set_active_providers(names)
 
 
 def _get_enabled_strategies():
@@ -230,6 +237,8 @@ def create_app() -> FastAPI:
     )
 
     app.state.provider_manager = provider_manager
+    # 把当前实际在跑的 provider 注册到 metrics（决定 data_status）
+    _register_active_providers(provider_manager)
     app.state.quote_cache = quote_cache
     app.state.connection_manager = connection_manager
     app.state.signal_engine = signal_engine

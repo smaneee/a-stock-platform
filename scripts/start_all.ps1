@@ -1,5 +1,12 @@
-# 一键启动（迁移优先）：数据库迁移 -> 后端 -> 前端
-# 用法: powershell -ExecutionPolicy Bypass -File scripts/start_all.ps1
+# start_all.ps1 - one-click launcher (migration first)
+# Usage: powershell -ExecutionPolicy Bypass -File scripts/start_all.ps1
+#
+# Launcher priority:
+#   1) py launcher (Get-Command py): try py -3.13 / py -3.12 / py -3.11
+#   2) System python: requires >=3.11
+#   3) Neither found: exit 1 (no silent fallback)
+#
+# Launcher command and version arg MUST be kept separate (never "py-3.12").
 $ErrorActionPreference = "Stop"
 
 $RootDir = Split-Path -Parent $PSScriptRoot
@@ -8,94 +15,120 @@ $FrontendDir = Join-Path $RootDir "frontend"
 $PidDir = Join-Path $RootDir ".run"
 New-Item -ItemType Directory -Force -Path $PidDir | Out-Null
 
-Write-Host "=== A-stock 平台一键启动 ==="
+Write-Host "=== A-stock platform launcher ==="
 
-# 1. 检测 Python launcher（优先 py -3.13/3.12/3.11）
-function Get-PyLauncher {
-    foreach ($ver in @("3.13", "3.12", "3.11")) {
-        $cmd = Get-Command "py-$ver" -ErrorAction SilentlyContinue
-        if ($cmd) {
-            $versionOutput = & py -$ver --version 2>&1
-            if ($versionOutput -match "Python (\d+)\.(\d+)") {
+# 1. Python launcher detection
+function Test-PyLauncherExists {
+    $cmd = Get-Command "py" -ErrorAction SilentlyContinue
+    return $null -ne $cmd
+}
+
+function Get-PyVersionForLauncher {
+    param([string]$Version)
+    # Launcher (py) and version arg (-X.Y) are separate, never "py-X.Y"
+    $out = & py "-$Version" --version 2>&1
+    return ($out | Out-String).Trim()
+}
+
+function Resolve-PythonLauncher {
+    if (Test-PyLauncherExists) {
+        foreach ($ver in @("3.13", "3.12", "3.11")) {
+            $verOutput = Get-PyVersionForLauncher $ver
+            if ($verOutput -match "Python (\d+)\.(\d+)") {
                 $major = [int]$Matches[1]
                 $minor = [int]$Matches[2]
                 if ($major -ge 3 -and $minor -ge 11) {
-                    Write-Host "使用 Python launcher py -$ver ($versionOutput)"
-                    return "py-$ver"
+                    Write-Host "Using py launcher py -$ver ($verOutput)"
+                    return @{ Launcher = "py"; Version = $ver }
                 }
             }
         }
     }
-    # 兜底：直接 python，要求 >=3.11
-    try {
-        $versionOutput = & python --version 2>&1
-        if ($versionOutput -match "Python (\d+)\.(\d+)") {
+    $cmd = Get-Command "python" -ErrorAction SilentlyContinue
+    if ($cmd) {
+        $verOutput = (& python --version 2>&1) | Out-String
+        if ($verOutput -match "Python (\d+)\.(\d+)") {
             $major = [int]$Matches[1]
             $minor = [int]$Matches[2]
             if ($major -ge 3 -and $minor -ge 11) {
-                Write-Host "使用 python ($versionOutput)"
-                return "python"
+                Write-Host ("Using system python ({0})" -f $verOutput.Trim())
+                return @{ Launcher = "python"; Version = "" }
             }
         }
-    } catch {
-        Write-Error "无法检测到 Python 3.11+"
-        exit 1
     }
-    Write-Error "需要 Python >=3.11，当前未检测到合适版本"
+    $hasLauncher = Test-PyLauncherExists
+    $hasPython = $null -ne (Get-Command "python" -ErrorAction SilentlyContinue)
+    Write-Error "Need Python >=3.11. No suitable launcher/py launcher/python found."
+    Write-Error ("Detection: py launcher = {0}; python = {1}" -f $hasLauncher, $hasPython)
     exit 1
 }
 
-$PyCmd = Get-PyLauncher
+$PyInfo = Resolve-PythonLauncher
+$PyLauncher = $PyInfo.Launcher
+$PyVersionArg = if ($PyInfo.Version) { "-" + $PyInfo.Version } else { "" }
 
-# 2. 后端虚拟环境
+function Invoke-PyCommand {
+    param([string[]]$PyArgs)
+    if ($PyVersionArg) {
+        & $PyLauncher $PyVersionArg @PyArgs
+    } else {
+        & $PyLauncher @PyArgs
+    }
+    return $LASTEXITCODE
+}
+
+# 2. Backend venv (reuse existing)
 $venvPython = Join-Path $BackendDir ".venv\Scripts\python.exe"
 if (-not (Test-Path $venvPython)) {
-    Write-Host "创建后端虚拟环境..."
-    & $PyCmd -m venv (Join-Path $BackendDir ".venv")
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "创建虚拟环境失败"
+    Write-Host "backend\.venv not found, creating..."
+    $exitCode = Invoke-PyCommand -PyArgs @("-m", "venv", (Join-Path $BackendDir ".venv"))
+    if ($exitCode -ne 0) {
+        Write-Error "venv create failed (exit $exitCode)"
         exit 1
     }
-    & $venvPython -m pip install `
+    Write-Host "venv created, installing deps..."
+    $exitCode = & $venvPython -m pip install `
         --disable-pip-version-check `
         --index-url "https://pypi.tuna.tsinghua.edu.cn/simple" `
         -r (Join-Path $BackendDir "requirements.txt")
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "pip install 失败（退出码 $LASTEXITCODE）"
+    if ($exitCode -ne 0) {
+        Write-Error "pip install failed (exit $exitCode)"
         exit 1
     }
-    Write-Host "依赖安装完成"
+    Write-Host "deps installed"
+} else {
+    Write-Host "Reusing existing venv: $venvPython"
 }
 
-# 3. 端口检查
+# 3. Port check
 $backendPort = 8000
 $frontendPort = 5173
 function Test-PortInUse {
     param([int]$Port)
-    $connections = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-    return $null -ne $connections
+    $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    return $null -ne $conns
 }
 if (Test-PortInUse $backendPort) {
-    Write-Error "后端端口 $backendPort 已被占用，请先 stop_all.ps1 释放"
+    Write-Error "Backend port $backendPort is in use. Run stop_all.ps1 first."
     exit 1
 }
 if (Test-PortInUse $frontendPort) {
-    Write-Error "前端端口 $frontendPort 已被占用，请先 stop_all.ps1 释放"
+    Write-Error "Frontend port $frontendPort is in use. Run stop_all.ps1 first."
     exit 1
 }
 
-# 4. 数据库迁移（启动前先迁移）
-Write-Host "执行数据库迁移..."
+# 4. Database migration
+Write-Host "Running alembic upgrade..."
 Set-Location $BackendDir
 & $venvPython -m alembic upgrade head
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "alembic upgrade head 失败"
+    Write-Error "alembic upgrade head failed"
     Set-Location $RootDir
     exit 1
 }
 Set-Location $RootDir
 
-# 5. 启动后端
+# 5. Start backend
 $backendLog = Join-Path $PidDir "backend.log"
 $backend = Start-Process -FilePath $venvPython `
     -ArgumentList "-m","uvicorn","app.main:app","--host","127.0.0.1","--port","8000" `
@@ -104,9 +137,9 @@ $backend = Start-Process -FilePath $venvPython `
     -RedirectStandardError (Join-Path $PidDir "backend.err.log") `
     -WindowStyle Hidden -PassThru
 Set-Content -Path (Join-Path $PidDir "backend.pid") -Value $backend.Id
-Write-Host "后端进程已启 PID=$($backend.Id)，等待就绪…"
+Write-Host "Backend PID=$($backend.Id), waiting for readiness..."
 
-# 6. 等待 /api/health/ready 返回 200
+# 6. Wait for /api/health/ready
 $readyOk = $false
 $lastError = ""
 for ($i = 1; $i -le 60; $i++) {
@@ -119,24 +152,22 @@ for ($i = 1; $i -le 60; $i++) {
     } catch {
         $lastError = $_.Exception.Message
     }
-    # 进程还在跑？
     if ($backend.HasExited) {
-        Write-Error "后端进程已退出（exit code $($backend.ExitCode)）"
+        Write-Error ("Backend exited (code {0})" -f $backend.ExitCode)
         Get-Content $backendLog -Tail 30 | Write-Host
         exit 1
     }
     Start-Sleep -Seconds 1
 }
 if (-not $readyOk) {
-    Write-Error "后端 60 秒内未通过 readiness 探针：$lastError"
-    Write-Host "后端日志尾部："
+    Write-Error ("Backend not ready in 60s: {0}" -f $lastError)
     Get-Content $backendLog -Tail 30 | Write-Host
     Stop-Process -Id $backend.Id -Force -ErrorAction SilentlyContinue
     exit 1
 }
-Write-Host "后端就绪：http://127.0.0.1:8000/api/health/ready"
+Write-Host "Backend ready: http://127.0.0.1:8000/api/health/ready"
 
-# 7. 启动前端
+# 7. Start frontend
 $frontendLog = Join-Path $PidDir "frontend.log"
 $npm = "npm.cmd"
 $frontend = Start-Process -FilePath $npm `
@@ -146,9 +177,9 @@ $frontend = Start-Process -FilePath $npm `
     -RedirectStandardError (Join-Path $PidDir "frontend.err.log") `
     -WindowStyle Hidden -PassThru
 Set-Content -Path (Join-Path $PidDir "frontend.pid") -Value $frontend.Id
-Write-Host "前端进程已启 PID=$($frontend.Id)，等待就绪…"
+Write-Host "Frontend PID=$($frontend.Id), waiting for readiness..."
 
-# 8. 等待前端 200
+# 8. Wait for frontend
 $frontendOk = $false
 for ($i = 1; $i -le 30; $i++) {
     try {
@@ -161,14 +192,14 @@ for ($i = 1; $i -le 30; $i++) {
     Start-Sleep -Seconds 1
 }
 if (-not $frontendOk) {
-    Write-Error "前端 30 秒内未就绪"
+    Write-Error "Frontend not ready in 30s"
     Stop-Process -Id $frontend.Id -Force -ErrorAction SilentlyContinue
     Stop-Process -Id $backend.Id -Force -ErrorAction SilentlyContinue
     exit 1
 }
 
 Write-Host ""
-Write-Host "=== 启动成功 ==="
-Write-Host "前端: http://127.0.0.1:5173"
-Write-Host "后端: http://127.0.0.1:8000"
-Write-Host "停止: powershell -ExecutionPolicy Bypass -File scripts/stop_all.ps1"
+Write-Host "=== Launch OK ==="
+Write-Host "Frontend: http://127.0.0.1:5173"
+Write-Host "Backend: http://127.0.0.1:8000"
+Write-Host "Stop: powershell -ExecutionPolicy Bypass -File scripts/stop_all.ps1"

@@ -17,8 +17,13 @@ router = APIRouter(prefix="/api", tags=["metrics"])
 
 @router.get("/metrics")
 def metrics_endpoint(request: Request, db=Depends(get_db)) -> dict:
-    """返回完整可观测性快照。"""
-    provider_names = [p.name for p in request.app.state.provider_manager.providers]
+    """返回完整可观测性快照。
+
+    active_providers：当前实际在跑的 provider 列表（区别于配置列表）。
+    E2E 模式下用此字段判定 data_status 是否为 simulated。
+    """
+    provider_manager = request.app.state.provider_manager
+    provider_names = [p.name for p in provider_manager.providers]
     provider_metrics = metrics.provider_metrics()
 
     # 实时任务计数（队列深度等）
@@ -31,6 +36,7 @@ def metrics_endpoint(request: Request, db=Depends(get_db)) -> dict:
 
     return {
         "data_status": data_source_status(provider_metrics, provider_names),
+        "active_providers": provider_names,
         "providers": provider_metrics,
         "websocket": metrics.ws_metrics(),
         "tasks": {

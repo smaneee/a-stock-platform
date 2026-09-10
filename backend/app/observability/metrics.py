@@ -39,6 +39,8 @@ class MetricsRegistry:
         # 使用 RLock 防止 snapshot 内部子方法二次加锁导致死锁
         self._lock = threading.RLock()
         self._providers: dict[str, _ProviderMetrics] = {}
+        # 真实在跑的 provider（active providers），区别于配置列表
+        self._active_providers: list[str] = []
         self._ws_connections = 0
         self._ws_peak_connections = 0
         self._ws_dropped = 0
@@ -65,6 +67,15 @@ class MetricsRegistry:
             p.failure += 1
             p.consecutive_failures += 1
             p.last_failure_at = time.time()
+
+    def set_active_providers(self, names: list[str]) -> None:
+        """记录实际在跑的 provider（区别于配置列表）。"""
+        with self._lock:
+            self._active_providers = list(names)
+
+    def active_providers(self) -> list[str]:
+        with self._lock:
+            return list(self._active_providers)
 
     def provider_metrics(self) -> dict[str, dict]:
         return self._provider_metrics_locked()
@@ -138,15 +149,24 @@ class MetricsRegistry:
 
         若超时（_SNAPSHOT_TIMEOUT_SECONDS）未能获取锁，返回部分快照以
         防止读端长时间阻塞写端。
+
+        同时计算 data_status：基于 active_providers + 各 provider 成功/失败统计。
         """
         if not self._lock.acquire(timeout=_SNAPSHOT_TIMEOUT_SECONDS):
             # 写端长期持锁时降级：返回无数据的占位快照
             return self._empty_snapshot()
         try:
+            provider_metrics = self._provider_metrics_locked()
+            active = list(self._active_providers)
+            ws = self._ws_metrics_locked()
+            tasks = self._task_metrics_locked()
+            status = data_source_status(provider_metrics, active)
             return {
-                "providers": self._provider_metrics_locked(),
-                "websocket": self._ws_metrics_locked(),
-                "tasks": self._task_metrics_locked(),
+                "providers": provider_metrics,
+                "active_providers": active,
+                "data_status": status,
+                "websocket": ws,
+                "tasks": tasks,
             }
         finally:
             self._lock.release()
@@ -155,6 +175,8 @@ class MetricsRegistry:
     def _empty_snapshot() -> dict:
         return {
             "providers": {},
+            "active_providers": [],
+            "data_status": "disconnected",
             "websocket": {"connections": 0, "peak_connections": 0, "dropped_messages": 0},
             "tasks": {"succeeded": 0, "failed": 0, "cancelled": 0},
         }
@@ -167,8 +189,8 @@ metrics = MetricsRegistry()
 def data_source_status(provider_metrics: dict[str, dict], provider_names: list[str]) -> str:
     """判定整体数据源状态。
 
-    - simulated：唯一可用数据源是 mock
-    - disconnected：所有数据源连续失败 >= 3 次
+    - simulated：唯一可用数据源是 mock，或 mock 是唯一最近成功的源
+    - disconnected：所有真实数据源连续失败 >= 3 次
     - delayed：最近成功距今超过 120 秒
     - real-time：其余情况
     """
@@ -180,8 +202,13 @@ def data_source_status(provider_metrics: dict[str, dict], provider_names: list[s
     real_names = [n for n in provider_names if n != "mock"]
     metrics_of_real = [provider_metrics.get(n) for n in real_names if provider_metrics.get(n)]
 
-    # 无任何成功记录 -> 视作未连接（除非刚启动）
+    # 真实源没有任何成功记录：判断 mock 是否在跑
     if not metrics_of_real:
+        # 若 mock 在 active 列表中，且有最近成功记录，则视为 simulated
+        if "mock" in provider_names:
+            mock_m = provider_metrics.get("mock")
+            if mock_m and mock_m.get("last_success_epoch"):
+                return "simulated"
         return "disconnected"
 
     # 所有真实源都在连续失败 -> disconnected
