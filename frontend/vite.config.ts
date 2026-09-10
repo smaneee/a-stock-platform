@@ -23,6 +23,17 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: true,
+    chunkSizeWarningLimit: 800, // recharts 占 ~400KB，与 react 合并仍 < 800KB
+    rollupOptions: {
+      output: {
+        // 把大依赖拆成独立 chunk，提升首屏加载速度
+        manualChunks: {
+          react: ["react", "react-dom", "react-router-dom"],
+          query: ["@tanstack/react-query"],
+          charts: ["recharts"],
+        },
+      },
+    },
   },
   resolve: {
     alias: {
