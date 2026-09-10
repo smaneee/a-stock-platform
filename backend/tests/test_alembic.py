@@ -52,6 +52,7 @@ def test_alembic_upgrade_creates_all_tables(isolated_db):
         "paper_trades",
         "asset_records",
         "backtests",
+        "trading_calendar",
     }
     actual_tables = set(insp.get_table_names())
     assert expected_tables.issubset(actual_tables), (
@@ -75,6 +76,18 @@ def test_alembic_0002_creates_signal_idempotency_constraint(isolated_db):
     target = next(c for c in constraints if c.get("name") == "uq_paper_trade_account_signal")
     columns = set(target.get("column_names") or [])
     assert {"account_id", "signal_id"}.issubset(columns)
+
+
+def test_alembic_0003_creates_trading_calendar(isolated_db):
+    """0003 迁移必须创建 trading_calendar 表（date 主键）。"""
+    cfg = _make_config()
+    command.upgrade(cfg, "head")
+
+    insp = inspect(create_engine(isolated_db))
+    assert "trading_calendar" in insp.get_table_names()
+
+    pk = insp.get_pk_constraint("trading_calendar")
+    assert "trade_date" in (pk.get("constrained_columns") or [])
 
 
 def test_alembic_roundtrip(isolated_db):

@@ -1,13 +1,16 @@
 """回测成交执行。
 
-落实 A 股基本约束：T+1、100 股整数手、涨跌停限制、停牌不能成交、
+落实 A 股基本约束：T+1、100 股整数手、分板块涨跌停限制、停牌不能成交、
 佣金最低收费、印花税、可配置滑点，并禁止使用未来数据。
+涨跌停规则统一来自 MarketRuleEngine（回测与模拟交易共用）。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 from app.market_data.base import QuoteData
+from app.market_rules.rules import MarketRuleEngine
 
 
 @dataclass(frozen=True)
@@ -18,8 +21,6 @@ class ExecutionConfig:
     min_commission: float = 5.0
     stamp_tax_rate: float = 0.0005
     slippage: float = 0.0005  # 滑点比例
-    price_limit: float = 0.10  # 涨跌停幅度（主板 10%）
-    lot_size: int = 100
 
 
 @dataclass
@@ -37,14 +38,20 @@ class ExecutionResult:
 class ExecutionSimulator:
     """回测成交模拟器。"""
 
-    def __init__(self, config: ExecutionConfig | None = None):
+    def __init__(
+        self,
+        config: ExecutionConfig | None = None,
+        rule_engine: MarketRuleEngine | None = None,
+    ):
         self.config = config or ExecutionConfig()
+        self.rule_engine = rule_engine or MarketRuleEngine()
 
     def try_fill(
         self,
         side: str,
         quantity: int,
         bar: QuoteData,
+        is_new_listing: bool = False,
     ) -> ExecutionResult:
         """尝试在指定 K 线（开盘价）成交。
 
@@ -58,13 +65,20 @@ class ExecutionSimulator:
         if price <= 0:
             return ExecutionResult(False, "开盘价无效")
 
-        # 涨跌停限制
+        # 整数手校验
+        if quantity % self.rule_engine.get_rules(bar.symbol).lot_size != 0:
+            return ExecutionResult(False, "数量必须为 100 股整数手")
+
+        # 分板块涨跌停限制（统一规则引擎）
         if bar.previous_close > 0:
-            limit_up = bar.previous_close * (1 + self.config.price_limit)
-            limit_down = bar.previous_close * (1 - self.config.price_limit)
-            if side == "BUY" and price >= limit_up:
+            rules = self.rule_engine.get_rules(
+                bar.symbol, name=bar.name, is_new_listing=is_new_listing
+            )
+            limit_up = rules.limit_up(Decimal(str(bar.previous_close)))
+            limit_down = rules.limit_down(Decimal(str(bar.previous_close)))
+            if side == "BUY" and limit_up is not None and Decimal(str(price)) >= limit_up:
                 return ExecutionResult(False, "一字涨停，无法买入")
-            if side == "SELL" and price <= limit_down:
+            if side == "SELL" and limit_down is not None and Decimal(str(price)) <= limit_down:
                 return ExecutionResult(False, "一字跌停，无法卖出")
 
         # 滑点：买入抬价，卖出压价
@@ -72,10 +86,6 @@ class ExecutionSimulator:
             fill_price = price * (1 + self.config.slippage)
         else:
             fill_price = price * (1 - self.config.slippage)
-
-        # 整数手校验
-        if quantity % self.config.lot_size != 0:
-            return ExecutionResult(False, "数量必须为 100 股整数手")
 
         value = fill_price * quantity
         commission = max(value * self.config.commission_rate, self.config.min_commission)

@@ -5,11 +5,12 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -193,3 +194,11 @@ class Backtest(Base):
     status: Mapped[str] = mapped_column(String(20), default="PENDING")  # PENDING/RUNNING/DONE/FAILED
     result: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON 序列化的结果
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+
+class TradingDate(Base):
+    """交易日历。只存储交易日（节假日不落库）。"""
+
+    __tablename__ = "trading_calendar"
+
+    trade_date: Mapped[date] = mapped_column(Date, primary_key=True)

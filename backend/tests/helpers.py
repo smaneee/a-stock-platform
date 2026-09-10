@@ -1,7 +1,7 @@
 """测试辅助函数。"""
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from app.market_data.base import QuoteData
 from app.time_utils import utc_now
@@ -9,6 +9,7 @@ from app.time_utils import utc_now
 
 def make_quote(
     symbol: str = "600000",
+    name: str | None = None,
     price: float = 10.0,
     open: float = 9.9,
     high: float = 10.2,
@@ -22,7 +23,7 @@ def make_quote(
     """构造行情数据。"""
     return QuoteData(
         symbol=symbol,
-        name=f"测试股{symbol}",
+        name=name if name is not None else f"测试股{symbol}",
         price=price,
         open=open,
         high=high,

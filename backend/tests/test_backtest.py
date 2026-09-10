@@ -41,7 +41,7 @@ def test_execution_halted():
 
 def test_execution_limit_up():
     """一字涨停无法买入。"""
-    sim = ExecutionSimulator(ExecutionConfig(price_limit=0.10))
+    sim = ExecutionSimulator()
     # 昨收 10，涨停价 11，开盘即涨停
     bar = make_quote(symbol="600000", open=11.0, previous_close=10.0, volume=1_000_000.0)
     result = sim.try_fill("BUY", 100, bar)
@@ -51,11 +51,42 @@ def test_execution_limit_up():
 
 def test_execution_limit_down():
     """一字跌停无法卖出。"""
-    sim = ExecutionSimulator(ExecutionConfig(price_limit=0.10))
+    sim = ExecutionSimulator()
     bar = make_quote(symbol="600000", open=9.0, previous_close=10.0, volume=1_000_000.0)
     result = sim.try_fill("SELL", 100, bar)
     assert result.filled is False
     assert "跌停" in result.reason
+
+
+def test_execution_board_specific_limit():
+    """创业板(20%)在 +15% 开盘时不应被 10% 规则误拒。"""
+    sim = ExecutionSimulator()
+    # 300750 创业板，昨收 10，+15% 开盘价 11.5，仍在 20% 涨停内
+    bar = make_quote(
+        symbol="300750", name="宁德时代", open=11.5, previous_close=10.0, volume=1_000_000.0
+    )
+    result = sim.try_fill("BUY", 100, bar)
+    assert result.filled is True
+
+    # 主板 600000 在 +15% 开盘则应被 10% 涨停拒绝
+    bar_main = make_quote(
+        symbol="600000", name="浦发银行", open=11.5, previous_close=10.0, volume=1_000_000.0
+    )
+    result_main = sim.try_fill("BUY", 100, bar_main)
+    assert result_main.filled is False
+    assert "涨停" in result_main.reason
+
+
+def test_execution_st_limit():
+    """ST 股票 5% 涨停限制。"""
+    sim = ExecutionSimulator()
+    # ST 股票昨收 10，+6% 开盘 10.6 应被 5% 涨停拒绝
+    bar = make_quote(
+        symbol="600000", name="ST测试", open=10.6, previous_close=10.0, volume=1_000_000.0
+    )
+    result = sim.try_fill("BUY", 100, bar)
+    assert result.filled is False
+    assert "涨停" in result.reason
 
 
 def test_execution_lot_size():
