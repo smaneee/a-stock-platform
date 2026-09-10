@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -176,12 +177,43 @@ def start_backend_with_temp_db(backend_dir: Path) -> subprocess.Popen:
     return proc
 
 
+def _resolve_frontend_command(frontend_dir: Path) -> list[str]:
+    """解析启动前端的命令。
+
+    优先级：
+    1) shutil.which("npm.cmd") — 任何 PATH 上的 npm
+    2) frontend/node_modules/.bin/vite.cmd — 本地已安装的 vite
+    3) 找不到则抛 RuntimeError（明确的依赖错误，不是 FileNotFoundError）
+    """
+    npm_path = shutil.which("npm.cmd") or shutil.which("npm")
+    if npm_path:
+        return [npm_path, "run", "dev", "--", "--host", "127.0.0.1", "--port", "5173"]
+
+    local_vite = frontend_dir / "node_modules" / ".bin" / "vite.cmd"
+    if local_vite.exists():
+        return [
+            str(local_vite),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "5173",
+        ]
+
+    raise RuntimeError(
+        "managed E2E 无法启动前端：既找不到 PATH 上的 npm.cmd，"
+        f"也找不到本地 {local_vite}。"
+        "请安装 Node.js (>=18) 或在 frontend/ 下运行 npm install。"
+    )
+
+
 def start_frontend(frontend_dir: Path) -> subprocess.Popen:
     """启动前端 dev server。
 
+    启动方式由 _resolve_frontend_command 决定（npm.cmd 或本地 vite.cmd）。
     npm.cmd 会 spawn 子 node.exe，必须用 CREATE_NEW_PROCESS_GROUP 启动便于
     kill 时通过 CTRL_BREAK_EVENT 通知整个进程组。
     """
+    cmd = _resolve_frontend_command(frontend_dir)
     log_path = Path(tempfile.gettempdir()) / f"e2e_frontend_{RUN_ID}.log"
     log_file = open(log_path, "w", encoding="utf-8")
     kwargs: dict = {
@@ -191,11 +223,8 @@ def start_frontend(frontend_dir: Path) -> subprocess.Popen:
     }
     if os.name == "nt":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    proc = subprocess.Popen(
-        ["npm.cmd", "run", "dev", "--", "--host", "127.0.0.1", "--port", "5173"],
-        **kwargs,
-    )
-    print(f"  前端 PID={proc.pid}, log={log_path}")
+    proc = subprocess.Popen(cmd, **kwargs)
+    print(f"  前端 PID={proc.pid}, cmd={cmd[0]}, log={log_path}")
     return proc
 
 
@@ -219,14 +248,26 @@ def init_temp_db(backend_dir: Path) -> None:
 
 
 def wait_for_http(url: str, timeout: float = 60.0) -> bool:
+    """等到 URL 返回 200 才返回 True。
+
+    503 / TimeoutError / ConnectionRefused 等都视为「未就绪但继续等」：
+    后端的 /api/health/ready 在交易日历同步中（依赖外部 AKShare/sina 接口）
+    可能瞬时返回 503。如果整个 timeout 窗口都没拿到 200 才返回 False。
+    """
     import urllib.request
+    import urllib.error
 
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            r = urllib.request.urlopen(url, timeout=2)
+            req = urllib.request.Request(url, headers={"Accept": "*/*"})
+            r = urllib.request.urlopen(req, timeout=2)
             if r.status == 200:
                 return True
+        except urllib.error.HTTPError as exc:
+            # 503 = 服务暂时不可用（依赖外部数据源），继续等
+            if exc.code not in (502, 503, 504):
+                return False  # 4xx 不重试（如 404）
         except Exception:
             pass
         time.sleep(1)
@@ -275,6 +316,27 @@ def delete_temp_db(errors: list[str]) -> None:
             errors.append(f"删除临时 DB 失败: {exc}")
 
 
+def _delete_temp_db_unconditional(errors: list[str]) -> None:
+    """与 delete_temp_db 的差异：永远尝试删除，不依赖 db_initialized。
+
+    适用场景：alembic 部分创建文件后失败时，DB 已落盘但程序流未把
+    db_initialized 设为 True，原 finally 会跳过删除。
+    """
+    # 防御：如果路径指向 a_stock.db（生产 DB），绝对不动它
+    if TEMP_DB_PATH == str(A_STOCK_DB) or TEMP_DB_PATH.startswith(str(A_STOCK_DB)):
+        errors.append(
+            f"_delete_temp_db_unconditional 拒绝删除生产 DB 路径：{TEMP_DB_PATH}"
+        )
+        return
+    p = Path(TEMP_DB_PATH)
+    if p.exists():
+        try:
+            p.unlink()
+            print(f"  已删除临时数据库（无条件）：{TEMP_DB_PATH}")
+        except Exception as exc:
+            errors.append(f"无条件删除临时 DB 失败: {exc}")
+
+
 def verify_no_residue(errors: list[str]) -> None:
     """E2E 结束后确认端口释放 + 进程退出 + 临时 DB 已删除。"""
     import socket
@@ -304,8 +366,20 @@ A_STOCK_DB_INITIAL_SIG: tuple[int, float] | None = _record_a_stock_db_signature(
 
 
 def _verify_a_stock_db_unchanged(errors: list[str]) -> None:
-    """校验 a_stock.db 在 E2E 期间未被修改：与模块加载时记录的 A_STOCK_DB_INITIAL_SIG 对比。"""
+    """校验 a_stock.db 在 E2E 期间未被修改：与模块加载时记录的 A_STOCK_DB_INITIAL_SIG 对比。
+
+    三种情况：
+    - 初始存在 + 结束存在 + 签名相同  → 正常
+    - 初始存在 + 结束存在 + 签名不同  → 失败（被修改）
+    - 初始不存在 + 结束存在           → 失败（E2E 期间意外创建）
+    - 初始不存在 + 结束不存在         → 正常（且 E2E 没创建它）
+    """
     if A_STOCK_DB_INITIAL_SIG is None:
+        # 初始不存在 → 必须结束时也不存在
+        if A_STOCK_DB.exists():
+            errors.append(
+                "a_stock.db 在 E2E 启动时不存在，结束时却存在（E2E 意外创建了它）"
+            )
         return
     if not A_STOCK_DB.exists():
         errors.append(
@@ -629,7 +703,7 @@ async def main_managed() -> int:
         await run_checks(res)
 
     finally:
-        # 清理：处理 3 种清理路径（未启动 / 部分启动 / 全启动）
+        # 清理：处理 4 种清理路径（未启动 / 部分启动 / 迁移失败 / 全启动）
         # 1) 后端进程清理
         if backend is not None:
             kill_process(backend, "后端", res.cleanup_errors)
@@ -639,12 +713,14 @@ async def main_managed() -> int:
         # 3) 端口释放等待
         if backend is not None or frontend is not None:
             time.sleep(2)
-        # 4) 临时 DB 删除（即使迁移失败、没启动进程也要清）
-        if db_initialized:
-            delete_temp_db(res.cleanup_errors)
+        # 4) 临时 DB 无条件删除 — 不依赖 db_initialized：
+        #    即使 alembic 部分创建文件后失败，DB 也已经被落盘，必须清。
+        #    生产 DB 路径在前面已通过 A_STOCK_DB 保护，不会误删。
+        _delete_temp_db_unconditional(res.cleanup_errors)
         # 5) 残留检查：端口释放 + 临时 DB 不存在
         verify_no_residue(res.cleanup_errors)
-        # 6) a_stock.db 未被修改（取大小 + mtime 与初始一致）
+        # 6) a_stock.db 未被修改（取大小 + mtime 与初始一致），
+        #    若初始无但运行时被创建出来必须失败
         _verify_a_stock_db_unchanged(res.cleanup_errors)
 
     passed, total = res.summary()
