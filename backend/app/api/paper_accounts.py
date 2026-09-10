@@ -9,10 +9,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database.models import PaperAccount, PaperPosition, PaperTrade
+from app.database.models import PaperAccount, PaperOrder, PaperPosition, PaperTrade
 from app.database.session import get_db
+from app.market_data.base import QuoteData
 from app.paper_trading.broker import PaperBroker
 from app.paper_trading.portfolio import PortfolioService
+from app.paper_trading.settlement import DailySettlement
 from app.validation import validate_symbol
 
 router = APIRouter(prefix="/api/paper", tags=["paper"])
@@ -105,6 +107,47 @@ async def place_order(
     }
 
 
+@router.get("/orders")
+def list_orders(
+    account_id: int,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+) -> dict:
+    """查询委托单（含状态与拒绝原因）。"""
+    orders = db.scalars(
+        select(PaperOrder)
+        .where(PaperOrder.account_id == account_id)
+        .order_by(PaperOrder.created_at.desc())
+        .limit(limit)
+    ).all()
+    return {
+        "orders": [
+            {
+                "id": o.id,
+                "symbol": o.symbol,
+                "side": o.side,
+                "quantity": o.quantity,
+                "price": float(o.price),
+                "status": o.status,
+                "reject_reason": o.reject_reason,
+                "signal_id": o.signal_id,
+                "created_at": o.created_at.isoformat(),
+            }
+            for o in orders
+        ]
+    }
+
+
+@router.post("/orders/{order_id}/cancel")
+def cancel_order(order_id: int, db: Session = Depends(get_db)) -> dict:
+    """取消尚未成交的委托，释放冻结资金。"""
+    broker = PaperBroker(db)
+    order, error = broker.cancel_order(order_id)
+    if order is None:
+        raise HTTPException(status_code=409, detail=error)
+    return {"id": order.id, "status": order.status}
+
+
 @router.get("/positions")
 def list_positions(
     account_id: int,
@@ -121,6 +164,7 @@ def list_positions(
                 "quantity": p.quantity,
                 "available_quantity": p.available_quantity,
                 "avg_cost": float(p.avg_cost),
+                "realized_pnl": float(p.realized_pnl),
             }
             for p in positions
         ]
@@ -159,21 +203,59 @@ def list_trades(
 
 
 @router.get("/accounts/{account_id}/assets")
-def account_assets(
+async def account_assets(
     account_id: int,
     request: Request,
     db: Session = Depends(get_db),
 ) -> dict:
-    """查询账户资产与资产曲线。"""
+    """查询账户资产、持仓盈亏与资产曲线。"""
     portfolio = PortfolioService(db)
     account = portfolio.get_account(account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="账户不存在")
 
+    # 拉取持仓最新行情，计算未实现盈亏
+    positions = db.scalars(
+        select(PaperPosition).where(PaperPosition.account_id == account_id)
+    ).all()
+    symbols = [p.symbol for p in positions]
+    quotes: dict[str, QuoteData] = {}
+    if symbols:
+        provider_manager = request.app.state.provider_manager
+        quotes = await provider_manager.get_quotes(symbols)
+
+    unrealized = portfolio.unrealized_pnl(account_id, quotes)
     curve = portfolio.get_asset_curve(account_id)
     return {
         "account_id": account_id,
         "available_cash": float(account.available_cash),
         "frozen_cash": float(account.frozen_cash),
+        "unrealized_pnl": unrealized,
         "asset_curve": curve,
     }
+
+
+@router.post("/accounts/{account_id}/settle")
+async def settle_account(
+    account_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    """日终结算：T+1 解冻 + 记录资产快照。"""
+    portfolio = PortfolioService(db)
+    account = portfolio.get_account(account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="账户不存在")
+
+    positions = db.scalars(
+        select(PaperPosition).where(PaperPosition.account_id == account_id)
+    ).all()
+    symbols = [p.symbol for p in positions]
+    quotes: dict[str, QuoteData] = {}
+    if symbols:
+        provider_manager = request.app.state.provider_manager
+        quotes = await provider_manager.get_quotes(symbols)
+
+    settlement = DailySettlement(db)
+    summary = settlement.settle_account(account, quotes)
+    return summary

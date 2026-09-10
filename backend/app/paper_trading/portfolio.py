@@ -31,6 +31,20 @@ class PortfolioService:
         )
         return self._db.scalars(stmt).first()
 
+    def unrealized_pnl(
+        self, account_id: int, quotes: dict[str, QuoteData]
+    ) -> float:
+        """未实现盈亏 = Σ (现价 - 成本) × 数量。"""
+        positions = self._db.scalars(
+            select(PaperPosition).where(PaperPosition.account_id == account_id)
+        ).all()
+        total = 0.0
+        for pos in positions:
+            quote = quotes.get(pos.symbol)
+            price = quote.price if quote else float(pos.avg_cost)
+            total += (price - float(pos.avg_cost)) * pos.quantity
+        return total
+
     def calculate_snapshot(
         self,
         account: PaperAccount,

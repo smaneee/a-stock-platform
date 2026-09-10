@@ -114,6 +114,23 @@ def test_alembic_0005_backtest_tasks(isolated_db):
     )
 
 
+def test_alembic_0006_paper_order_state_machine(isolated_db):
+    """0006 迁移必须为订单状态机与盈亏增加字段。"""
+    cfg = _make_config()
+    command.upgrade(cfg, "head")
+
+    insp = inspect(create_engine(isolated_db))
+
+    order_cols = {c["name"] for c in insp.get_columns("paper_orders")}
+    assert "reject_reason" in order_cols
+
+    trade_cols = {c["name"] for c in insp.get_columns("paper_trades")}
+    assert "realized_pnl" in trade_cols
+
+    position_cols = {c["name"] for c in insp.get_columns("paper_positions")}
+    assert "realized_pnl" in position_cols
+
+
 def test_alembic_roundtrip(isolated_db):
     """升级 → 降级 → 升级：迁移必须可逆且可重复。"""
     cfg = _make_config()

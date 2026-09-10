@@ -123,6 +123,7 @@ class PaperPosition(Base):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     available_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     avg_cost: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
+    realized_pnl: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
 
     account: Mapped["PaperAccount"] = relationship(back_populates="positions")
 
@@ -140,7 +141,8 @@ class PaperOrder(Base):
     side: Mapped[str] = mapped_column(String(10), nullable=False)  # BUY / SELL
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="PENDING")  # PENDING/FILLED/CANCELLED/REJECTED
+    status: Mapped[str] = mapped_column(String(20), default="SUBMITTED")  # SUBMITTED/FILLED/CANCELLED/REJECTED
+    reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     signal_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
@@ -164,6 +166,7 @@ class PaperTrade(Base):
     price: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
     commission: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
     stamp_tax: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
+    realized_pnl: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
     signal_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     executed_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
