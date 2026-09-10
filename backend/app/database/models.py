@@ -14,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -253,8 +254,8 @@ class HistoricalBar(Base):
 class Security(Base):
     """股票主数据（名称、板块、ST 状态、上市日期）。
 
-    由 SecurityMasterService 统一读写，回测 / 组合 / 模拟交易必须经此表
-    解析股票基础信息，禁止依赖调用方临时传参。
+    由 SecurityMasterService 与 UniverseSyncService 共同读写，回测 / 组合 /
+    模拟交易必须经此表解析股票基础信息，禁止依赖调用方临时传参。
     """
 
     __tablename__ = "securities"
@@ -262,9 +263,110 @@ class Security(Base):
     symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     board: Mapped[str] = mapped_column(String(20), nullable=False, default="unknown")
+    # 交易所: sh / sz / bj（衍生自 symbol 前缀，但显式存储以便查询）
+    exchange: Mapped[str] = mapped_column(String(8), nullable=False, default="")
     is_st: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     listing_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    delisted_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # trading_status: active / suspended / delisted
+    trading_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active"
+    )
+    # 行业（可空，AKShare / Tushare 同步时填）
+    sector: Mapped[str | None] = mapped_column(String(50), nullable=True)
     source: Mapped[str] = mapped_column(String(20), default="manual")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+    members: Mapped[list["UniverseMember"]] = relationship(  # noqa: F821
+        back_populates="security",
+        cascade="all, delete-orphan",
+    )
+
+
+class UniverseSnapshot(Base):
+    """某一交易日的全市场股票池快照。
+
+    关键设计：所有 selection / backtest / paper trading 必须基于某个
+    UniverseSnapshot 查成分，禁止在回测中调用「当前实时」数据，避免
+    未来数据与幸存者偏差。快照按 trading_day 唯一，便于跨日比对。
+    """
+
+    __tablename__ = "universe_snapshots"
+    __table_args__ = (
+        UniqueConstraint("trading_day", name="uq_universe_snapshot_trading_day"),
+        Index("ix_universe_snapshot_trading_day", "trading_day"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trading_day: Mapped[date] = mapped_column(Date, nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    included_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    excluded_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_provider: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="mock"
+    )
+    source_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+    members: Mapped[list["UniverseMember"]] = relationship(  # noqa: F821
+        back_populates="snapshot",
+        cascade="all, delete-orphan",
+        order_by="UniverseMember.sort_rank",
+    )
+
+
+class UniverseMember(Base):
+    """Snapshot 与 Security 的关联行，包含排除原因。
+
+    一只股票在某一快照只有一行：要么 is_included=True，要么 is_included=False
+    且 exclude_reason 描述为什么被排除。即使被排除也必须落库（用于审计/重放）。
+    """
+
+    __tablename__ = "universe_members"
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_id", "symbol", name="uq_universe_member_snapshot_symbol"
+        ),
+        Index("ix_universe_member_snapshot_included", "snapshot_id", "is_included"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("universe_snapshots.id", ondelete="CASCADE"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    security_id: Mapped[str] = mapped_column(
+        ForeignKey("securities.symbol", ondelete="CASCADE"), nullable=False
+    )
+    is_included: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    exclude_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    sort_rank: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    snapshot: Mapped[UniverseSnapshot] = relationship(back_populates="members")
+    security: Mapped[Security] = relationship(back_populates="members")
+
+
+class DataSourceHealth(Base):
+    """数据源健康状况记录（最新一次成功 / 失败状态）。
+
+    用于 universe_sync_service 实时报告哪些 Provider 在线，
+    以及为选择逻辑记录：上一次同步是哪条数据源完成的。
+    """
+
+    __tablename__ = "data_source_health"
+    __table_args__ = (
+        UniqueConstraint("source_id", name="uq_data_source_health_source_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unknown"
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 

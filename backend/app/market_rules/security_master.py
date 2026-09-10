@@ -36,6 +36,10 @@ class SecurityMasterService:
         is_st: bool | None = None,
         listing_date: date | None = None,
         source: str = "manual",
+        exchange: str = "",
+        delisted_date: date | None = None,
+        trading_status: str | None = None,
+        sector: str | None = None,
     ) -> Security:
         """按 symbol 查找或新建主数据，缺省字段由 MarketRuleEngine 推断。
 
@@ -55,12 +59,26 @@ class SecurityMasterService:
             if listing_date is not None and sec.listing_date != listing_date:
                 sec.listing_date = listing_date
                 changed = True
+            if delisted_date is not None and sec.delisted_date != delisted_date:
+                sec.delisted_date = delisted_date
+                changed = True
+            if trading_status and sec.trading_status != trading_status:
+                sec.trading_status = trading_status
+                changed = True
+            if sector and sec.sector != sector:
+                sec.sector = sector
+                changed = True
+            if exchange and sec.exchange != exchange:
+                sec.exchange = exchange
+                changed = True
             if changed:
                 from app.time_utils import utc_now
                 sec.updated_at = utc_now()
             return sec
 
         board = MarketRuleEngine.classify(symbol)
+        # 缺省交易所从 symbol 前缀推断
+        ex = exchange or _infer_exchange(symbol)
         st = (
             MarketRuleEngine.is_st_name(name)
             if is_st is None
@@ -70,8 +88,12 @@ class SecurityMasterService:
             symbol=symbol,
             name=name or f"未知{symbol}",
             board=board.value,
+            exchange=ex,
             is_st=st,
             listing_date=listing_date,
+            delisted_date=delisted_date,
+            trading_status=trading_status or "active",
+            sector=sector,
             source=source,
         )
         self._db.add(sec)
@@ -101,3 +123,24 @@ class SecurityMasterService:
     def list_count(self) -> int:
         """返回主数据总数。"""
         return self._db.query(Security).count()
+
+
+def _infer_exchange(symbol: str) -> str:
+    """从 symbol 前缀推断交易所。
+
+    - 6xxxxx → SH（上证主板/科创/北交所部分老股）
+    - 0xxxxx / 3xxxxx → SZ（深证主板/创业板）
+    - 4xxxxx / 8xxxxx → BJ（北交所）
+    - 9xxxxx → BJ（北证 B 股）
+    """
+    if not symbol:
+        return ""
+    s = symbol.lstrip("0123456789") and symbol  # 兜底
+    head = symbol[0]
+    if head == "6":
+        return "SH"
+    if head in ("0", "3"):
+        return "SZ"
+    if head in ("4", "8", "9"):
+        return "BJ"
+    return ""

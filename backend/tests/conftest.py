@@ -20,7 +20,19 @@ from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
-from app.database.session import Base  # noqa: E402
+from app.database.session import Base, engine as _app_engine  # noqa: E402
+# 强制 import 所有模型，确保 Base.metadata 含全部表定义后再 create_all
+from app.database import models as _db_models  # noqa: E402,F401
+from app.universe import (  # noqa: E402,F401
+    exclusion as _uni_excl,
+    snapshot_service as _uni_snap,
+    sync_service as _uni_sync,
+    providers as _uni_prov,
+)
+
+# 测试运行开始前，在 app 自身引擎上把全部表建好（TestClient 走这个引擎）
+if str(_app_engine.url).startswith("sqlite"):
+    Base.metadata.create_all(bind=_app_engine)
 
 
 @pytest.fixture

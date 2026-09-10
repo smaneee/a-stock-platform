@@ -23,6 +23,7 @@ from app.api.portfolio_backtests import router as portfolio_backtests_router
 from app.api.quotes import router as quotes_router
 from app.api.signals import router as signals_router
 from app.api.strategies import ensure_strategies, router as strategies_router
+from app.api.universe import router as universe_router
 from app.api.watchlists import router as watchlists_router
 from app.config import get_settings
 from app.database import models  # noqa: F401 - 注册模型
@@ -250,6 +251,7 @@ def create_app() -> FastAPI:
     # 注册路由
     app.include_router(health_router)
     app.include_router(metrics_router)
+    app.include_router(universe_router)
     app.include_router(quotes_router)
     app.include_router(watchlists_router)
     app.include_router(signals_router)
