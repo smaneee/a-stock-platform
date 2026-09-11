@@ -211,6 +211,96 @@ export interface PaperOrderDetail {
   created_at: string;
 }
 
+export interface PaperRebalancePlan {
+  id: number;
+  account_id: number;
+  selection_run_id: number;
+  status: "DRAFT" | "EXECUTED" | "PARTIAL" | "CANCELLED" | "EXPIRED";
+  validation_override: boolean;
+  proposal: {
+    selection_trading_day: string;
+    total_asset: number;
+    validation: {
+      passed: boolean;
+      override: boolean;
+      evaluated_runs: number;
+      mean_forward_return: number;
+      average_rank_ic: number | null;
+    };
+    orders: Array<{
+      side: "BUY" | "SELL";
+      symbol: string;
+      quantity: number;
+      indicative_price: number;
+      indicative_value: number;
+    }>;
+  };
+  execution: { filled: number; total: number } | null;
+  created_at: string;
+  executed_at: string | null;
+}
+
+export interface LiveTradingStatus {
+  enabled: boolean;
+  ready: boolean;
+  provider: "qmt";
+  path_configured: boolean;
+  path_exists: boolean;
+  account_configured: boolean;
+  sdk_available: boolean;
+  api_token_configured: boolean;
+  order_api_enabled: boolean;
+  message: string;
+}
+
+export interface LiveRebalancePlan {
+  id: number;
+  selection_run_id: number;
+  status: "DRAFT" | "APPROVED" | "EXECUTING" | "SUBMITTED" | "PARTIAL" | "FILLED" | "EXPIRED";
+  account_snapshot: {
+    cash: number;
+    total_asset: number;
+    positions: Record<string, { quantity: number; available_quantity: number }>;
+  };
+  proposal: {
+    selection_trading_day: string;
+    target_investment_ratio: number;
+    max_symbol_weight: number;
+    validation: {
+      evaluated_runs: number;
+      mean_forward_return: number;
+      average_rank_ic: number;
+    };
+    orders: Array<{
+      side: "BUY" | "SELL";
+      symbol: string;
+      quantity: number;
+      indicative_price: number;
+      indicative_value: number;
+    }>;
+  };
+  execution: {
+    submitted: number;
+    total: number;
+    filled?: number;
+    reconciled_at?: string;
+    orders?: Array<{
+      side: "BUY" | "SELL";
+      symbol: string;
+      quantity: number;
+      order_id: number | null;
+      status: string;
+      broker_status?: string;
+      broker_traded_volume?: number;
+      broker_traded_price?: number;
+      broker_status_message?: string;
+    }>;
+  } | null;
+  created_at: string;
+  approval_expires_at: string | null;
+  executed_at: string | null;
+}
+
 export interface PaperTrade {
   id: number;
   symbol: string;
@@ -292,6 +382,17 @@ export interface SelectionResult {
   disclaimer: string;
 }
 
+export interface SelectionEvaluationSummary {
+  evaluated_runs: number;
+  candidate_observations: number;
+  mean_forward_return: number;
+  median_forward_return: number;
+  forward_win_rate: number;
+  average_coverage: number;
+  average_rank_ic: number | null;
+  average_turnover: number | null;
+}
+
 export interface HistoryIngestTask {
   id: number;
   snapshot_id: number | null;
@@ -309,6 +410,37 @@ export interface HistoryIngestTask {
   last_error: string | null;
   started_at: string | null;
   completed_at: string | null;
+}
+
+export interface DailyPipelineRun {
+  id: number;
+  trading_day: string;
+  status: "queued" | "running" | "waiting_history" | "succeeded" | "failed" | "cancelled";
+  stage: string;
+  paper_account_id: number | null;
+  history_task_id: number | null;
+  selection_run_id: number | null;
+  paper_plan_id: number | null;
+  config: Record<string, unknown>;
+  auto_execute_paper: boolean;
+  progress: number;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  updated_at: string;
+}
+
+/** 每日流水线自动调度配置（来自后端 .env，只读）。 */
+export interface DailyPipelineSchedule {
+  enabled: boolean;
+  hour: number;
+  minute: number;
+  paper_account_id: number | null;
+  auto_execute_paper: boolean;
+  lookback_days: number;
+  running: boolean;
+  next_run_at: string | null;
 }
 
 /** 统一 API 错误格式。 */

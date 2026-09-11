@@ -179,6 +179,93 @@ class PaperTrade(Base):
     executed_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
+class PaperRebalancePlan(Base):
+    """User-reviewable bridge from a selection run to paper orders."""
+
+    __tablename__ = "paper_rebalance_plans"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id", "selection_run_id", name="uq_paper_rebalance_account_run"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("paper_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    selection_run_id: Mapped[int] = mapped_column(
+        ForeignKey("selection_runs.id", ondelete="NO ACTION"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="DRAFT")
+    target_investment_ratio: Mapped[float] = mapped_column(Float, nullable=False)
+    max_symbol_weight: Mapped[float] = mapped_column(Float, nullable=False)
+    validation_override: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    proposal_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    execution_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class LiveRebalancePlan(Base):
+    """One-time-approved plan for a configured local QMT account."""
+
+    __tablename__ = "live_rebalance_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    selection_run_id: Mapped[int] = mapped_column(
+        ForeignKey("selection_runs.id", ondelete="NO ACTION"), nullable=False
+    )
+    account_fingerprint: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="DRAFT")
+    account_snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    proposal_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    approval_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    approval_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    execution_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class DailyPipelineRun(Base):
+    """Recoverable daily research-to-paper pipeline run."""
+
+    __tablename__ = "daily_pipeline_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "trading_day", "paper_account_id", name="uq_daily_pipeline_day_account"
+        ),
+        Index("ix_daily_pipeline_status_stage", "status", "stage"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trading_day: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="queued")
+    stage: Mapped[str] = mapped_column(String(40), nullable=False, default="queued")
+    paper_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("paper_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    history_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("history_ingest_batches.id", ondelete="SET NULL"), nullable=True
+    )
+    selection_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("selection_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    paper_plan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("paper_rebalance_plans.id", ondelete="SET NULL"), nullable=True
+    )
+    config_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    auto_execute_paper: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+
 class AssetRecord(Base):
     """模拟账户资产曲线记录，用于计算回撤与资产曲线。"""
 

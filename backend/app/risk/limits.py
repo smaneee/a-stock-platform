@@ -1,7 +1,11 @@
 """风控限额配置。"""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover - 仅供类型检查
+    from app.config import Settings
 
 
 @dataclass(frozen=True)
@@ -18,3 +22,21 @@ class RiskLimits:
 
 
 DEFAULT_LIMITS = RiskLimits()
+
+# Settings 字段名 = RISK_ + RiskLimits 字段名，保持单一映射避免两处漂移
+_SETTINGS_FIELD_PREFIX = "risk_"
+
+
+def limits_from_settings(settings: "Settings | Any") -> RiskLimits:
+    """从应用配置构建风控限额。
+
+    阈值全部来自环境变量/.env（RISK_*），便于按个人风险偏好调整；
+    Settings 缺字段时回退到 RiskLimits 默认值。
+    """
+    values: dict[str, float] = {}
+    for item in fields(RiskLimits):
+        raw: Any = getattr(settings, _SETTINGS_FIELD_PREFIX + item.name, None)
+        if raw is None:
+            continue
+        values[item.name] = float(raw)
+    return RiskLimits(**values)

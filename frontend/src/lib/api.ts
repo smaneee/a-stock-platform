@@ -13,6 +13,7 @@ import type {
   PaperOrder,
   PaperOrderDetail,
   PaperPosition,
+  PaperRebalancePlan,
   PaperTrade,
   PortfolioBacktestRequest,
   PortfolioBacktestResponse,
@@ -22,7 +23,12 @@ import type {
   Watchlist,
   AssetPoint,
   SelectionResult,
+  SelectionEvaluationSummary,
   HistoryIngestTask,
+  DailyPipelineRun,
+  DailyPipelineSchedule,
+  LiveRebalancePlan,
+  LiveTradingStatus,
 } from "./types";
 
 const BASE = "/api";
@@ -96,6 +102,12 @@ export const evaluateSelection = (runId: number, horizonDays = 20) =>
     params: { horizon_days: horizonDays, min_coverage_ratio: 0.8 },
   });
 
+export const fetchSelectionEvaluationSummary = () =>
+  request<SelectionEvaluationSummary>("/selections/evaluations/summary");
+
+export const listSelectionRuns = (limit = 50) =>
+  request<{ items: SelectionResult[] }>("/selections", { params: { limit } });
+
 export const createHistoryIngest = (tradingDay: string) =>
   request<HistoryIngestTask>("/history-ingest", {
     method: "POST",
@@ -111,6 +123,27 @@ export const cancelHistoryIngest = (taskId: number) =>
   request<HistoryIngestTask>(`/history-ingest/${taskId}/cancel`, {
     method: "POST",
   });
+
+export const createDailyPipelineRun = (body: {
+  trading_day: string;
+  paper_account_id?: number | null;
+  auto_execute_paper?: boolean;
+  paper_validation_override?: boolean;
+  top_n?: number;
+  history_lookback_days?: number;
+}) =>
+  request<DailyPipelineRun>("/daily-pipeline/runs", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const listDailyPipelineRuns = () =>
+  request<{ items: DailyPipelineRun[] }>("/daily-pipeline/runs", {
+    params: { limit: 20 },
+  });
+
+export const fetchDailyPipelineSchedule = () =>
+  request<DailyPipelineSchedule>("/daily-pipeline/schedule");
 
 // ---------- 行情 ----------
 
@@ -263,6 +296,73 @@ export const placePaperOrder = (order: {
   request<PaperOrder>("/paper/orders", {
     method: "POST",
     body: JSON.stringify(order),
+  });
+
+export const listPaperRebalancePlans = (accountId: number) =>
+  request<{ items: PaperRebalancePlan[] }>("/paper/rebalance-plans", {
+    params: { account_id: accountId },
+  });
+
+export const createPaperRebalancePlan = (body: {
+  account_id: number;
+  selection_run_id: number;
+  validation_override: boolean;
+}) =>
+  request<PaperRebalancePlan>("/paper/rebalance-plans", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const executePaperRebalancePlan = (planId: number) =>
+  request<PaperRebalancePlan>(`/paper/rebalance-plans/${planId}/execute`, {
+    method: "POST",
+  });
+
+export const cancelPaperRebalancePlan = (planId: number) =>
+  request<PaperRebalancePlan>(`/paper/rebalance-plans/${planId}/cancel`, {
+    method: "POST",
+  });
+
+export const fetchLiveTradingStatus = () =>
+  request<LiveTradingStatus>("/live/status");
+
+export const listLiveRebalancePlans = (liveKey: string) =>
+  request<{ items: LiveRebalancePlan[] }>("/live/rebalance-plans", {
+    headers: { "X-Live-Trading-Key": liveKey },
+  });
+
+export const createLiveRebalancePlan = (selectionRunId: number, liveKey: string) =>
+  request<LiveRebalancePlan>("/live/rebalance-plans", {
+    method: "POST",
+    headers: { "X-Live-Trading-Key": liveKey },
+    body: JSON.stringify({ selection_run_id: selectionRunId }),
+  });
+
+export const approveLiveRebalancePlan = (planId: number, liveKey: string) =>
+  request<{ plan: LiveRebalancePlan; approval_token: string }>(
+    `/live/rebalance-plans/${planId}/approve`,
+    {
+      method: "POST",
+      headers: { "X-Live-Trading-Key": liveKey },
+      body: JSON.stringify({
+        acknowledgement: "I_UNDERSTAND_REAL_MONEY_WILL_BE_USED",
+      }),
+    },
+  );
+
+export const executeLiveRebalancePlan = (planId: number, token: string, liveKey: string) =>
+  request<LiveRebalancePlan>(`/live/rebalance-plans/${planId}/execute`, {
+    method: "POST",
+    headers: {
+      "X-Trade-Approval-Token": token,
+      "X-Live-Trading-Key": liveKey,
+    },
+  });
+
+export const reconcileLiveRebalancePlan = (planId: number, liveKey: string) =>
+  request<LiveRebalancePlan>(`/live/rebalance-plans/${planId}/reconcile`, {
+    method: "POST",
+    headers: { "X-Live-Trading-Key": liveKey },
   });
 
 export const fetchAssetCurve = (accountId: number) =>

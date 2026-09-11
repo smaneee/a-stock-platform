@@ -276,11 +276,54 @@ class TestSelectionEvaluation:
                 999, horizon_days=horizon
             )
 
+    def test_summarizes_multiple_runs_with_rank_ic_and_turnover(self, db_session):
+        first_day = date(2026, 1, 1)
+        second_day = date(2026, 2, 1)
+        run_ids = []
+        cases = [
+            (first_day, ["600001", "600002"], [12.0, 9.0]),
+            (second_day, ["600003", "600004"], [9.0, 12.0]),
+        ]
+        for trading_day, symbols, exits in cases:
+            _seed_snapshot(db_session, trading_day, symbols)
+            _seed_bars(db_session, symbols[0], trading_day, daily_growth=0.002)
+            _seed_bars(db_session, symbols[1], trading_day, daily_growth=0.001)
+            run = SelectionService(db_session).rank(
+                trading_day, SelectionConfig(top_n=2)
+            )
+            for symbol, exit_close in zip(symbols, exits):
+                _seed_future_bars(
+                    db_session,
+                    symbol,
+                    trading_day,
+                    entry_open=10,
+                    exit_close=exit_close,
+                )
+            SelectionEvaluationService(db_session).evaluate(run.run_id)
+            run_ids.append(run.run_id)
+
+        summary = SelectionEvaluationService(db_session).summarize()
+
+        assert len(run_ids) == 2
+        assert summary.evaluated_runs == 2
+        assert summary.candidate_observations == 4
+        assert summary.average_rank_ic == pytest.approx(0.0)
+        assert summary.average_turnover == 1.0
+        assert summary.average_coverage == 1.0
+
+    def test_empty_summary_is_explicit_zero_state(self, db_session):
+        summary = SelectionEvaluationService(db_session).summarize()
+        assert summary.evaluated_runs == 0
+        assert summary.average_rank_ic is None
+        assert summary.average_turnover is None
+
 
 def test_selection_routes_registered():
     from app.main import app
 
     paths = app.openapi()["paths"]
     assert "post" in paths["/api/selections/rank"]
+    assert "get" in paths["/api/selections"]
     assert "get" in paths["/api/selections/{run_id}"]
     assert "post" in paths["/api/selections/{run_id}/evaluate"]
+    assert "get" in paths["/api/selections/evaluations/summary"]

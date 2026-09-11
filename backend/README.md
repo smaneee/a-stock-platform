@@ -178,8 +178,19 @@ cd backend
 | POST     | `/api/universe/sync`                    | 同步全市场股票池并原子生成交易日快照           |
 | GET      | `/api/universe/snapshots/{day}/members` | 查询不可变的历史交易日成员                  |
 | POST     | `/api/universe/filter`                  | 按交易日筛选可交易成员                    |
+| GET/POST | `/api/daily-pipeline/runs`              | 创建/查询可恢复的每日股票池→历史入库→选股→模拟调仓流水线 |
 | POST     | `/api/selections/rank`                  | 基于历史快照生成并保存多因子候选排名           |
 | GET      | `/api/selections/{run_id}`              | 读取可复现的选股运行及因子值                 |
+| POST     | `/api/selections/{run_id}/evaluate`     | 按 T+1 开盘和未来 N 日收盘验证候选收益         |
+| GET      | `/api/selections/evaluations/summary`   | 汇总样本外收益、胜率、RankIC 与换手率          |
+| GET/POST | `/api/paper/rebalance-plans`            | 查询/生成选股驱动的模拟调仓草案                |
+| POST     | `/api/paper/rebalance-plans/{id}/execute` | 用户确认后执行模拟调仓                     |
+| POST     | `/api/paper/rebalance-plans/{id}/cancel`  | 取消未执行的模拟调仓草案                    |
+| GET      | `/api/live/status`                       | QMT 实盘只读就绪状态                      |
+| GET/POST | `/api/live/rebalance-plans`              | 查询/生成基于真实账户资产的实盘草案             |
+| POST     | `/api/live/rebalance-plans/{id}/approve` | 固定风险确认文本换取 5 分钟一次性令牌            |
+| POST     | `/api/live/rebalance-plans/{id}/execute` | 携带一次性令牌最终提交 QMT 限价委托             |
+| POST     | `/api/live/rebalance-plans/{id}/reconcile` | 只读刷新 QMT 当日委托状态（不会补单/撤单）      |
 | WS       | `/ws/quotes`                            | 行情推送                           |
 | WS       | `/ws/signals`                           | 信号推送                           |
 
@@ -199,13 +210,13 @@ cd backend
 
 选股服务严格使用指定交易日的 `UniverseSnapshot`，只读取该日及以前的日线，避免未来数据和当前成分股幸存者偏差。默认综合 20/60 日动量、20 日年化波动、60 日最大回撤和 20 日平均成交额；至少需要 61 根且最新行情不超过 10 天。结果连同配置哈希和数据指纹写入 `selection_runs`，同一快照、配置和数据重复执行会返回同一运行记录。
 
-该排名只作为研究候选，不会自动提交真实订单。下一步应先做样本外回测与模拟盘观察，再考虑由用户逐笔确认真实订单。
+样本外评估严格用下一交易日开盘作为入场价、未来第 N 根日线收盘作为退出价，并汇总多批次胜率、RankIC 与换手率。模拟调仓默认要求至少 3 个已验证批次且平均收益、RankIC 均为正；仅模拟盘可显式覆盖门槛。生成的方案不会自动成交，必须在 15 分钟内由用户点击确认，重复执行会被状态机拒绝。真实下单只通过 QMT 实盘通道进行，需先完成下述"QMT 实盘安全流程"中的确认步骤。
 
 ## 已知限制
 
 1. **腾讯免费接口无历史 K 线**，历史回测依赖 AKShare（需联网）。
 2. **QMT 数据源需本地 xtdata 客户端**，未登录时自动降级。
-3. **日终结算需手动触发**：模拟交易通过 `POST /api/paper/accounts/{id}/settle` 解冻 T+1，暂未自动定时解冻。
+3. **QMT 实盘需本机授权环境**：默认 `REAL_TRADING_ENABLED=false`。启用前必须安装券商授权的 MiniQMT/xtquant，在本机 `.env` 配置 `QMT_USERDATA_PATH` 和 `QMT_ACCOUNT_ID`；开发测试无法代替券商柜台验收。
 4. **限流为单机内存实现**，多实例部署需改为 Redis。
 5. **BaoStock 不覆盖北交所历史成员**：北交所开市后的历史快照若缺 BJ 覆盖会明确失败；仅当前同步允许用 AKShare 当前 BJ 名单补充，禁止把当前名单回填过去。
 
@@ -253,5 +264,46 @@ python scripts/e2e_smoke.py
 | [InStock](https://github.com/myhhub/stock)        | Apache-2.0  |
 | [AKShare](https://github.com/akfamily/akshare)    | MIT（作为可选依赖） |
 | [BaoStock](https://github.com/baostock/baostock) | BSD（作为直接依赖）  |
+| [Qlib](https://github.com/microsoft/qlib)        | MIT（参考滚动评估与 RankIC） |
+| [RQAlpha](https://github.com/ricequant/rqalpha) | Apache-2.0（参考撮合与交易前风控） |
+| [vn.py](https://github.com/vnpy/vnpy)           | MIT（参考组合与风险模块边界） |
 
 如后续复制或修改上述项目代码，将保留对应版权与许可证声明。
+
+## QMT 实盘安全流程
+
+实盘使用本机 QMT 官方 SDK，不把账号写入数据库或返回前端；数据库只保存账号哈希指纹。所有实盘读写接口还要求 `LIVE_TRADING_API_TOKEN`（至少 32 个随机字符），前端只在当前内存会话中保存。系统先读取真实资金和持仓生成草案，且不允许绕过“同参数至少 3 个样本外批次、平均收益和 RankIC 为正”的门槛。用户输入固定风险确认后获得仅在当前前端内存保存的 5 分钟一次性令牌，最终提交前再次读取账户与盘口；现金、持仓或可用数量变化会强制重新审核。同步委托超时标记为 `UNKNOWN` 并停止后续订单，禁止自动重试。
+
+服务启动后会运行只读的实盘委托对账 worker；仅当 `REAL_TRADING_ENABLED=true` 且 QMT 路径/账号配置完整时，它才会按 `LIVE_RECONCILE_INTERVAL_SECONDS` 轮询 QMT 当日委托，把 `SUBMITTED` / `PARTIAL` / `UNKNOWN` 的本地方案刷新为券商状态。该 worker 不会自动补单、撤单或重试未知委托。
+
+可在 PowerShell 生成实盘访问密钥：`[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))`，然后只把结果写入本机 `.env` 的 `LIVE_TRADING_API_TOKEN`。
+
+## 每日流水线
+
+`/api/daily-pipeline/runs` 用于把日常研究流程持久化：同步交易日股票池，创建全市场历史入库任务，等待入库完成后生成选股结果，并在配置了模拟账户时生成模拟调仓草案。流水线状态会落库，服务重启后遗留 `running` 会恢复为 `queued`，`waiting_history` 会在历史入库任务完成后继续推进。默认不会自动执行模拟成交；只有请求里显式 `auto_execute_paper=true` 且指定模拟账户时才会执行，真实 QMT 永远不由该流水线自动下单。
+
+### 自动调度（可选）
+
+设置 `DAILY_PIPELINE_AUTO_ENABLED=true` 后，后端会在每个 A 股交易日按
+`DAILY_PIPELINE_AUTO_HOUR`:`DAILY_PIPELINE_AUTO_MINUTE`（北京时间，默认 15:35）
+自动创建当日流水线任务，非交易日跳过。`DAILY_PIPELINE_AUTO_PAPER_ACCOUNT_ID`
+指定联动的模拟账户；只有同时设置 `DAILY_PIPELINE_AUTO_EXECUTE_PAPER=true` 才会
+自动执行模拟调仓（未指定账户时该开关会被忽略并写告警日志）。该调度只创建研究
+与模拟任务，永不下真实订单；`GET /api/daily-pipeline/schedule` 返回当前配置与
+下次触发时间。
+
+## 模拟盘风控阈值
+
+模拟成交与风控判定共用一组可配置阈值（`RISK_*`，比例均为小数）：
+
+| 变量                            | 默认     | 含义                    |
+| ----------------------------- | ------ | --------------------- |
+| `RISK_MAX_POSITION_PER_SYMBOL` | 0.20   | 单只股票最大仓位              |
+| `RISK_MAX_TOTAL_POSITION`      | 0.80   | 总仓位上限                 |
+| `RISK_MAX_DAILY_LOSS`          | 0.03   | 单日亏损达到该比例后禁止新增买入      |
+| `RISK_MAX_TOTAL_DRAWDOWN`      | 0.10   | 总回撤达到该比例后禁止新增仓位       |
+| `RISK_MIN_COMMISSION`          | 5.0    | 单笔最低佣金（元）             |
+| `RISK_COMMISSION_RATE`         | 0.0003 | 佣金费率                  |
+| `RISK_STAMP_TAX_RATE`          | 0.0005 | 印花税（仅卖出）              |
+
+阈值只影响本系统的模拟盘与风控判定，不改变券商柜台侧风控；修改后需重启后端。

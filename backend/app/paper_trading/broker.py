@@ -32,6 +32,7 @@ from app.market_data.base import QuoteData
 from app.market_rules.rules import MarketRuleEngine, TICK_SIZE
 from app.market_rules.security_master import SecurityMasterService
 from app.paper_trading.portfolio import PortfolioService
+from app.risk.limits import limits_from_settings
 from app.risk.risk_manager import RiskManager
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,8 @@ class PaperBroker:
         security_master: SecurityMasterService | None = None,
     ):
         self._db = db
-        self._risk = risk_manager or RiskManager()
+        # 风控阈值来自配置（RISK_*），未显式注入时按 .env 构建
+        self._risk = risk_manager or RiskManager(limits_from_settings(settings))
         self._portfolio = PortfolioService(db)
         self._rule_engine = rule_engine or MarketRuleEngine()
         self._security_master = security_master or SecurityMasterService(db)

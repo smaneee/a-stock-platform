@@ -102,7 +102,7 @@ class PortfolioService:
             quote = quotes.get(pos.symbol)
             price = quote.price if quote else float(pos.avg_cost)
             value = pos.quantity * price
-            position_value[pos.symbol] = value
+            position_value[pos.symbol] = position_value.get(pos.symbol, 0.0) + value
             total_position_value += value
 
         total_asset = float(account.available_cash) + float(account.frozen_cash) + total_position_value

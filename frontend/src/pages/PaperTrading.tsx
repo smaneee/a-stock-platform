@@ -18,10 +18,12 @@ import {
   listPaperOrders,
   listPaperPositions,
   listPaperTrades,
+  listSelectionRuns,
   placePaperOrder,
 } from "../lib/api";
 import type { PaperAccount } from "../lib/types";
 import { useWebSocket, type WsMessage } from "../lib/ws";
+import RebalancePanels from "../components/RebalancePanels";
 
 export default function PaperTradingPage() {
   const queryClient = useQueryClient();
@@ -68,6 +70,10 @@ export default function PaperTradingPage() {
     queryKey: ["paper-assets", selectedId],
     queryFn: () => fetchAssetCurve(selectedId!),
     enabled: selectedId !== null,
+  });
+  const { data: selectionRuns } = useQuery({
+    queryKey: ["selection-runs"],
+    queryFn: () => listSelectionRuns(50),
   });
 
   // 实时行情缓存（用于下单时显示最新价）
@@ -178,6 +184,8 @@ export default function PaperTradingPage() {
 
       {selected && (
         <>
+          <RebalancePanels accountId={selected.id} selectionRuns={selectionRuns?.items ?? []} />
+
           {/* 资产曲线 */}
           {assets && assets.asset_curve.length > 0 && (
             <div className="bg-slate-900 rounded-lg p-4 border border-slate-800">

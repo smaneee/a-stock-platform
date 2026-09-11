@@ -4,6 +4,7 @@
 """
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -51,9 +52,37 @@ class Settings(BaseSettings):
     universe_backoff_base_ms: int = 50
     history_ingest_max_concurrency: int = 4
 
-    # 各数据源密钥（仅通过环境变量提供）
-    qmt_api_key: str = "YOUR_API_KEY"
-    qmt_api_secret: str = "YOUR_API_KEY"
+    # QMT 实盘默认硬关闭；账号只从本机 .env 读取，不写数据库或日志。
+    real_trading_enabled: bool = False
+    qmt_userdata_path: str = ""
+    qmt_account_id: str = ""
+    qmt_account_type: str = "STOCK"
+    qmt_call_timeout_seconds: float = 10.0
+    live_trading_api_token: str = ""
+    live_reconcile_interval_seconds: float = 30.0
+
+    # ───────────── 模拟交易风控限额（RISK_*） ─────────────
+    # 比例均为小数（0.20 = 20%）。只影响模拟盘/回测的风控判定，
+    # 不改变券商柜台侧风控；修改后需重启后端生效。
+    risk_max_position_per_symbol: float = Field(default=0.20, gt=0, le=1)
+    risk_max_total_position: float = Field(default=0.80, gt=0, le=1)
+    risk_max_daily_loss: float = Field(default=0.03, gt=0, le=1)
+    risk_max_total_drawdown: float = Field(default=0.10, gt=0, le=1)
+    risk_min_commission: float = Field(default=5.0, ge=0, le=1000)
+    risk_commission_rate: float = Field(default=0.0003, ge=0, le=0.01)
+    risk_stamp_tax_rate: float = Field(default=0.0005, ge=0, le=0.01)
+
+    # ───────────── 每日流水线自动调度（可选） ─────────────
+    # 开启后按 A 股交易日在北京时间 DAILY_PIPELINE_AUTO_HOUR:MINUTE 自动创建
+    # 当日流水线任务；只做研究与模拟调仓，永不触发真实下单。
+    daily_pipeline_auto_enabled: bool = False
+    daily_pipeline_auto_hour: int = Field(default=15, ge=0, le=23)
+    daily_pipeline_auto_minute: int = Field(default=35, ge=0, le=59)
+    daily_pipeline_auto_paper_account_id: int = Field(default=0, ge=0)
+    daily_pipeline_auto_execute_paper: bool = False
+    daily_pipeline_auto_lookback_days: int = Field(default=365, ge=90, le=2000)
+
+    # 其余数据源密钥（仅通过环境变量提供）
     tencent_api_key: str = "YOUR_API_KEY"
     akshare_api_key: str = "YOUR_API_KEY"
 

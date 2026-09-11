@@ -1,11 +1,16 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   cancelHistoryIngest,
+  createDailyPipelineRun,
   createHistoryIngest,
   evaluateSelection,
+  fetchDailyPipelineSchedule,
+  fetchSelectionEvaluationSummary,
+  listDailyPipelineRuns,
   listHistoryIngest,
+  listPaperAccounts,
   listUniverseSnapshots,
   rankStocks,
 } from "../lib/api";
@@ -13,17 +18,26 @@ import {
 const percent = (value: number) => `${(value * 100).toFixed(2)}%`;
 
 export default function SelectionPage() {
+  const queryClient = useQueryClient();
   const [tradingDay, setTradingDay] = useState("");
   const [topN, setTopN] = useState(5);
+  const [pipelineAccountId, setPipelineAccountId] = useState(0);
+  const [pipelineAutoExecute, setPipelineAutoExecute] = useState(false);
+  const [pipelineValidationOverride, setPipelineValidationOverride] = useState(true);
   const snapshots = useQuery({
     queryKey: ["universe-snapshots"],
     queryFn: listUniverseSnapshots,
+  });
+  const evaluationSummary = useQuery({
+    queryKey: ["selection-evaluation-summary"],
+    queryFn: fetchSelectionEvaluationSummary,
   });
   const ranking = useMutation({
     mutationFn: rankStocks,
   });
   const evaluation = useMutation({
     mutationFn: (runId: number) => evaluateSelection(runId, 20),
+    onSuccess: () => evaluationSummary.refetch(),
   });
   const displayedResult = evaluation.data ?? ranking.data;
   const ingestTasks = useQuery({
@@ -31,9 +45,34 @@ export default function SelectionPage() {
     queryFn: listHistoryIngest,
     refetchInterval: 3000,
   });
+  const dailyPipeline = useQuery({
+    queryKey: ["daily-pipeline-runs"],
+    queryFn: listDailyPipelineRuns,
+    refetchInterval: 3000,
+  });
+  const pipelineSchedule = useQuery({
+    queryKey: ["daily-pipeline-schedule"],
+    queryFn: fetchDailyPipelineSchedule,
+    refetchInterval: 30000,
+  });
+  const paperAccounts = useQuery({
+    queryKey: ["paper-accounts"],
+    queryFn: listPaperAccounts,
+  });
   const createIngest = useMutation({
     mutationFn: createHistoryIngest,
     onSuccess: () => ingestTasks.refetch(),
+  });
+  const createPipeline = useMutation({
+    mutationFn: () => createDailyPipelineRun({
+      trading_day: tradingDay,
+      paper_account_id: pipelineAccountId || null,
+      auto_execute_paper: pipelineAutoExecute,
+      paper_validation_override: pipelineValidationOverride,
+      top_n: topN,
+      history_lookback_days: 365,
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["daily-pipeline-runs"] }),
   });
   const cancelIngest = useMutation({
     mutationFn: cancelHistoryIngest,
@@ -92,6 +131,86 @@ export default function SelectionPage() {
         <div className="text-xs text-amber-400 ml-auto">
           研究候选，不会提交真实订单
         </div>
+      </div>
+
+      {evaluationSummary.data && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Metric label="已验证批次" value={String(evaluationSummary.data.evaluated_runs)} />
+          <Metric label="历史候选胜率" value={percent(evaluationSummary.data.forward_win_rate)} />
+          <Metric label="平均 RankIC" value={evaluationSummary.data.average_rank_ic === null ? "—" : evaluationSummary.data.average_rank_ic.toFixed(3)} />
+          <Metric label="平均换手率" value={evaluationSummary.data.average_turnover === null ? "—" : percent(evaluationSummary.data.average_turnover)} />
+        </div>
+      )}
+
+      <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div>
+            <div className="font-medium">每日自动流水线</div>
+            <div className="text-xs text-slate-500 mt-1">
+              自动串起股票池、历史入库、选股和模拟调仓草案；历史未完成时会等待后台任务。
+            </div>
+            <div className="text-xs text-slate-500 mt-1">
+              {pipelineSchedule.data
+                ? pipelineSchedule.data.enabled
+                  ? `自动调度：交易日 ${String(pipelineSchedule.data.hour).padStart(2, "0")}:${String(pipelineSchedule.data.minute).padStart(2, "0")} 创建${
+                      pipelineSchedule.data.next_run_at
+                        ? ` · 下次 ${new Date(pipelineSchedule.data.next_run_at).toLocaleString("zh-CN")}`
+                        : ""
+                    }${pipelineSchedule.data.auto_execute_paper ? " · 自动执行模拟调仓" : " · 仅生成草案"}`
+                  : "自动调度：未开启（在 .env 设置 DAILY_PIPELINE_AUTO_ENABLED=true）"
+                : "自动调度：读取中…"}
+            </div>
+          </div>
+          <select
+            value={pipelineAccountId || ""}
+            onChange={(event) => setPipelineAccountId(Number(event.target.value))}
+            className="min-w-44 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-sm"
+          >
+            <option value="">不接模拟账户</option>
+            {paperAccounts.data?.map((account) => (
+              <option key={account.id} value={account.id}>{account.name}</option>
+            ))}
+          </select>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input
+              type="checkbox"
+              checked={pipelineValidationOverride}
+              onChange={(event) => setPipelineValidationOverride(event.target.checked)}
+            />
+            模拟盘允许验证不足
+          </label>
+          <label className="flex items-center gap-2 text-xs text-amber-300">
+            <input
+              type="checkbox"
+              checked={pipelineAutoExecute}
+              onChange={(event) => setPipelineAutoExecute(event.target.checked)}
+              disabled={!pipelineAccountId}
+            />
+            自动执行模拟调仓
+          </label>
+          <button
+            type="button"
+            disabled={!tradingDay || createPipeline.isPending}
+            onClick={() => createPipeline.mutate()}
+            className="ml-auto rounded bg-emerald-700 hover:bg-emerald-600 disabled:bg-slate-700 px-4 py-2 text-sm"
+          >
+            {createPipeline.isPending ? "创建中..." : "运行每日流水线"}
+          </button>
+        </div>
+        {dailyPipeline.data?.items.slice(0, 3).map((run) => (
+          <div key={run.id} className="space-y-2 text-xs text-slate-400">
+            <div className="flex flex-wrap justify-between gap-2">
+              <span>#{run.id} · {run.trading_day} · {run.status} · {run.stage}</span>
+              <span>
+                历史 #{run.history_task_id ?? "—"} · 选股 #{run.selection_run_id ?? "—"} · 调仓 #{run.paper_plan_id ?? "—"}
+              </span>
+            </div>
+            <div className="h-2 rounded bg-slate-800 overflow-hidden">
+              <div className="h-full bg-emerald-500" style={{ width: `${run.progress}%` }} />
+            </div>
+            {run.error_message && <div className="text-amber-400">{run.error_message}</div>}
+          </div>
+        ))}
       </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">

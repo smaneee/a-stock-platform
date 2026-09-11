@@ -1,4 +1,6 @@
 """风控管理器测试。"""
+from app.config import Settings
+from app.risk.limits import RiskLimits, limits_from_settings
 from app.risk.risk_manager import AccountSnapshot, RiskManager
 
 from tests.helpers import make_quote
@@ -22,6 +24,37 @@ def test_buy_ok():
     quote = make_quote(symbol="600000", price=10.0)
     decision = rm.check_buy(_snapshot(), "600000", 10_000.0, quote)
     assert decision.allowed is True
+
+
+def test_limits_from_settings_uses_risk_env_fields():
+    settings = Settings(
+        database_url="sqlite:///:memory:",
+        risk_max_position_per_symbol=0.5,
+        risk_commission_rate=0.001,
+    )
+
+    limits = limits_from_settings(settings)
+
+    assert limits.max_position_per_symbol == 0.5
+    assert limits.commission_rate == 0.001
+    # 未覆盖的字段回退到默认值，避免配置缺失时风控消失
+    assert limits.max_total_position == RiskLimits().max_total_position
+
+
+def test_limits_from_settings_falls_back_for_missing_attrs():
+    limits = limits_from_settings(object())
+
+    assert limits == RiskLimits()
+
+
+def test_risk_manager_honours_overridden_limits():
+    rm = RiskManager(RiskLimits(max_position_per_symbol=0.01))
+    quote = make_quote(symbol="600000", price=10.0)
+
+    decision = rm.check_buy(_snapshot(), "600000", 10_000.0, quote)
+
+    assert decision.allowed is False
+    assert "仓位" in decision.reason
 
 
 def test_buy_stale_quote_rejected():

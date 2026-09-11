@@ -16,10 +16,13 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from app.api.backtests import router as backtests_router
+from app.api.daily_pipeline import router as daily_pipeline_router
 from app.api.health import router as health_router
 from app.api.history_ingest import router as history_ingest_router
+from app.api.live_trading import router as live_trading_router
 from app.api.metrics import router as metrics_router
 from app.api.paper_accounts import router as paper_router
+from app.api.paper_rebalance import router as paper_rebalance_router
 from app.api.portfolio_backtests import router as portfolio_backtests_router
 from app.api.quotes import router as quotes_router
 from app.api.selections import router as selections_router
@@ -36,6 +39,7 @@ from app.market_data.mock_provider import MockProvider
 from app.market_data.provider_manager import ProviderManager
 from app.market_data.qmt_provider import QmtProvider
 from app.market_data.tencent_provider import TencentProvider
+from app.live_trading.reconcile_worker import LiveReconcileWorker
 from app.observability.metrics import metrics
 from app.paper_trading.scheduler import SettlementScheduler, ensure_calendar_ready
 from app.realtime.quote_cache import QuoteCache
@@ -45,6 +49,8 @@ from app.realtime.websocket_manager import ConnectionManager
 from app.strategies import registry
 from app.tasks.portfolio_worker import PortfolioBacktestWorker
 from app.tasks.history_ingest_worker import HistoryIngestWorker
+from app.tasks.daily_pipeline import DailyPipelineWorker
+from app.tasks.daily_pipeline_scheduler import DailyPipelineScheduler
 from app.tasks.worker import BacktestWorker
 from app.validation import sanitize_symbols
 
@@ -186,10 +192,23 @@ async def lifespan(app: FastAPI):
     history_ingest_worker: HistoryIngestWorker = app.state.history_ingest_worker
     await history_ingest_worker.start()
 
+    live_reconcile_worker: LiveReconcileWorker = app.state.live_reconcile_worker
+    await live_reconcile_worker.start()
+
+    daily_pipeline_worker: DailyPipelineWorker = app.state.daily_pipeline_worker
+    await daily_pipeline_worker.start()
+
+    # 可选的每日自动调度：只在显式开启且交易日时创建任务
+    daily_pipeline_scheduler: DailyPipelineScheduler = app.state.daily_pipeline_scheduler
+    daily_pipeline_scheduler.start()
+
     logger.info("A 股实时分析平台后端已启动")
     try:
         yield
     finally:
+        await daily_pipeline_scheduler.stop()
+        await daily_pipeline_worker.stop()
+        await live_reconcile_worker.stop()
         await history_ingest_worker.stop()
         await worker.stop()
         await portfolio_worker.stop()
@@ -247,6 +266,9 @@ def create_app() -> FastAPI:
         provider_manager=provider_manager,
         max_concurrency=settings.history_ingest_max_concurrency,
     )
+    live_reconcile_worker = LiveReconcileWorker()
+    daily_pipeline_worker = DailyPipelineWorker(provider_manager=provider_manager)
+    daily_pipeline_scheduler = DailyPipelineScheduler(provider_manager=provider_manager)
 
     app.state.provider_manager = provider_manager
     # 把当前实际在跑的 provider 注册到 metrics（决定 data_status）
@@ -258,12 +280,17 @@ def create_app() -> FastAPI:
     app.state.backtest_worker = backtest_worker
     app.state.portfolio_backtest_worker = portfolio_backtest_worker
     app.state.history_ingest_worker = history_ingest_worker
+    app.state.live_reconcile_worker = live_reconcile_worker
+    app.state.daily_pipeline_worker = daily_pipeline_worker
+    app.state.daily_pipeline_scheduler = daily_pipeline_scheduler
     app.state.settlement_scheduler = settlement_scheduler
 
     # 注册路由
     app.include_router(health_router)
     app.include_router(metrics_router)
+    app.include_router(daily_pipeline_router)
     app.include_router(history_ingest_router)
+    app.include_router(live_trading_router)
     app.include_router(universe_router)
     app.include_router(quotes_router)
     app.include_router(selections_router)
@@ -273,6 +300,7 @@ def create_app() -> FastAPI:
     app.include_router(backtests_router)
     app.include_router(portfolio_backtests_router)
     app.include_router(paper_router)
+    app.include_router(paper_rebalance_router)
 
     # 行情数据源状态接口
     @app.get("/api/market/providers")

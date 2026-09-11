@@ -454,6 +454,46 @@ async def run_checks(res: SmokeResult) -> None:
         except Exception as exc:
             res.check("指标 /metrics", False, str(exc))
 
+        # 4c. 干净环境必须保持实盘硬锁定
+        try:
+            r = await client.get(f"{BACKEND}/api/live/status")
+            data = r.json()
+            res.check(
+                "实盘默认锁定 /live/status",
+                r.status_code == 200
+                and data.get("enabled") is False
+                and data.get("order_api_enabled") is False,
+                f"enabled={data.get('enabled')}, ready={data.get('ready')}",
+            )
+        except Exception as exc:
+            res.check("实盘默认锁定 /live/status", False, str(exc))
+
+        # 4d. 每日流水线只读列表应可用（不创建重任务）
+        try:
+            r = await client.get(f"{BACKEND}/api/daily-pipeline/runs")
+            items = r.json().get("items", [])
+            res.check(
+                "每日流水线列表 /daily-pipeline/runs",
+                r.status_code == 200 and isinstance(items, list),
+                f"{len(items)} 条",
+            )
+        except Exception as exc:
+            res.check("每日流水线列表 /daily-pipeline/runs", False, str(exc))
+
+        # 4e. 每日自动调度配置（只读，不触发任务）
+        try:
+            r = await client.get(f"{BACKEND}/api/daily-pipeline/schedule")
+            payload = r.json()
+            res.check(
+                "每日自动调度 /daily-pipeline/schedule",
+                r.status_code == 200
+                and isinstance(payload.get("enabled"), bool)
+                and "next_run_at" in payload,
+                f"enabled={payload.get('enabled')}",
+            )
+        except Exception as exc:
+            res.check("每日自动调度 /daily-pipeline/schedule", False, str(exc))
+
         # 5. 批量行情（再次调用验证稳定性）
         try:
             r = await client.post(
