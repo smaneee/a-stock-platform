@@ -78,15 +78,15 @@ async def sync(
 
     同 day 重复 sync：默认 force_overwrite=True（这是 sync 操作的预期语义，
     每天同步多次的常见场景）；如果不想覆盖，调用方需显式传 force_overwrite=False。
-    """
-    from datetime import date as _date
 
+    trading_day **不传** from API — 由 sync_service 从 provider 的
+    effective_date（最近真实交易日）拿。如果手动传 trading_day（仅供单元测试），
+    必须先经过 _validate_trading_day 校验。
+    """
     sync_svc = UniverseSyncService(db)
     try:
-        result = await sync_svc.sync(
-            create_snapshot=True,
-            trading_day=_date.today(),
-        )
+        # 不传 trading_day → sync_service 内部用 provider.as_of_date
+        result = await sync_svc.sync(create_snapshot=True)
     except AllProvidersFailedError as exc:
         raise HTTPException(
             status_code=503, detail={

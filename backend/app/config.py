@@ -36,19 +36,16 @@ class Settings(BaseSettings):
     max_quote_age_seconds: float = 15.0
 
     # ───────────── Universe（股票池）Provider 配置 ─────────────
-    # 生产环境默认值：akshare（真实全市场数据）。
+    # 生产环境默认值：BaoStock 历史时点主源，AKShare 当前全市场备援。
     # 测试/CI/managed E2E 模式：通过 E2E_USE_MOCK=true 强制改为 mock；
     # 也可以显式设 universe_providers=mock 走测试样本（26 条）。
     # 多 provider 用逗号分隔，按顺序尝试，任一成功即止；全部失败 → 503。
     # 严禁在生产默认列表里包含 mock — 否则真实源失败会静默退回假数据。
-    universe_providers: str = "akshare"
+    universe_providers: str = "baostock,akshare"
     # AKShare 超时（秒）：超过这个时间就算失败，让 SyncService 切下一个 provider。
     akshare_universe_timeout_seconds: float = 30.0
     # BaoStock 超时（秒）：point-in-time 主数据源，含 query_all_stock + query_stock_basic + login/logout
     baostock_universe_timeout_seconds: float = 60.0
-    # BaoStock 是否使用历史时点（False → 当前；True → 上一交易日，兜底防交易日历空）。
-    # 主要为 CI / 测试用：让 CI 数据有确定性。
-    baostock_use_previous_trading_day: bool = False
     # 同步重试参数（每个 provider 内最多 max_retries+1 次尝试）
     universe_max_retries: int = 2
     universe_backoff_base_ms: int = 50
@@ -84,7 +81,7 @@ class Settings(BaseSettings):
 
     @property
     def universe_provider_list(self) -> list[str]:
-        """股票池 provider 列表。生产默认 akshare；CI 显式切 mock。
+        """股票池 provider 列表。生产默认 baostock→akshare；CI 显式切 mock。
 
         强约束：
         - 必须非空（空字符串 → 抛 RuntimeError）
@@ -105,7 +102,7 @@ class Settings(BaseSettings):
             else:
                 raise RuntimeError(
                     "UNIVERSE_PROVIDERS 含 mock 但未显式声明 E2E_USE_MOCK=true；"
-                    "生产环境禁止默认走 mock — 设置 UNIVERSE_PROVIDERS=akshare"
+                    "生产环境禁止默认走 mock — 设置 UNIVERSE_PROVIDERS=baostock,akshare"
                 )
         return items
 

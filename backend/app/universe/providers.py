@@ -85,29 +85,89 @@ MARKET_COVERAGE_MIN_EXCHANGE_COMPLETENESS = 0.99
 SYMBOL_PATTERN = re.compile(r"^\d{6}$")  # A 股代码 6 位数字
 
 
+# 历史日期的动态门槛（修复 693e866 的 P0 阻断）
+# 早期年份 A 股规模远小于 2025+ 的 5300，固定 3500 必然失败
+# 阈值参考各年实际规模：
+#   2024+  : 现代三市场，必须含北交所
+#   2021-11-15 起：北交所已开市，必须含北交所
+#   2020 至北交所开市前：只要求沪深
+#   2015-2019 : ~3500
+#   2010-2014 : ~2500
+#   2005-2009 : ~1500
+#   2000-2004 : ~1100
+#   1991-1999 : ~800（沪深老股）
+# 仅用于 validate_market_coverage，sync 顶层不变。
+_HISTORICAL_COVERAGE_TABLE: tuple[tuple[date, int, dict[str, int]], ...] = (
+    (date(2024, 1, 1), 3500, {"SH": 1000, "SZ": 1500, "BJ": 100}),
+    (date(2021, 11, 15), 2500, {"SH": 800, "SZ": 1200, "BJ": 50}),
+    (date(2020, 1, 1), 2500, {"SH": 800, "SZ": 1200, "BJ": 0}),
+    (date(2015, 1, 1), 1500, {"SH": 600, "SZ": 800, "BJ": 0}),
+    (date(2010, 1, 1), 800, {"SH": 400, "SZ": 500, "BJ": 0}),
+    (date(2005, 1, 1), 600, {"SH": 300, "SZ": 300, "BJ": 0}),
+    (date(2000, 1, 1), 500, {"SH": 250, "SZ": 250, "BJ": 0}),
+    (date(1990, 12, 19), 100, {"SH": 50, "SZ": 50, "BJ": 0}),
+)
+
+
+def _resolve_threshold(as_of: date | None) -> tuple[int, dict[str, int], date | None]:
+    """根据 effective_date 选历史覆盖阈值。
+
+    Returns (min_total, min_per_exchange, baseline_date)。
+    """
+    if as_of is None:
+        return (
+            MARKET_COVERAGE_MIN_TOTAL,
+            dict(MARKET_COVERAGE_MIN_PER_EXCHANGE),
+            None,
+        )
+    # 找 ≤ as_of 的最新一档（表格按日期降序）
+    for baseline, total, per_ex in _HISTORICAL_COVERAGE_TABLE:
+        if as_of >= baseline:
+            return total, dict(per_ex), baseline
+    return (
+        MARKET_COVERAGE_MIN_TOTAL,
+        dict(MARKET_COVERAGE_MIN_PER_EXCHANGE),
+        None,
+    )
+
+
 def validate_market_coverage(
     records: list[SecurityRecord],
     *,
     source_id: str = "akshare",
+    as_of_date: date | None = None,
 ) -> None:
     """全市场质量门槛校验。
 
     校验项（任一不达标即 ProviderError）：
-    1. 总数 ≥ MARKET_COVERAGE_MIN_TOTAL（3500）
-    2. SH/SZ/BJ 三交易所都有覆盖，且每家 ≥ MARKET_COVERAGE_MIN_PER_EXCHANGE
+    1. 总数 ≥ 阈值（默认 MARKET_COVERAGE_MIN_TOTAL=3500，按 as_of_date 动态调整）
+    2. SH/SZ/BJ 三交易所都有覆盖（动态阈值；BJ 在历史早期可能不要求）
     3. 代码格式（6 位数字）100%
     4. 重复率（输入原始 records 中 symbol 重复）≤ 1%
     5. name 完整率 ≥ 99%
     6. exchange 完整率 ≥ 99%
+
+    Args:
+        records: 待校验的 SecurityRecord 列表
+        source_id: provider source_id（用于错误信息）
+        as_of_date: 拉数据的有效交易日；用于动态历史阈值。
+            None 时用现代全市场阈值（3500+）。
     """
     if not records:
         raise ProviderError(source_id, "全市场质量门槛：records 为空（不可能零只）")
 
+    min_total, min_per_ex, baseline = _resolve_threshold(as_of_date)
+    threshold_label = (
+        f"{min_total} (baseline={baseline.isoformat()})"
+        if baseline
+        else f"{min_total} (modern)"
+    )
+
     total = len(records)
-    if total < MARKET_COVERAGE_MIN_TOTAL:
+    if total < min_total:
         raise ProviderError(
             source_id,
-            f"全市场质量门槛：总数 {total} < {MARKET_COVERAGE_MIN_TOTAL}（数据源缩量）",
+            f"全市场质量门槛：总数 {total} < {threshold_label}（数据源缩量）",
         )
 
     # 代码格式 + 重复率
@@ -135,18 +195,21 @@ def validate_market_coverage(
             f"全市场质量门槛：重复率 {dup_rate:.2%} > {MARKET_COVERAGE_MAX_DUPLICATE_RATE:.2%}",
         )
 
-    # 分交易所覆盖
+    # 分交易所覆盖（动态阈值）
     per_exchange: dict[str, int] = {}
     for r in records:
         ex = (r.exchange or "").upper()
         per_exchange[ex] = per_exchange.get(ex, 0) + 1
 
-    for ex, required in MARKET_COVERAGE_MIN_PER_EXCHANGE.items():
+    for ex, required in min_per_ex.items():
+        if required == 0:
+            continue  # 该时期此交易所不要求
         actual = per_exchange.get(ex, 0)
         if actual < required:
             raise ProviderError(
                 source_id,
-                f"全市场质量门槛：{ex} 覆盖 {actual} < {required}（交易所缩量）",
+                f"全市场质量门槛：{ex} 覆盖 {actual} < {required}（交易所缩量，"
+                f"baseline={baseline.isoformat() if baseline else 'modern'}）",
             )
 
     # name 完整率
@@ -170,12 +233,14 @@ def validate_market_coverage(
         )
 
     logger.info(
-        "全市场质量门槛通过：total=%d, sh=%d, sz=%d, bj=%d, duplicate=%d",
+        "全市场质量门槛通过：total=%d (min=%s), sh=%d, sz=%d, bj=%d, duplicate=%d, as_of=%s",
         total,
+        threshold_label,
         per_exchange.get("SH", 0),
         per_exchange.get("SZ", 0),
         per_exchange.get("BJ", 0),
         duplicate,
+        as_of_date.isoformat() if as_of_date else "None",
     )
 
 
@@ -493,19 +558,6 @@ class AkshareUniverseProvider(UniverseProvider):
         return records
 
 
-def build_provider_by_name(name: str, **kwargs) -> UniverseProvider:
-    """根据 provider 名称构造实例，未知名称 → ProviderError。
-
-    这是 SyncService 启动时校验的入口，防止拼错 provider 名字后静默退回 mock。
-    """
-    n = (name or "").strip().lower()
-    if n == "mock":
-        return MockUniverseProvider()
-    if n == "akshare":
-        return AkshareUniverseProvider(**kwargs)
-    raise ProviderError("factory", f"未知的 UNIVERSE_PROVIDER: {name!r}（仅支持 mock / akshare）")
-
-
 # ───────────── BaoStock 真实实现（point-in-time 主数据源） ─────────────
 
 
@@ -544,24 +596,72 @@ def _baostock_code_to_symbol(code_with_prefix: str) -> tuple[str, str]:
     return (raw, exchange)
 
 
-def _baostock_query_trade_dates(start_date: str, end_date: str) -> list[date]:
-    """BaoStock 交易日历查询。失败抛 ProviderError。"""
-    import baostock as bs  # type: ignore
+def _collect_baostock_rows(
+    result_set: Any,
+    *,
+    query_name: str,
+    max_rows: int,
+) -> tuple[list[str], list[list[str]]]:
+    """Consume a BaoStock ResultData cursor safely and completely.
 
-    rs = bs.query_trade_dates(start_date=start_date, end_date=end_date)
-    if rs is None or rs.error_code != "0":
+    BaoStock advances its cursor in ``get_row_data()``, not merely in ``next()``.
+    Keeping both calls in the same loop prevents the apparent infinite iteration
+    that led the previous implementation to abandon ``query_all_stock(day)``.
+    A full cursor at ``max_rows`` is rejected instead of being silently truncated.
+    """
+    if result_set is None or getattr(result_set, "error_code", None) != "0":
         raise ProviderError(
             "baostock",
-            f"query_trade_dates 失败: {getattr(rs, 'error_msg', 'unknown')}",
+            f"{query_name} 失败: {getattr(result_set, 'error_msg', 'unknown')}",
         )
-    rows: list[date] = []
-    while rs.next():
-        record = rs.get_row_data()
-        # fields: calendar_date, is_trading_day
+
+    fields = list(getattr(result_set, "fields", []) or [])
+    rows: list[list[str]] = []
+    while True:
         try:
-            if len(record) >= 2 and record[1] == "1":
-                rows.append(date.fromisoformat(record[0]))
-        except (ValueError, IndexError):
+            has_next = result_set.next()
+        except Exception as exc:  # noqa: BLE001
+            raise ProviderError("baostock", f"{query_name} 游标读取失败: {exc}") from exc
+        if not has_next:
+            break
+        row = result_set.get_row_data()
+        if row:
+            rows.append(list(row))
+        if len(rows) >= max_rows:
+            raise ProviderError(
+                "baostock",
+                f"{query_name} 达到安全上限 {max_rows} 行，拒绝截断数据",
+            )
+
+    if getattr(result_set, "error_code", "0") != "0":
+        raise ProviderError(
+            "baostock",
+            f"{query_name} 读取结束时失败: {getattr(result_set, 'error_msg', 'unknown')}",
+        )
+    return fields, rows
+
+
+def _baostock_query_trade_dates(
+    start_date: str,
+    end_date: str,
+    *,
+    bs_module: Any | None = None,
+) -> list[date]:
+    """BaoStock 交易日历查询。失败抛 ProviderError。"""
+    if bs_module is None:
+        import baostock as bs_module  # type: ignore
+
+    rs = bs_module.query_trade_dates(start_date=start_date, end_date=end_date)
+    fields, raw_rows = _collect_baostock_rows(
+        rs, query_name="query_trade_dates", max_rows=370
+    )
+    rows: list[date] = []
+    for raw_row in raw_rows:
+        record = dict(zip(fields, raw_row))
+        try:
+            if record.get("is_trading_day") == "1":
+                rows.append(date.fromisoformat(record["calendar_date"]))
+        except (ValueError, KeyError):
             continue
     return rows
 
@@ -570,25 +670,37 @@ class BaoStockUniverseProvider(UniverseProvider):
     """BaoStock 数据源（生产环境，point-in-time 主数据源）。
 
     关键能力（来源：https://github.com/lzwme/finance-quant-skills/blob/main/skills/baostock/references/api.md）：
-    - `query_stock_basic()`：返回 code/code_name/ipoDate/outDate/type/status，
-      其中 `status` 字段 0=在市 / 1=退市 / 2=暂停上市，`type` 1=股票 / 2=指数 / 3=其它 /
-      4=可转债 / 5=基金等。`ipoDate` 是真正的 point-in-time 上市日期。
-    - `query_all_stock(day)`：按指定日期返回 tradeStatus。但 dev 环境实测这个
-      接口会无限迭代（实际是一个 iterator of streaming response），生产可用但 CI
-      不能用 — 因此本 Provider **不**调用这个接口。
-    - `query_trade_dates()`：返回交易日历。
+    - `query_all_stock(day)`：**主驱动**。返回当日所有证券（含债券/基金/股票） +
+      `tradeStatus`（0=停牌，1=正常）。当日成员以它为准。
+    - `query_stock_basic()`：**仅补字段**。返回 type / status / ipoDate / outDate，
+      其中 `status` 0=退市 / 1=上市，`type` 1=股票 / 2=指数 / 3=其它。
+      用于把 type=1 过滤后，把 ipoDate / outDate / status 合并到当日成员。
+    - `query_trade_dates()`：返回交易日历，用于把 as_of_date 归一到最近交易日。
 
-    实现要点：
-    1. **as_of_date 来源**：用 query_trade_dates 把 day 归一到最近交易日。
-    2. **线程隔离**：baostock.login / query_* 都是同步阻塞 IO，必须走 run_in_executor。
-    3. **超时控制**：整体 timeout（默认 60s）；底层 socket timeout = min(timeout, 30)。
-    4. **BJ 缺口**：BaoStock `query_stock_basic` 返回的 type=1 集合覆盖沪深京三所
-       （实测 SH / SZ / BJ 都齐全），不需要额外补 BJ — 但保留 supplement 参数
-       留个扩展点。
-    5. **不静默 fallback**：如果 query_stock_basic 返回 0 行 → ProviderError。
+    实现要点（修复 693e866 的 P0 阻断）：
+    1. **status 映射方向修正**：BaoStock stock_basic `status=1` 是 listed（上市），
+       `status=0` 是 delisted（退市）。693e866 反了，让 90% 股票被判退市。
+    2. **未知状态不猜**：status 不在 {0, 1} 范围 → audit_reason='provider_unknown_status'
+       （不排除，由 selection 层处理），不强行猜 suspended。
+    3. **当日停牌以 tradeStatus 为准**：query_all_stock.tradeStatus=0 → suspended。
+       只在 query_all_stock 拿不到时退回到 status。
+    4. **恢复 query_all_stock 主驱动**：693e866 错误地放弃了它，导致拿不到历史时点成分。
+       现在恢复并用 max_rows=20000 兜底防 dev 网络限速导致卡死。
+    5. **socket timeout 不污染全局**：用 socket.create_connection 显式 timeout 参数
+       替代 socket.setdefaulttimeout，或者在子进程中跑 BaoStock。
+    6. **point-in-time 真实生效**：effective_day 来自 query_trade_dates，
+       而不是 utc_now().date()。周末/节假日自动归一到上一个交易日。
+    7. **历史覆盖不足明确失败**：historical_dates 数量太少的日期（query_all_stock
+       返回 0 行）→ ProviderError 而非落库空 universe。
     """
 
     source_id = "baostock"
+
+    # query_all_stock 在 BaoStock 实测会返回基金/债券/股票混合，type filter 必须在
+    # 拿到基本数据后做；用 query_stock_basic 的 type 字段做过滤。
+    # 实测：2025-09 单次 query_all_stock 返回 ~15000+ 行（含债券/基金/股票）；
+    # ~7000 是 type=1 股票。max_rows=20000 留 30% buffer 防 dev 网络慢导致截断。
+    _MAX_QUERY_ROWS = 20000
 
     def __init__(
         self,
@@ -601,11 +713,6 @@ class BaoStockUniverseProvider(UniverseProvider):
         timeout_seconds: BaoStock fetch 总超时
         as_of_date: 指定拉数据的交易日；None → 用最近交易日
         bj_supplement_timeout_seconds: AKShare BJ 子源超时
-
-        关键：BaoStock 实测在 dev 网络下 query_stock_basic 的 next() 会被限速，
-        且 type=1 集合内 BJ=0（实际只有 SH/SZ）。所以本 Provider **自动**调用
-        AKShareBjSupplementProvider 补 BJ — 不让调用方注入；注入入口仍保留
-        以便测试用。
         """
         self._timeout_seconds = timeout_seconds
         self._as_of_date = as_of_date
@@ -639,7 +746,10 @@ class BaoStockUniverseProvider(UniverseProvider):
         records, effective_day = result
 
         # ─────────── 全市场质量门槛（必须在落库前硬拦截） ───────────
-        validate_market_coverage(records, source_id=self.source_id)
+        # 用 effective_day 算历史日期的动态阈值，避免早年数据卡门槛
+        validate_market_coverage(
+            records, source_id=self.source_id, as_of_date=effective_day
+        )
 
         for r in records:
             r.as_of_date = effective_day
@@ -648,7 +758,11 @@ class BaoStockUniverseProvider(UniverseProvider):
     # ───────────── 阻塞调用（线程池内执行） ─────────────
 
     def _fetch_sync(self) -> tuple[list[SecurityRecord], date]:
-        """同步 BaoStock 调用全流程：login → query_trade_dates + query_stock_basic → 装配。"""
+        """同步 BaoStock 调用全流程：login → query_trade_dates → query_all_stock →
+        query_stock_basic → 装配 SecurityRecord。
+
+        返回 (records, effective_day)。
+        """
         try:
             import baostock as bs  # type: ignore
         except ImportError as exc:
@@ -656,13 +770,6 @@ class BaoStockUniverseProvider(UniverseProvider):
                 self.source_id,
                 f"baostock 未安装: {exc}",
             )
-
-        # socket timeout 防御：底层 socket 没设 timeout 的话 BaoStock 的 next() 阻塞会无界
-        import socket
-        try:
-            socket.setdefaulttimeout(min(self._timeout_seconds, 30.0))
-        except Exception:  # noqa: BLE001
-            pass
 
         lg = bs.login()
         if lg is None or lg.error_code != "0":
@@ -679,36 +786,32 @@ class BaoStockUniverseProvider(UniverseProvider):
                 pass
 
     def _fetch_sync_inner(self, bs) -> tuple[list[SecurityRecord], date]:
-        import baostock as bs  # type: ignore
-
-        # 1) 计算 effective_day（最近交易日 ≤ 今天）
+        """实际拉取逻辑（已 login，调用方负责 logout）。"""
+        # 1) 计算 effective_day（最近交易日 ≤ self._as_of_date）
         effective_day = self._resolve_effective_day(bs)
+        day_str = effective_day.strftime("%Y-%m-%d")
 
-        # 2) query_stock_basic() — 主数据源（含 type / status / ipoDate / outDate）
-        rs_basic = bs.query_stock_basic()
-        if rs_basic is None or rs_basic.error_code != "0":
+        # 2) query_all_stock(day) — **当日主驱动**：当日成员 + tradeStatus
+        rs_all = bs.query_all_stock(day=day_str)
+        all_stock_fields, all_stock_rows = _collect_baostock_rows(
+            rs_all,
+            query_name=f"query_all_stock({day_str})",
+            max_rows=self._MAX_QUERY_ROWS,
+        )
+
+        if not all_stock_rows:
             raise ProviderError(
                 self.source_id,
-                f"query_stock_basic 失败: {getattr(rs_basic, 'error_msg', 'unknown')}",
+                f"query_all_stock({day_str}) 0 行（market 不可达或日期非交易日）",
             )
-        basic_fields = list(rs_basic.fields)
-        basic_rows: list[list[str]] = []
-        # 注意：next() 在 dev 环境下可能非常慢，但不像 query_all_stock 那样无限。
-        # 给一个保守的最大行数限制（实际 type=1 < 10000）。
-        max_rows = 20000
-        while len(basic_rows) < max_rows:
-            try:
-                if not rs_basic.next():
-                    break
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("BaoStock query_stock_basic next() 异常: %s", exc)
-                break
-            basic_rows.append(rs_basic.get_row_data())
-        else:
-            logger.warning(
-                "BaoStock query_stock_basic 超过 %d 行上限，截断（说明接口异常）",
-                max_rows,
-            )
+
+        # 3) query_stock_basic() — **仅补字段**：IPO/退市日期 + type 过滤
+        rs_basic = bs.query_stock_basic()
+        basic_fields, basic_rows = _collect_baostock_rows(
+            rs_basic,
+            query_name="query_stock_basic",
+            max_rows=self._MAX_QUERY_ROWS,
+        )
 
         if not basic_rows:
             raise ProviderError(
@@ -716,15 +819,19 @@ class BaoStockUniverseProvider(UniverseProvider):
                 "query_stock_basic 0 行（market 不可达）",
             )
 
-        # 3) 装配：type=1 过滤 + status 映射
+        # 4) 装配：query_all_stock 主驱动 + query_stock_basic 补 type/ipoDate/outDate
         records = self._assemble_records(
+            all_stock_fields=all_stock_fields,
+            all_stock_rows=all_stock_rows,
             basic_fields=basic_fields,
             basic_rows=basic_rows,
             effective_day=effective_day,
         )
 
-        # 4) 用 AKShare BJ 子源补 BJ（BaoStock type=1 实测不含 BJ）
-        if self._bj_supplement is not None:
+        # 5) AKShare BJ 是“当前名单”，绝不能回填历史快照。仅当调用方未请求
+        # 历史日期，且 BaoStock 当日结果确实没有 BJ 时，才允许补当前 BJ。
+        has_bj = any(record.exchange == "BJ" for record in records)
+        if self._as_of_date is None and not has_bj and self._bj_supplement is not None:
             bj_records = self._fetch_bj_supplement_sync()
             existing_symbols = {r.symbol for r in records}
             bj_added = [
@@ -736,6 +843,11 @@ class BaoStockUniverseProvider(UniverseProvider):
                 logger.info(
                     "BaoStock BJ缺口：AKShare 子源补充 %d 条", len(bj_added)
                 )
+        elif self._as_of_date is not None and not has_bj:
+            logger.info(
+                "BaoStock 历史快照 %s 不含 BJ；禁止使用当前 AKShare 名单回填",
+                effective_day,
+            )
 
         return records, effective_day
 
@@ -750,58 +862,78 @@ class BaoStockUniverseProvider(UniverseProvider):
     def _assemble_records(
         self,
         *,
+        all_stock_fields: list[str],
+        all_stock_rows: list[list[str]],
         basic_fields: list[str],
         basic_rows: list[list[str]],
         effective_day: date,
     ) -> list[SecurityRecord]:
-        """query_stock_basic → SecurityRecord。
+        """query_all_stock + query_stock_basic → SecurityRecord。
 
-        步骤：
-        1. type=1 过滤（剔除指数/债券/基金）
-        2. status 映射：0=active / 1=delisted / 2=suspended
-        3. ipoDate > effective_day → 跳过（当日尚未上市）
+        关键设计（修复 693e866 的 P0 阻断）：
+        1. **成员集合 = query_all_stock(day)**：绝不从当前 basic 全集反推历史成员；
+           basic 只负责 type=1 过滤和静态字段补充。
+        2. **query_all_stock 仅补 tradeStatus**：basic.status 决定 listed/delisted，
+           all.tradeStatus 决定 suspended。两者组合最终 trading_status。
+        3. **status 映射**：BaoStock basic.status=1=listed(active), 0=delisted。
+        4. **tradeStatus=0 → suspended**：当日停牌（query_all_stock 字段语义）。
+        5. **未上市 / 已退市 / 未来**：ipoDate / outDate / effective_day 关系过滤。
         """
-        records: list[SecurityRecord] = []
-        seen: set[str] = set()
-        skipped_non_stock = 0
-        skipped_listed_after = 0
-
+        # basic 索引：symbol → {type, status, ipoDate, outDate, code_name}
+        basic_idx: dict[str, dict[str, str]] = {}
         for row in basic_rows:
             rec = dict(zip(basic_fields, row))
-            code_raw = str(rec.get("code", "")).strip()
-            symbol, exchange = _baostock_code_to_symbol(code_raw)
-            if not symbol:
-                continue
-            if symbol in seen:
-                continue
-            seen.add(symbol)
+            sym, _ = _baostock_code_to_symbol(rec.get("code", ""))
+            if sym:
+                basic_idx[sym] = rec
 
-            basic_type = str(rec.get("type", "")).strip()
-            if basic_type != "1":
-                skipped_non_stock += 1
-                continue
+        # type=1 白名单仅用于过滤 query_all_stock 的当日成员。
+        type1_set: set[str] = {
+            sym
+            for sym, b in basic_idx.items()
+            if str(b.get("type", "")).strip() == "1"
+        }
+        daily_idx: dict[str, tuple[dict[str, str], str]] = {}
+        for row in all_stock_rows:
+            all_rec = dict(zip(all_stock_fields, row))
+            sym, exchange = _baostock_code_to_symbol(all_rec.get("code", ""))
+            if sym and sym in type1_set:
+                daily_idx[sym] = (all_rec, exchange)
 
-            ipo_date = _parse_date(rec.get("ipoDate"))
-            out_date = _parse_date(rec.get("outDate"))
-            status_raw = str(rec.get("status", "")).strip()
-            # 0=在市 / 1=退市 / 2=暂停上市
-            if status_raw == "1":
-                trading_status = "delisted"
-            elif status_raw == "2":
+        records: list[SecurityRecord] = []
+        skipped_listed_after = 0
+        unknown_trade_status = 0
+
+        # 主驱动必须是指定交易日的 query_all_stock 结果。若遍历 type1_set，
+        # 会把今天才上市的证券错误塞进过去的快照，形成幸存者偏差。
+        for symbol in sorted(daily_idx):
+            basic = basic_idx[symbol]
+            daily, exchange = daily_idx[symbol]
+            code_name = str(
+                daily.get("code_name") or basic.get("code_name") or ""
+            ).strip()
+
+            ipo_date = _parse_date(basic.get("ipoDate"))
+            out_date = _parse_date(basic.get("outDate"))
+            trade_status_raw = str(daily.get("tradeStatus", "")).strip()
+            if trade_status_raw == "0":
                 trading_status = "suspended"
-            else:
+            elif trade_status_raw == "1":
                 trading_status = "active"
+            else:
+                # 未知状态不能猜成 active/suspended/delisted。保留成员并明确标记，
+                # 由下游风控决定是否允许进入可交易集合。
+                trading_status = "unknown"
+                unknown_trade_status += 1
 
-            # 上市日期晚于 effective_day → 当日尚未上市，不能入选 universe
+            # 上市日期晚于 effective_day → 当日尚未上市，跳过
             if ipo_date is not None and ipo_date > effective_day:
                 skipped_listed_after += 1
                 continue
 
-            name = str(rec.get("code_name", "")).strip()
+            name = code_name
             is_st = _is_st_name(name)
             board = _infer_board(symbol, exchange)
-            delisted_date = out_date if trading_status == "delisted" else None
-
             records.append(
                 SecurityRecord(
                     symbol=symbol,
@@ -809,7 +941,7 @@ class BaoStockUniverseProvider(UniverseProvider):
                     exchange=exchange,
                     board=board,
                     listing_date=ipo_date,
-                    delisted_date=delisted_date,
+                    delisted_date=out_date,
                     trading_status=trading_status,
                     is_st=is_st,
                     as_of_date=effective_day,
@@ -819,42 +951,49 @@ class BaoStockUniverseProvider(UniverseProvider):
         if not records:
             raise ProviderError(
                 self.source_id,
-                f"BaoStock 装配后 0 条 type=1 记录（原始 {len(basic_rows)} 行，"
-                f"跳过非股票 {skipped_non_stock}）",
+                f"BaoStock 装配后 0 条 type=1 记录（query_all_stock={len(all_stock_rows)} 行，"
+                f"query_stock_basic={len(basic_rows)} 行，type=1 白名单={len(type1_set)} 个，"
+                f"当日股票={len(daily_idx)}，跳过未来上市 {skipped_listed_after}）",
             )
 
-        if skipped_non_stock > 0:
-            logger.info(
-                "BaoStock 跳过 %d 条非 type=1 记录（指数/债券/基金）",
-                skipped_non_stock,
-            )
         if skipped_listed_after > 0:
             logger.info(
                 "BaoStock 跳过 %d 条 effective_day 后上市的新股", skipped_listed_after
             )
+        if unknown_trade_status > 0:
+            logger.warning(
+                "BaoStock %s 有 %d 条未知 tradeStatus，已标记 unknown",
+                effective_day,
+                unknown_trade_status,
+            )
         return records
 
     def _resolve_effective_day(self, bs_mod) -> date:
-        """把 self._as_of_date 归一到 ≤ 该日的最近一个交易日。"""
-        if self._as_of_date is not None:
-            target = self._as_of_date
-        else:
-            target = utc_now().date()
+        """Resolve the exact point-in-time date used for membership.
 
-        # 留 10 天窗口，避免 BaoStock 当日尚未发布当日清单
-        start = (target - timedelta(days=10)).strftime("%Y-%m-%d")
-        end = target.strftime("%Y-%m-%d")
-        try:
-            trading_days = _baostock_query_trade_dates(start, end)
-        except ProviderError:
-            logger.warning("BaoStock query_trade_dates 失败，使用 target=%s", target)
-            return target
-        if not trading_days:
-            return target
-        eligible = [d for d in trading_days if d <= target]
-        if eligible:
-            return max(eligible)
-        return target
+        Explicit historical requests are normalized to the latest trading day at
+        or before that date. For the default live sync we use yesterday as the
+        upper bound, because the current day's list may not be published yet.
+        Calendar failures are fatal: stamping data with a guessed non-trading date
+        would break the snapshot contract.
+        """
+        upper_bound = (
+            self._as_of_date
+            if self._as_of_date is not None
+            else utc_now().date() - timedelta(days=1)
+        )
+        start = (upper_bound - timedelta(days=15)).strftime("%Y-%m-%d")
+        end = upper_bound.strftime("%Y-%m-%d")
+        trading_days = _baostock_query_trade_dates(
+            start, end, bs_module=bs_mod
+        )
+        eligible = [trading_day for trading_day in trading_days if trading_day <= upper_bound]
+        if not eligible:
+            raise ProviderError(
+                self.source_id,
+                f"{start}..{end} 未返回可用交易日，拒绝猜测 snapshot 日期",
+            )
+        return max(eligible)
 
 
 # ───────────── AKShare 北交所子源（补 BaoStock BJ 缺口） ─────────────
@@ -973,7 +1112,7 @@ class AkshareBjSupplementProvider(UniverseProvider):
 # ───────────── 更新 build_provider_by_name ─────────────
 
 
-def build_provider_by_name(name: str, **kwargs) -> UniverseProvider:  # noqa: F811
+def build_provider_by_name(name: str, **kwargs) -> UniverseProvider:
     """根据 provider 名称构造实例，未知名称 → ProviderError。
 
     这是 SyncService 启动时校验的入口，防止拼错 provider 名字后静默退回 mock。

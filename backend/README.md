@@ -99,6 +99,8 @@ cd backend
 | `DATABASE_URL`            | 数据库连接串              | `sqlite:///./a_stock.db` |
 | `AUTO_CREATE_TABLES`      | 启动时自动建表（仅测试/演示）     | `false`                  |
 | `MARKET_PROVIDERS`        | 数据源优先级              | `tencent,akshare`        |
+| `UNIVERSE_PROVIDERS`      | 股票池主数据源优先级          | `baostock,akshare`       |
+| `BAOSTOCK_UNIVERSE_TIMEOUT_SECONDS` | BaoStock 股票池超时（秒） | `60` |
 | `QUOTE_POLL_INTERVAL`     | 轮询间隔（秒）             | `3`                      |
 | `ROLLING_WINDOW_SIZE`     | 滚动窗口大小              | `300`                    |
 | `SIGNAL_COOLDOWN_SECONDS` | 信号冷却时间              | `60`                     |
@@ -173,6 +175,9 @@ cd backend
 | GET      | `/api/paper/trades`                     | 成交记录（含已实现盈亏）                   |
 | POST     | `/api/paper/accounts/{id}/settle`       | 日终结算（T+1 解冻 + 资产快照）            |
 | GET      | `/api/paper/accounts/{id}/assets`       | 账户资产与盈亏                        |
+| POST     | `/api/universe/sync`                    | 同步全市场股票池并原子生成交易日快照           |
+| GET      | `/api/universe/snapshots/{day}/members` | 查询不可变的历史交易日成员                  |
+| POST     | `/api/universe/filter`                  | 按交易日筛选可交易成员                    |
 | WS       | `/ws/quotes`                            | 行情推送                           |
 | WS       | `/ws/signals`                           | 信号推送                           |
 
@@ -183,6 +188,7 @@ cd backend
 | QMT/xtdata | 正式实时行情 | 可选，推送模式，延迟 <1s                   |
 | 腾讯行情       | 免费轮询   | 默认主数据源                           |
 | AKShare    | 历史数据   | 备用数据源                            |
+| BaoStock   | 股票池主数据 | 按交易日成员、上市日期与当日停牌状态                |
 | Mock       | 演示/测试  | 仅在 `MARKET_PROVIDERS=mock` 时显式启用 |
 
 数据源按 `MARKET_PROVIDERS` 优先级故障转移，严禁静默混合来源。全部失败时返回缓存数据并标记 `is_stale=true`。Mock 不参与真实数据源的默认兜底，避免把随机价格误认为真实行情。
@@ -193,6 +199,7 @@ cd backend
 2. **QMT 数据源需本地 xtdata 客户端**，未登录时自动降级。
 3. **日终结算需手动触发**：模拟交易通过 `POST /api/paper/accounts/{id}/settle` 解冻 T+1，暂未自动定时解冻。
 4. **限流为单机内存实现**，多实例部署需改为 Redis。
+5. **BaoStock 不覆盖北交所历史成员**：北交所开市后的历史快照若缺 BJ 覆盖会明确失败；仅当前同步允许用 AKShare 当前 BJ 名单补充，禁止把当前名单回填过去。
 
 ## 运维脚本
 
@@ -237,6 +244,6 @@ python scripts/e2e_smoke.py
 | [StockPro](https://github.com/Shadowell/StockPro) | MIT         |
 | [InStock](https://github.com/myhhub/stock)        | Apache-2.0  |
 | [AKShare](https://github.com/akfamily/akshare)    | MIT（作为可选依赖） |
+| [BaoStock](https://github.com/baostock/baostock) | BSD（作为直接依赖）  |
 
 如后续复制或修改上述项目代码，将保留对应版权与许可证声明。
-

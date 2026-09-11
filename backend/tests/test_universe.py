@@ -1280,35 +1280,24 @@ class TestBaoStockProviderOffline:
         from app.universe.providers import BaoStockUniverseProvider
 
         p = BaoStockUniverseProvider(timeout_seconds=10.0)
-        # 模拟 query_stock_basic 返回 5 行 type=2（指数） + 5 行 type=1（股票）
+        # 模拟 query_all_stock 返回：5 行 type=2 指数 + 5 行 type=1 股票
+        all_stock_fields = ["code", "tradeStatus", "code_name"]
+        all_stock_rows: list[list[str]] = []
+        for i in range(5):
+            all_stock_rows.append([f"sh.00000{i}", "1", f"指数{i}"])
+        for i in range(5):
+            all_stock_rows.append([f"sh.60000{i}", "1", f"股票{i}"])
+        # query_stock_basic 返回 type / status 索引
         basic_fields = ["code", "code_name", "ipoDate", "outDate", "type", "status"]
         basic_rows: list[list[str]] = []
-        # 5 行 type=2（指数） — 应当被过滤
         for i in range(5):
-            basic_rows.append(
-                [
-                    f"sh.00000{i}",
-                    f"指数{i}",
-                    "1991-07-15",
-                    "",
-                    "2",
-                    "1",
-                ]
-            )
-        # 5 行 type=1（股票） — 应当被保留
+            basic_rows.append([f"sh.00000{i}", f"指数{i}", "1991-07-15", "", "2", "1"])
         for i in range(5):
-            basic_rows.append(
-                [
-                    f"sh.60000{i}",
-                    f"股票{i}",
-                    "2000-01-01",
-                    "",
-                    "1",
-                    "0",
-                ]
-            )
+            basic_rows.append([f"sh.60000{i}", f"股票{i}", "2000-01-01", "", "1", "1"])
 
         records = p._assemble_records(
+            all_stock_fields=all_stock_fields,
+            all_stock_rows=all_stock_rows,
             basic_fields=basic_fields,
             basic_rows=basic_rows,
             effective_day=date(2025, 1, 1),
@@ -1321,40 +1310,80 @@ class TestBaoStockProviderOffline:
             assert r.trading_status == "active"
 
     def test_assemble_records_status_mapping(self):
-        """status 0=active / 1=delisted / 2=suspended 映射正确。"""
+        """当日 tradeStatus 决定状态；当前 basic.status 不得改写历史状态。"""
         from app.universe.providers import BaoStockUniverseProvider
 
         p = BaoStockUniverseProvider(timeout_seconds=10.0)
+        all_stock_fields = ["code", "tradeStatus", "code_name"]
+        all_stock_rows = [
+            ["sh.600000", "1", "active 股票"],          # tradeStatus=1 → active
+            ["sh.600001", "1", "历史日在市、当前已退市"],
+            ["sh.600002", "0", "当日停牌 股票"],         # tradeStatus=0 → suspended
+            ["sh.600003", "1", "未 listed 股票"],        # status=未知 → active 兜底
+            ["sh.600004", "1", "上市晚于当日 股票"],     # ipoDate > effective_day → 跳过
+        ]
         basic_fields = ["code", "code_name", "ipoDate", "outDate", "type", "status"]
         basic_rows = [
-            ["sh.600000", "active 股票", "1999-11-10", "", "1", "0"],
-            ["sh.600001", "delisted 股票", "1999-11-10", "2024-05-22", "1", "1"],
-            ["sh.600002", "suspended 股票", "1999-11-10", "", "1", "2"],
+            ["sh.600000", "active 股票", "1999-11-10", "", "1", "1"],   # status=1 → listed
+            ["sh.600001", "delisted 股票", "1999-11-10", "2024-05-22", "1", "0"],  # status=0 → delisted
+            ["sh.600002", "suspended 股票", "1999-11-10", "", "1", "1"],  # status=1 但 tradeStatus=0 → suspended
+            ["sh.600003", "未 listed 股票", "1999-11-10", "", "1", ""],   # status 空
+            ["sh.600004", "未来上市", "2099-01-01", "", "1", "1"],
         ]
         records = p._assemble_records(
+            all_stock_fields=all_stock_fields,
+            all_stock_rows=all_stock_rows,
             basic_fields=basic_fields,
             basic_rows=basic_rows,
             effective_day=date(2025, 1, 1),
         )
-        assert len(records) == 3
+        # 600004 跳过（未来上市），其余 4 只
+        assert len(records) == 4
         status_by_sym = {r.symbol: r.trading_status for r in records}
         assert status_by_sym["600000"] == "active"
-        assert status_by_sym["600001"] == "delisted"
-        assert status_by_sym["600001_delisted_date"] if False else True
+        # stock_basic.status=0 表示当前已退市，但该证券存在于历史日清单且
+        # tradeStatus=1，所以历史日必须仍为 active。
+        assert status_by_sym["600001"] == "active"
         assert records[1].delisted_date == date(2024, 5, 22)
         assert status_by_sym["600002"] == "suspended"
+        # status 空 → 未知，tradeStatus=1 → active（保守取大概率）
+        assert status_by_sym["600003"] == "active"
+
+    def test_historical_membership_is_driven_by_daily_list(self):
+        """只存在于当前 basic、但不在指定交易日清单的股票不得进入历史快照。"""
+        from app.universe.providers import BaoStockUniverseProvider
+
+        provider = BaoStockUniverseProvider(timeout_seconds=10.0)
+        records = provider._assemble_records(
+            all_stock_fields=["code", "tradeStatus", "code_name"],
+            all_stock_rows=[["sh.600000", "1", "历史成员"]],
+            basic_fields=["code", "code_name", "ipoDate", "outDate", "type", "status"],
+            basic_rows=[
+                ["sh.600000", "历史成员", "2000-01-01", "", "1", "1"],
+                ["sh.600001", "后来上市", "2024-01-01", "", "1", "1"],
+            ],
+            effective_day=date(2020, 1, 2),
+        )
+        assert [record.symbol for record in records] == ["600000"]
 
     def test_assemble_records_skip_future_listing(self):
         """ipoDate > effective_day 必须跳过（当日尚未上市）。"""
         from app.universe.providers import BaoStockUniverseProvider
 
         p = BaoStockUniverseProvider(timeout_seconds=10.0)
+        all_stock_fields = ["code", "tradeStatus", "code_name"]
+        all_stock_rows = [
+            ["sh.600000", "1", "已上市"],
+            ["sh.600001", "1", "未来上市"],
+        ]
         basic_fields = ["code", "code_name", "ipoDate", "outDate", "type", "status"]
         basic_rows = [
-            ["sh.600000", "已上市", "2000-01-01", "", "1", "0"],
-            ["sh.600001", "未来上市", "2099-01-01", "", "1", "0"],  # 未来
+            ["sh.600000", "已上市", "2000-01-01", "", "1", "1"],
+            ["sh.600001", "未来上市", "2099-01-01", "", "1", "1"],
         ]
         records = p._assemble_records(
+            all_stock_fields=all_stock_fields,
+            all_stock_rows=all_stock_rows,
             basic_fields=basic_fields,
             basic_rows=basic_rows,
             effective_day=date(2025, 1, 1),
@@ -1367,17 +1396,81 @@ class TestBaoStockProviderOffline:
         from app.universe.providers import BaoStockUniverseProvider, ProviderError
 
         p = BaoStockUniverseProvider(timeout_seconds=10.0)
+        all_stock_fields = ["code", "tradeStatus", "code_name"]
+        all_stock_rows = [
+            ["sh.000001", "1", "指数A"],
+        ]
         basic_fields = ["code", "code_name", "ipoDate", "outDate", "type", "status"]
         basic_rows = [
             ["sh.000001", "指数A", "1991-07-15", "", "2", "1"],
         ]
         with pytest.raises(ProviderError) as exc_info:
             p._assemble_records(
+                all_stock_fields=all_stock_fields,
+                all_stock_rows=all_stock_rows,
                 basic_fields=basic_fields,
                 basic_rows=basic_rows,
                 effective_day=date(2025, 1, 1),
             )
         assert "0 条 type=1" in str(exc_info.value)
+
+    def test_historical_fetch_never_uses_current_bj_supplement(self):
+        """AKShare BJ 端点是当前名单，历史请求时必须完全禁用。"""
+        from app.universe.providers import BaoStockUniverseProvider
+
+        class Result:
+            error_code = "0"
+            error_msg = "success"
+
+            def __init__(self, fields, rows):
+                self.fields = fields
+                self.rows = rows
+                self.position = 0
+
+            def next(self):
+                return self.position < len(self.rows)
+
+            def get_row_data(self):
+                row = self.rows[self.position]
+                self.position += 1
+                return row
+
+        class FakeBaoStock:
+            @staticmethod
+            def query_trade_dates(start_date, end_date):
+                return Result(
+                    ["calendar_date", "is_trading_day"],
+                    [["2020-01-02", "1"]],
+                )
+
+            @staticmethod
+            def query_all_stock(day):
+                assert day == "2020-01-02"
+                return Result(
+                    ["code", "tradeStatus", "code_name"],
+                    [["sh.600000", "1", "历史成员"]],
+                )
+
+            @staticmethod
+            def query_stock_basic():
+                return Result(
+                    ["code", "code_name", "ipoDate", "outDate", "type", "status"],
+                    [["sh.600000", "历史成员", "1999-11-10", "", "1", "1"]],
+                )
+
+        provider = BaoStockUniverseProvider(
+            timeout_seconds=10.0,
+            as_of_date=date(2020, 1, 2),
+        )
+        provider._fetch_bj_supplement_sync = MagicMock(
+            side_effect=AssertionError("历史请求不得访问当前 BJ 端点")
+        )
+
+        records, effective_day = provider._fetch_sync_inner(FakeBaoStock)
+
+        assert effective_day == date(2020, 1, 2)
+        assert [record.symbol for record in records] == ["600000"]
+        provider._fetch_bj_supplement_sync.assert_not_called()
 
 
 class TestAkshareBjSupplementOffline:
@@ -1460,3 +1553,238 @@ class TestBuildProviderBaostock:
 
         p = build_provider_by_name("BaoStock")
         assert isinstance(p, BaoStockUniverseProvider)
+
+
+# ─────────────── 14. 历史动态阈值测试（修复 693e866） ───────────────
+
+
+class TestHistoricalCoverageThreshold:
+    """validate_market_coverage 按 effective_date 选历史阈值。
+
+    早期年份 A 股规模小，固定 3500 必然失败：
+    - 2024+ : 5300（SH 2300 / SZ 2900 / BJ 250）
+    - 2020-2023 : 4500
+    - 2015-2019 : 3500
+    - 2010-2014 : 2500
+    - 2005-2009 : 1500
+    - 2000-2004 : 1100
+    - 1991-1999 : 800
+    """
+
+    def test_resolve_threshold_modern(self):
+        from app.universe.providers import _resolve_threshold
+
+        total, per_ex, baseline = _resolve_threshold(date(2025, 6, 15))
+        assert total == 3500
+        assert per_ex == {"SH": 1000, "SZ": 1500, "BJ": 100}
+        assert baseline == date(2024, 1, 1)
+
+    def test_resolve_threshold_2010s(self):
+        from app.universe.providers import _resolve_threshold
+
+        total, per_ex, baseline = _resolve_threshold(date(2017, 8, 20))
+        assert total == 1500  # 2015-2019 区间
+        assert baseline == date(2015, 1, 1)
+        assert per_ex.get("BJ", 0) == 0  # 早期无 BJ 要求
+
+    def test_resolve_threshold_requires_bj_after_exchange_launch(self):
+        from app.universe.providers import _resolve_threshold
+
+        _, per_ex, baseline = _resolve_threshold(date(2023, 6, 1))
+        assert baseline == date(2021, 11, 15)
+        assert per_ex["BJ"] > 0
+
+    def test_resolve_threshold_1990s(self):
+        from app.universe.providers import _resolve_threshold
+
+        total, per_ex, baseline = _resolve_threshold(date(1995, 1, 1))
+        assert total == 100
+        assert baseline == date(1990, 12, 19)
+        assert per_ex.get("SH") == 50
+        assert per_ex.get("SZ") == 50
+
+    def test_validate_accepts_historical_small_count(self):
+        """历史日期少量记录（< 3500）必须能通过 validate。"""
+        from app.universe.providers import (
+            SecurityRecord,
+            validate_market_coverage,
+        )
+
+        # 2017 年的 700 只 SH + 800 只 SZ = 1500 条
+        # 历史阈值 (2015-2019): total ≥ 1500, SH ≥ 600, SZ ≥ 800, BJ=0
+        records: list[SecurityRecord] = []
+        for i in range(700):
+            records.append(
+                SecurityRecord(
+                    # SH 主板 600000-600999 → 用 i 拼成 6 位（i=0..699 → 600000..600699）
+                    symbol=f"60{i:04d}",
+                    name=f"股票{i}",
+                    exchange="SH",
+                    as_of_date=date(2017, 6, 1),
+                )
+            )
+        for i in range(800):
+            records.append(
+                SecurityRecord(
+                    # SZ 主板 000000-000999 → 用 i 拼成 6 位
+                    symbol=f"00{i:04d}",
+                    name=f"股票{i}",
+                    exchange="SZ",
+                    as_of_date=date(2017, 6, 1),
+                )
+            )
+        # 现代阈值：1500 < 3500 → 必失败（总缩量）
+        import pytest as _pytest
+
+        with _pytest.raises(Exception) as exc_info:
+            validate_market_coverage(records, source_id="baostock", as_of_date=None)
+        assert "缩量" in str(exc_info.value) or "min=" in str(exc_info.value)
+        # 历史阈值（2017 落在 2015-2019 档：1500）：1500 条刚好等于阈值，应通过
+        validate_market_coverage(
+            records, source_id="baostock", as_of_date=date(2017, 6, 1)
+        )
+
+    def test_validate_rejects_modern_count_when_dated_as_historical(self):
+        """日期被传成历史日 + records 数量不够历史阈值 → 拒。"""
+        from app.universe.providers import (
+            SecurityRecord,
+            validate_market_coverage,
+        )
+
+        # 2012 阈值: total ≥ 800 / SH ≥ 400 / SZ ≥ 500
+        # 准备 500 SH + 400 SZ = 900 条（≥ 800 总数 OK，SZ 400 < 500 → 应拒）
+        records: list[SecurityRecord] = []
+        for i in range(500):
+            records.append(
+                SecurityRecord(
+                    symbol=f"60{i:04d}",
+                    name=f"股票{i}",
+                    exchange="SH",
+                    as_of_date=date(2012, 1, 1),
+                )
+            )
+        for i in range(400):
+            records.append(
+                SecurityRecord(
+                    symbol=f"00{i:04d}",
+                    name=f"股票{i}",
+                    exchange="SZ",
+                    as_of_date=date(2012, 1, 1),
+                )
+            )
+        import pytest as _pytest
+
+        with _pytest.raises(Exception) as exc_info:
+            validate_market_coverage(
+                records, source_id="baostock", as_of_date=date(2012, 1, 1)
+            )
+        assert "SZ" in str(exc_info.value), (
+            f"应明确指 SZ 覆盖不足，实际: {exc_info.value}"
+        )
+
+
+# ─────────────── 15. 真依赖 + 真契约测试（修复 693e866 mock-only） ───────────────
+
+
+class TestBaoStockRealDependency:
+    """依赖与 ResultData 游标契约验证；单元测试不访问公网。"""
+
+    def test_baostock_importable(self):
+        """baostock 必须可导入，且版本 >= 0.9.3。"""
+        from importlib.metadata import version
+
+        import baostock  # noqa: F401
+
+        assert tuple(int(part) for part in version("baostock").split(".")) >= (0, 9, 3)
+
+    def test_result_cursor_consumes_each_row_once(self):
+        """next/get_row_data 必须配对，避免游标停在同一行形成假死。"""
+        from app.universe.providers import _collect_baostock_rows
+
+        class FakeResult:
+            error_code = "0"
+            error_msg = "success"
+            fields = ["code", "tradeStatus"]
+
+            def __init__(self):
+                self.rows = [["sh.600000", "1"], ["sh.600001", "0"]]
+                self.position = 0
+                self.read_count = 0
+
+            def next(self):
+                return self.position < len(self.rows)
+
+            def get_row_data(self):
+                row = self.rows[self.position]
+                self.position += 1
+                self.read_count += 1
+                return row
+
+        result = FakeResult()
+        fields, rows = _collect_baostock_rows(
+            result, query_name="fake", max_rows=10
+        )
+        assert fields == ["code", "tradeStatus"]
+        assert rows == result.rows
+        assert result.read_count == 2
+
+    def test_result_cursor_rejects_truncation(self):
+        from app.universe.providers import _collect_baostock_rows
+
+        class EndlessResult:
+            error_code = "0"
+            error_msg = "success"
+            fields = ["code"]
+
+            def next(self):
+                return True
+
+            def get_row_data(self):
+                return ["sh.600000"]
+
+        with pytest.raises(ProviderError, match="拒绝截断"):
+            _collect_baostock_rows(
+                EndlessResult(), query_name="endless", max_rows=3
+            )
+
+
+# ─────────────── 16. API 不传 date.today() 测试 ───────────────
+
+
+class TestSyncAPIDoesNotPassDateToday:
+    """修复 693e866：API /sync 不再传 date.today()。
+
+    trading_day 必须从 provider.as_of_date 拿，否则周末/节假日会让
+    snapshot 落在非交易日。
+    """
+
+    def test_sync_route_omits_trading_day(self):
+        """检查 /sync 路由调用 sync() 时不传 trading_day。"""
+        import inspect
+
+        from app.api.universe import sync
+
+        source = inspect.getsource(sync)
+        # 提取 sync_service.sync(...) 调用，检查不含 trading_day=
+        import re
+
+        # 匹配 sync_svc.sync( 后的所有参数
+        sync_call_match = re.search(
+            r"sync_svc\.sync\s*\(([^)]*)\)", source, re.DOTALL
+        )
+        assert sync_call_match, "找不到 sync_svc.sync 调用"
+        sync_call = sync_call_match.group(1)
+        assert "trading_day" not in sync_call, (
+            f"/sync 不应传 trading_day，当前调用:\n{sync_call}"
+        )
+
+    def test_sync_service_no_today_fallback(self):
+        """sync_service.sync 不再 fallback 到 _date.today()。"""
+        import inspect
+
+        from app.universe.sync_service import UniverseSyncService
+
+        source = inspect.getsource(UniverseSyncService.sync)
+        assert "_date.today()" not in source, (
+            "sync_service.sync 不应 fallback 到 _date.today()"
+        )

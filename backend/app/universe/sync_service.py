@@ -10,7 +10,7 @@
    当日 UniverseSnapshot，使 /sync 之后 /filter 必定可用。
 
 配置驱动（不允许硬编码默认 Provider）：
-- 生产默认 UNIVERSE_PROVIDERS=akshare
+- 生产默认 UNIVERSE_PROVIDERS=baostock,akshare
 - 测试 / managed E2E 模式：E2E_USE_MOCK=true → 自动切到 mock
 - 也可以显式传 universe_providers=mock
 """
@@ -80,7 +80,7 @@ def _resolve_providers_from_settings() -> list[UniverseProvider]:
     """从 settings 构造 provider 实例。
 
     关键约束：
-    - 生产默认从 UNIVERSE_PROVIDERS 配置读取（默认 akshare）
+    - 生产默认从 UNIVERSE_PROVIDERS 配置读取（baostock→akshare）
     - E2E_USE_MOCK=true 时强制切到 mock（CI/managed 模式）
     - 任何拼错的名字都直接抛 ProviderError，禁止静默 fallback
     """
@@ -195,7 +195,16 @@ class UniverseSyncService:
                 snapshot_trading_day = None
                 snap_svc = UniverseSnapshotService(self._db)
                 if create_snapshot:
-                    td = trading_day or as_of_date or synced_at.date() or _date.today()
+                    # trading_day 优先级：调用方显式 > provider.as_of_date > synced_at.date
+                    # **不再 fallback 到 today()**：周末/节假日会让 snapshot 落在非交易日
+                    td = trading_day or as_of_date or synced_at.date()
+                    if td is None:
+                        # 防御性兜底：trading_day 缺失 → 抛错让调用方处理
+                        raise ProviderError(
+                            provider.source_id,
+                            "trading_day 无法确定：调用方未传 + records 也没带 as_of_date "
+                            "+ synced_at.date() 也为空",
+                        )
                     snap = snap_svc.get_or_create_snapshot(
                         trading_day=td,
                         source_provider=provider.source_id,
