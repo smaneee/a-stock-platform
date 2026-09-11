@@ -101,6 +101,41 @@ class TradingCalendar:
         return self.count() == 0
 
 
+def _xshg_sessions(calendar, start: date, end: date) -> list[date]:
+    """从 exchange_calendars 的 XSHG 日历取 [start, end] 内的交易日。
+
+    exchange_calendars >= 4 只提供 sessions / sessions_in_range；更早的
+    pandas_market_calendars 风格才有 valid_days。这里两种都兼容，避免
+    兜底源因为 API 变更而静默失效（实测 4.13.2 没有 valid_days）。
+
+    另外必须把区间裁剪进日历自身的边界：XSHG 日历只到 2026-12-31，
+    默认 lookahead 180 天会越界并触发 DateOutOfBounds。
+    """
+    bound_start = getattr(calendar, "first_session", None)
+    bound_end = getattr(calendar, "last_session", None)
+    if hasattr(bound_start, "date"):
+        start = max(start, bound_start.date())
+    if hasattr(bound_end, "date"):
+        end = min(end, bound_end.date())
+    if start > end:
+        return []
+
+    sessions_in_range = getattr(calendar, "sessions_in_range", None)
+    if callable(sessions_in_range):
+        sessions = sessions_in_range(start.isoformat(), end.isoformat())
+        return [d.date() if hasattr(d, "date") else d for d in sessions]
+
+    valid_days = getattr(calendar, "valid_days", None)
+    if valid_days is None:
+        raise RuntimeError(
+            "exchange_calendars 版本既不支持 sessions_in_range 也没有 valid_days"
+        )
+    from pandas import Timestamp
+
+    mask = (valid_days >= Timestamp(start)) & (valid_days <= Timestamp(end))
+    return [d.date() if hasattr(d, "date") else d for d in valid_days[mask]]
+
+
 def sync_trading_calendar(
     db: Session,
     lookback_days: int = _DEFAULT_SYNC_LOOKBACK_DAYS,
@@ -144,12 +179,7 @@ def sync_trading_calendar(
         xshg = ec.get_calendar("XSHG")
         start = date.today() - timedelta(days=lookback_days)
         end = date.today() + timedelta(days=lookahead_days)
-        valid_days = xshg.valid_days
-        # valid_days 返回 DatetimeIndex，过滤范围
-        from pandas import Timestamp  # noqa: F401
-
-        mask = (valid_days >= Timestamp(start)) & (valid_days <= Timestamp(end))
-        session_dates = valid_days[mask].date.tolist() if hasattr(valid_days[mask].date, "tolist") else [d.date() if hasattr(d, "date") else d for d in valid_days[mask]]
+        session_dates = _xshg_sessions(xshg, start, end)
         for d in session_dates:
             if db.get(TradingDate, d) is None:
                 db.add(TradingDate(trade_date=d))

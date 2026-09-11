@@ -200,11 +200,30 @@ cd backend
 | ---------- | ------ | -------------------------------- |
 | QMT/xtdata | 正式实时行情 | 可选，推送模式，延迟 <1s                   |
 | 腾讯行情       | 免费轮询   | 默认主数据源                           |
-| AKShare    | 历史数据   | 备用数据源                            |
+| AKShare    | 历史数据   | 东财 / 新浪双通道，历史回退链主力              |
 | BaoStock   | 股票池主数据 | 按交易日成员、上市日期与当日停牌状态                |
 | Mock       | 演示/测试  | 仅在 `MARKET_PROVIDERS=mock` 时显式启用 |
 
 数据源按 `MARKET_PROVIDERS` 优先级故障转移，严禁静默混合来源。全部失败时返回缓存数据并标记 `is_stale=true`。Mock 不参与真实数据源的默认兜底，避免把随机价格误认为真实行情。
+
+### 历史日线回退链
+
+日线入库（`HistoricalDataService`）在实时数据源之外还有一条独立回退链，按顺序尝试：
+
+1. AKShare 东财通道 `stock_zh_a_hist`（含 ProviderManager 的 akshare provider）；
+2. AKShare 新浪通道 `stock_zh_a_daily`；
+3. BaoStock `query_history_k_data_plus`（显式设置 20 秒 socket 超时，避免 `next()` 无限阻塞）。
+
+判定规则：任一源返回非空即采用，条目的 `HistoricalBar.source` 记录实际来源（`akshare` /
+`akshare_sina` / `baostock`）；**全部源抛错**才向上报错，由 `get_history` 回退本地缓存；
+**全部源返回空**视为该标的无数据（停牌 / 退市），不报错。
+
+实测东财通道（`push2his.eastmoney.com`）经常 `RemoteDisconnected`，回退链是历史入库能跑通的关键。
+若 `MARKET_PROVIDERS` 已包含 `akshare`，回退链会跳过第一个东财源，避免对同一上游重复请求
+（全市场入库时这只重复调用会让耗时翻倍）。
+
+实机验收（9 只样本：沪 / 深 / 创业板 / 科创板 / 北交所各覆盖）：东财通道每次失败，新浪通道
+全部命中，批次 `succeeded`、`coverage_ratio=1.0`、沪深京各 52 根日线。
 
 ## 智能选股
 
@@ -214,11 +233,17 @@ cd backend
 
 ## 已知限制
 
-1. **腾讯免费接口无历史 K 线**，历史回测依赖 AKShare（需联网）。
+1. **腾讯免费接口无历史 K 线**，历史回测依赖上文的 AKShare/BaoStock 回退链（需联网）；
+   三个来源都不可达时只能读本地缓存，并会被标记为不完整。
 2. **QMT 数据源需本地 xtdata 客户端**，未登录时自动降级。
 3. **QMT 实盘需本机授权环境**：默认 `REAL_TRADING_ENABLED=false`。启用前必须安装券商授权的 MiniQMT/xtquant，在本机 `.env` 配置 `QMT_USERDATA_PATH` 和 `QMT_ACCOUNT_ID`；开发测试无法代替券商柜台验收。
 4. **限流为单机内存实现**，多实例部署需改为 Redis。
 5. **BaoStock 不覆盖北交所历史成员**：北交所开市后的历史快照若缺 BJ 覆盖会明确失败；仅当前同步允许用 AKShare 当前 BJ 名单补充，禁止把当前名单回填过去。
+6. **北交所日线依赖 AKShare 新浪通道**：BaoStock 只认 `sh.` / `sz.` 前缀（`bj.` 返回
+   10004011），东财通道又经常不可达。当前北交所代码统一为 `920xxx`（交易所清单 343 只），
+   新浪通道可拉到完整历史；已停用的旧 `43xxxx` / `83xxxx` 号段没有可用的历史接口。
+7. **交易日历兜底依赖 exchange_calendars 4.x**：该版本只有 `sessions_in_range`（无
+   `valid_days`），且 XSHG 日历边界为 2006-09-11 ~ 2026-12-31，超出边界的区间会被裁剪。
 
 ## 运维脚本
 

@@ -39,6 +39,9 @@ _FETCH_TIMEOUT_SECONDS = 30.0  # 单次请求超时
 _MAX_RETRIES = 3  # 重试上限
 _RETRY_BASE_SECONDS = 2.0  # 退避基数（2^attempt 秒）
 
+# BaoStock 内部 socket 没有超时，必须显式设置，否则 next() 可能无限阻塞
+_BAOSTOCK_SOCKET_TIMEOUT_SECONDS = 20.0
+
 
 @dataclass
 class HistoryResult:
@@ -317,16 +320,38 @@ class HistoricalDataService:
 
     # ──────── 内部方法 ────────
 
+    def _provider_covered_sources(self) -> tuple[str, ...]:
+        """返回 ProviderManager 已覆盖的回退链源名，避免重复请求同一上游。
+
+        MARKET_PROVIDERS 含 akshare 时，manager 内部已经打过 EastMoney 接口
+        （stock_zh_a_hist），回退链不必再打一次——该通道实测经常
+        RemoteDisconnected，重复调用会让全市场入库白白翻倍耗时。
+        """
+        if self._provider_manager is None:
+            return ()
+        names = {
+            getattr(provider, "name", "")
+            for provider in getattr(self._provider_manager, "providers", [])
+        }
+        return ("akshare",) if "akshare" in names else ()
+
     async def _fetch_with_retry(
         self, symbol: str, adjust: str, start: date, end: date
     ) -> list[QuoteData]:
-        """带超时与指数退避重试的拉取。优先走 ProviderManager（含 mock 注入路径）。"""
-        # 优先走 ProviderManager（包含 mock / tencent / akshare 等所有已注册源）
-        if self._provider_manager is not None:
-            for attempt in range(_MAX_RETRIES):
+        """带超时与指数退避重试的拉取。
+
+        每次尝试先走 ProviderManager（mock / tencent / akshare / qmt），
+        再走直连多源回退链（EastMoney → Sina → BaoStock）。任意一个源有数据
+        即返回；全部源都报错时抛出最后一次异常，让调用方回退本地缓存。
+        """
+        start_dt = datetime.combine(start, datetime.min.time())
+        end_dt = datetime.combine(end, datetime.max.time())
+        last_exc: Exception | None = None
+        saw_empty = False
+
+        for attempt in range(_MAX_RETRIES):
+            if self._provider_manager is not None:
                 try:
-                    start_dt = datetime.combine(start, datetime.min.time())
-                    end_dt = datetime.combine(end, datetime.max.time())
                     bars = await asyncio.wait_for(
                         self._provider_manager.get_history(
                             symbol, "daily", start_dt, end_dt
@@ -335,35 +360,41 @@ class HistoricalDataService:
                     )
                     if bars:
                         return bars
+                    saw_empty = True
                 except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
                     logger.warning(
                         "ProviderManager 拉取 %s 第 %d 次失败: %s",
                         symbol, attempt + 1, exc,
                     )
-                if attempt < _MAX_RETRIES - 1:
-                    await asyncio.sleep(_RETRY_BASE_SECONDS * (2 ** attempt))
-            return []
-
-        # 回退：直接调 AKShare
-        last_exc: Exception | None = None
-        for attempt in range(_MAX_RETRIES):
             try:
-                return await asyncio.wait_for(
+                bars = await asyncio.wait_for(
                     asyncio.to_thread(
-                        _akshare_fetch, symbol, adjust, start, end
+                        _fetch_from_sources,
+                        symbol,
+                        adjust,
+                        start,
+                        end,
+                        self._provider_covered_sources(),
                     ),
                     timeout=_FETCH_TIMEOUT_SECONDS,
                 )
+                if bars:
+                    return bars
+                saw_empty = True
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
-                if attempt < _MAX_RETRIES - 1:
-                    wait = _RETRY_BASE_SECONDS * (2 ** attempt)
-                    logger.warning(
-                        "AKShare 拉取 %s 第 %d 次失败，%.1f 秒后重试: %s",
-                        symbol, attempt + 1, wait, exc,
-                    )
-                    await asyncio.sleep(wait)
-        raise last_exc  # type: ignore[misc]
+                logger.warning(
+                    "多源历史回退拉取 %s 第 %d 次失败: %s",
+                    symbol, attempt + 1, exc,
+                )
+            if attempt < _MAX_RETRIES - 1:
+                await asyncio.sleep(_RETRY_BASE_SECONDS * (2 ** attempt))
+
+        # 全部源都抛异常才向上报错；只是"没数据"（停牌/退市）返回空列表
+        if last_exc is not None and not saw_empty:
+            raise last_exc
+        return []
 
     def _existing_dates(self, symbol: str, period: str, adjust: str) -> set[date]:
         rows = self._db.scalars(
@@ -465,6 +496,193 @@ def _akshare_fetch(symbol: str, adjust: str, start: date, end: date) -> list[Quo
             )
         )
     return bars
+
+
+def _exchange_prefix(symbol: str) -> str:
+    """symbol → 小写交易所前缀（sh / sz / bj），无法判定时抛错。"""
+    head = (symbol or "")[:1]
+    if head == "6":
+        return "sh"
+    if head in ("0", "3"):
+        return "sz"
+    if head in ("4", "8", "9"):
+        return "bj"
+    raise ValueError(f"无法从 {symbol!r} 推断交易所前缀")
+
+
+def _coerce_day(raw: object) -> date:
+    """把 date / datetime / pandas Timestamp / 字符串统一成 date。"""
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
+    return _parse_date(str(raw))
+
+
+def _make_bar(
+    symbol: str,
+    source: str,
+    day: date,
+    open_price: float,
+    high: float,
+    low: float,
+    close: float,
+    volume: float,
+    amount: float,
+) -> QuoteData:
+    """构造历史行情（各数据源共用，字段口径保持一致）。"""
+    return QuoteData(
+        symbol=symbol,
+        name=symbol,
+        price=close,
+        open=open_price,
+        high=high,
+        low=low,
+        previous_close=0.0,
+        volume=volume,
+        amount=amount,
+        bid_price=0.0,
+        ask_price=0.0,
+        source=source,
+        market_time=datetime.combine(day, datetime.min.time()),
+        received_at=utc_now(),
+        is_stale=False,
+    )
+
+
+def _akshare_sina_fetch(
+    symbol: str, adjust: str, start: date, end: date
+) -> list[QuoteData]:
+    """新浪日线（akshare.stock_zh_a_daily）：EastMoney 不可达时的第一备选。"""
+    import akshare as ak  # type: ignore
+
+    prefix = _exchange_prefix(symbol)
+    df = ak.stock_zh_a_daily(
+        symbol=f"{prefix}{symbol}",
+        start_date=start.strftime("%Y%m%d"),
+        end_date=end.strftime("%Y%m%d"),
+        adjust="" if adjust == ADJUST_NONE else adjust,
+    )
+    if df is None or df.empty:
+        return []
+
+    bars: list[QuoteData] = []
+    for _, row in df.iterrows():
+        bars.append(
+            _make_bar(
+                symbol,
+                "akshare_sina",
+                _coerce_day(row.get("date")),
+                float(row.get("open") or 0),
+                float(row.get("high") or 0),
+                float(row.get("low") or 0),
+                float(row.get("close") or 0),
+                float(row.get("volume") or 0),
+                float(row.get("amount") or 0),
+            )
+        )
+    return bars
+
+
+_BAOSTOCK_ADJUSTFLAG = {ADJUST_NONE: "3", ADJUST_QFQ: "2", ADJUST_HFQ: "1"}
+
+
+def _baostock_fetch(symbol: str, adjust: str, start: date, end: date) -> list[QuoteData]:
+    """BaoStock 日线（query_history_k_data_plus）：EastMoney/Sina 都不可用时的兜底。
+
+    BaoStock 不覆盖北交所（实测 bj.* 返回 10004011），北交所标的只能靠
+    AKShare/Sina；两者都失败时该股票会被记为失败并进入覆盖证据。
+    """
+    import socket
+
+    import baostock as bs  # type: ignore
+
+    prefix = _exchange_prefix(symbol)
+    previous_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(_BAOSTOCK_SOCKET_TIMEOUT_SECONDS)
+    try:
+        login = bs.login()
+        if getattr(login, "error_code", "1") != "0":
+            raise RuntimeError(
+                f"baostock 登录失败: {getattr(login, 'error_msg', 'unknown')}"
+            )
+        try:
+            rs = bs.query_history_k_data_plus(
+                f"{prefix}.{symbol}",
+                "date,open,high,low,close,volume,amount",
+                start_date=start.isoformat(),
+                end_date=end.isoformat(),
+                frequency="d",
+                adjustflag=_BAOSTOCK_ADJUSTFLAG.get(adjust, "3"),
+            )
+            if rs.error_code != "0":
+                raise RuntimeError(f"baostock 查询失败: {rs.error_msg}")
+            rows = []
+            while rs.next():
+                rows.append(rs.get_row_data())
+        finally:
+            bs.logout()
+    finally:
+        socket.setdefaulttimeout(previous_timeout)
+
+    bars: list[QuoteData] = []
+    for row in rows:
+        # fields: date,open,high,low,close,volume,amount；停牌日价格为空字符串
+        if len(row) < 7 or not row[1] or not row[4]:
+            continue
+        bars.append(
+            _make_bar(
+                symbol,
+                "baostock",
+                _parse_date(row[0]),
+                float(row[1]),
+                float(row[2]),
+                float(row[3]),
+                float(row[4]),
+                float(row[5] or 0),
+                float(row[6] or 0),
+            )
+        )
+    return bars
+
+
+def _fetch_from_sources(
+    symbol: str,
+    adjust: str,
+    start: date,
+    end: date,
+    skip: tuple[str, ...] = (),
+) -> list[QuoteData]:
+    """按回退链顺序取第一个有数据的源。
+
+    任一源抛错不终止整体流程；只有"所有源都抛错"才算失败（抛 RuntimeError），
+    "所有源都返回空"视为该股票无数据（停牌/退市），返回空列表。
+
+    skip 里的源会被跳过（调用方已经用 ProviderManager 打过同一上游）。
+    """
+    errors: list[str] = []
+    saw_empty = False
+    for name, fetcher in (
+        ("akshare", _akshare_fetch),
+        ("akshare_sina", _akshare_sina_fetch),
+        ("baostock", _baostock_fetch),
+    ):
+        if name in skip:
+            continue
+        try:
+            bars = fetcher(symbol, adjust, start, end)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{name}: {exc}")
+            logger.warning("历史源 %s 拉取 %s 失败: %s", name, symbol, exc)
+            continue
+        if bars:
+            if name != "akshare":
+                logger.info("历史源 %s 命中 %s（%d 条）", name, symbol, len(bars))
+            return bars
+        saw_empty = True
+    if errors and not saw_empty:
+        raise RuntimeError("; ".join(errors))
+    return []
 
 
 def _parse_date(raw: str) -> date:
