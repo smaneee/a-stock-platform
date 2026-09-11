@@ -1,4 +1,4 @@
-# 确保 backend 的 Python 虚拟环境可用，并把解释器绝对路径写到标准输出。
+﻿# 确保 backend 的 Python 虚拟环境可用，并把解释器绝对路径写到标准输出。
 # 被 start_backend.ps1 / test_backend.ps1 复用。
 #
 # 顺序：

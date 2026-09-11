@@ -25,7 +25,7 @@
 | --------- | ----------------------------------------------------- |
 | 操作系统      | Windows 10/11 + PowerShell 5.1+（本项目脚本面向 Windows）        |
 | Python    | >= 3.11（`scripts/start_all.ps1` 会复用/创建 `backend/.venv`） |
-| Node.js   | >= 18，提供 `npm.cmd`                                     |
+| Node.js   | >= 18，提供 `npm.cmd`；PATH 上没有时 `start_all.ps1` 会探测常见安装位置，也可用 `NPM_PATH` 指定 |
 | 网络        | 首次安装依赖与拉取行情需要联网                                       |
 | 可选（实盘）    | 券商授权的 MiniQMT / `xtquant` SDK，本机 `userdata_mini` 路径     |
 
@@ -37,7 +37,7 @@ cd a-stock-platform
 # 1) 后端配置（密钥只写本机 .env，已被 .gitignore 排除）
 Copy-Item backend\.env.example backend\.env
 
-# 2) 前端依赖（国内镜像）
+# 2) 前端依赖（可选，start_all.ps1 在缺失时会自动用国内镜像安装）
 cd frontend
 npm install --registry=https://registry.npmmirror.com
 cd ..
@@ -50,7 +50,13 @@ powershell -ExecutionPolicy Bypass -File scripts\stop_all.ps1
 ```
 
 `start_all.ps1` 会自动创建 `backend\.venv` 并使用清华 PyPI 镜像安装
-`backend\requirements.txt`。启动后：
+`backend\requirements.txt`；`frontend\node_modules` 缺失时同样自动用
+`registry.npmmirror.com` 安装前端依赖，因此第 2 步可以跳过。
+
+`scripts\*.ps1` 一律保存为 **UTF-8 with BOM**：Windows PowerShell 5.1 会把无 BOM 的
+UTF-8 文件按本地代码页解码，中文注释会串码，甚至直接报语法错误。
+
+启动后：
 
 只想起后端或只跑测试时，用 `scripts\start_backend.ps1` 与 `scripts\test_backend.ps1`：
 两者都通过 `scripts\ensure_backend_venv.ps1` 复用已有 venv（`.venv` / `.venv-311` /
