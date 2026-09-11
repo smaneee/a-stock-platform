@@ -14,6 +14,9 @@ numpy>=1.26,<3.0
 exchange_calendars>=4.11,<5.0
 python-dotenv>=1.0,<2.0
 akshare>=1.14,<2.0
+# BaoStock point-in-time 主数据源（query_all_stock / query_stock_basic / query_trade_dates）
+# 用于历史时点股票池、IPO/退市日期、交易日历
+baostock>=0.9.3,<0.10
 pytest>=8.0,<9.0
 pytest-asyncio>=0.23,<1.0
 pytest-cov>=5.0,<7.0

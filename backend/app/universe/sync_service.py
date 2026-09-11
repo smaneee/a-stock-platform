@@ -32,6 +32,7 @@ from app.market_rules.security_master import SecurityMasterService
 from app.time_utils import utc_now
 from app.universe.providers import (
     AkshareUniverseProvider,
+    BaoStockUniverseProvider,
     MockUniverseProvider,
     ProviderError,
     SecurityRecord,
@@ -93,13 +94,19 @@ def _resolve_providers_from_settings() -> list[UniverseProvider]:
                     timeout_seconds=settings.akshare_universe_timeout_seconds
                 )
             )
+        elif name == "baostock":
+            providers.append(
+                BaoStockUniverseProvider(
+                    timeout_seconds=settings.baostock_universe_timeout_seconds,
+                )
+            )
         elif name == "mock":
             providers.append(MockUniverseProvider())
         else:
             # 拼错名字直接抛错（不许静默 fallback）
             raise ProviderError(
                 "factory",
-                f"未知的 UNIVERSE_PROVIDER: {name!r}（仅支持 mock / akshare）",
+                f"未知的 UNIVERSE_PROVIDER: {name!r}（仅支持 mock / akshare / baostock）",
             )
     return providers
 
@@ -273,6 +280,7 @@ class UniverseSyncService:
                 delisted_date=rec.delisted_date,
                 trading_status=rec.trading_status,
                 sector=rec.sector,
+                board=rec.board,
             )
             if existing is None:
                 new_count += 1

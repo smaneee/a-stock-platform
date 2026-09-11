@@ -40,6 +40,7 @@ class SecurityMasterService:
         delisted_date: date | None = None,
         trading_status: str | None = None,
         sector: str | None = None,
+        board: str | None = None,
     ) -> Security:
         """按 symbol 查找或新建主数据，缺省字段由 MarketRuleEngine 推断。
 
@@ -71,12 +72,15 @@ class SecurityMasterService:
             if exchange and sec.exchange != exchange:
                 sec.exchange = exchange
                 changed = True
+            if board and sec.board != board:
+                sec.board = board
+                changed = True
             if changed:
                 from app.time_utils import utc_now
                 sec.updated_at = utc_now()
             return sec
 
-        board = MarketRuleEngine.classify(symbol)
+        board_value = board or MarketRuleEngine.classify(symbol).value
         # 缺省交易所从 symbol 前缀推断
         ex = exchange or _infer_exchange(symbol)
         st = (
@@ -87,7 +91,7 @@ class SecurityMasterService:
         sec = Security(
             symbol=symbol,
             name=name or f"未知{symbol}",
-            board=board.value,
+            board=board_value,
             exchange=ex,
             is_st=st,
             listing_date=listing_date,

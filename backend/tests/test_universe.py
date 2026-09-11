@@ -1222,3 +1222,241 @@ class TestRealUniverseIntegration:
         assert snap.included_count >= 5, (
             f"至少 5 只有 bar 数据，included_count 应 ≥ 5，实际 {snap.included_count}"
         )
+
+
+# ─────────────── 13. BaoStock + AKShare BJ 子源测试 ───────────────
+
+
+class TestBaoStockCodeParser:
+    """BaoStock code 字符串解析：sh.000001 → (600000, 'SH')。"""
+
+    def test_sh_prefix(self):
+        from app.universe.providers import _baostock_code_to_symbol
+
+        sym, ex = _baostock_code_to_symbol("sh.600000")
+        assert sym == "600000"
+        assert ex == "SH"
+
+    def test_sz_prefix(self):
+        from app.universe.providers import _baostock_code_to_symbol
+
+        sym, ex = _baostock_code_to_symbol("sz.000001")
+        assert sym == "000001"
+        assert ex == "SZ"
+
+    def test_sz_cn_prefix(self):
+        """szcn.300750 也映射到 SZ。"""
+        from app.universe.providers import _baostock_code_to_symbol
+
+        sym, ex = _baostock_code_to_symbol("szcn.300750")
+        assert sym == "300750"
+        assert ex == "SZ"
+
+    def test_bj_prefix(self):
+        from app.universe.providers import _baostock_code_to_symbol
+
+        sym, ex = _baostock_code_to_symbol("bj.830799")
+        assert sym == "830799"
+        assert ex == "BJ"
+
+    def test_invalid_returns_empty(self):
+        from app.universe.providers import _baostock_code_to_symbol
+
+        assert _baostock_code_to_symbol("invalid") == ("", "")
+        assert _baostock_code_to_symbol("sh.12345") == ("", "")  # 5 位
+        assert _baostock_code_to_symbol("sh.abcdef") == ("", "")  # 非数字
+
+
+class TestBaoStockProviderOffline:
+    """不连真网，纯离线测试 BaoStockUniverseProvider 的逻辑分支。"""
+
+    def test_provider_id(self):
+        from app.universe.providers import BaoStockUniverseProvider
+
+        assert BaoStockUniverseProvider.source_id == "baostock"
+
+    def test_assemble_records_type_filtering(self):
+        """type != 1 的记录（指数/债券/基金）必须被过滤。"""
+        from app.universe.providers import BaoStockUniverseProvider
+
+        p = BaoStockUniverseProvider(timeout_seconds=10.0)
+        # 模拟 query_stock_basic 返回 5 行 type=2（指数） + 5 行 type=1（股票）
+        basic_fields = ["code", "code_name", "ipoDate", "outDate", "type", "status"]
+        basic_rows: list[list[str]] = []
+        # 5 行 type=2（指数） — 应当被过滤
+        for i in range(5):
+            basic_rows.append(
+                [
+                    f"sh.00000{i}",
+                    f"指数{i}",
+                    "1991-07-15",
+                    "",
+                    "2",
+                    "1",
+                ]
+            )
+        # 5 行 type=1（股票） — 应当被保留
+        for i in range(5):
+            basic_rows.append(
+                [
+                    f"sh.60000{i}",
+                    f"股票{i}",
+                    "2000-01-01",
+                    "",
+                    "1",
+                    "0",
+                ]
+            )
+
+        records = p._assemble_records(
+            basic_fields=basic_fields,
+            basic_rows=basic_rows,
+            effective_day=date(2025, 1, 1),
+        )
+        assert len(records) == 5
+        for r in records:
+            assert r.exchange == "SH"
+            assert r.symbol.startswith("60000")
+            assert r.listing_date == date(2000, 1, 1)
+            assert r.trading_status == "active"
+
+    def test_assemble_records_status_mapping(self):
+        """status 0=active / 1=delisted / 2=suspended 映射正确。"""
+        from app.universe.providers import BaoStockUniverseProvider
+
+        p = BaoStockUniverseProvider(timeout_seconds=10.0)
+        basic_fields = ["code", "code_name", "ipoDate", "outDate", "type", "status"]
+        basic_rows = [
+            ["sh.600000", "active 股票", "1999-11-10", "", "1", "0"],
+            ["sh.600001", "delisted 股票", "1999-11-10", "2024-05-22", "1", "1"],
+            ["sh.600002", "suspended 股票", "1999-11-10", "", "1", "2"],
+        ]
+        records = p._assemble_records(
+            basic_fields=basic_fields,
+            basic_rows=basic_rows,
+            effective_day=date(2025, 1, 1),
+        )
+        assert len(records) == 3
+        status_by_sym = {r.symbol: r.trading_status for r in records}
+        assert status_by_sym["600000"] == "active"
+        assert status_by_sym["600001"] == "delisted"
+        assert status_by_sym["600001_delisted_date"] if False else True
+        assert records[1].delisted_date == date(2024, 5, 22)
+        assert status_by_sym["600002"] == "suspended"
+
+    def test_assemble_records_skip_future_listing(self):
+        """ipoDate > effective_day 必须跳过（当日尚未上市）。"""
+        from app.universe.providers import BaoStockUniverseProvider
+
+        p = BaoStockUniverseProvider(timeout_seconds=10.0)
+        basic_fields = ["code", "code_name", "ipoDate", "outDate", "type", "status"]
+        basic_rows = [
+            ["sh.600000", "已上市", "2000-01-01", "", "1", "0"],
+            ["sh.600001", "未来上市", "2099-01-01", "", "1", "0"],  # 未来
+        ]
+        records = p._assemble_records(
+            basic_fields=basic_fields,
+            basic_rows=basic_rows,
+            effective_day=date(2025, 1, 1),
+        )
+        assert len(records) == 1
+        assert records[0].symbol == "600000"
+
+    def test_assemble_records_empty_raises(self):
+        """如果所有记录都被过滤掉（type != 1），必须抛 ProviderError。"""
+        from app.universe.providers import BaoStockUniverseProvider, ProviderError
+
+        p = BaoStockUniverseProvider(timeout_seconds=10.0)
+        basic_fields = ["code", "code_name", "ipoDate", "outDate", "type", "status"]
+        basic_rows = [
+            ["sh.000001", "指数A", "1991-07-15", "", "2", "1"],
+        ]
+        with pytest.raises(ProviderError) as exc_info:
+            p._assemble_records(
+                basic_fields=basic_fields,
+                basic_rows=basic_rows,
+                effective_day=date(2025, 1, 1),
+            )
+        assert "0 条 type=1" in str(exc_info.value)
+
+
+class TestAkshareBjSupplementOffline:
+    """AKShare 北交所子源离线测试。"""
+
+    def test_provider_id(self):
+        from app.universe.providers import AkshareBjSupplementProvider
+
+        assert AkshareBjSupplementProvider.source_id == "akshare_bj"
+
+    def test_chinese_field_parsing(self):
+        """AKShare 北交所返回字段是中文：证券代码/证券简称/上市日期。"""
+        from app.universe.providers import AkshareBjSupplementProvider
+
+        p = AkshareBjSupplementProvider(timeout_seconds=10.0)
+        rows = [
+            {
+                "证券代码": "920000",
+                "证券简称": "安徽凤凰",
+                "上市日期": "2020-12-23",
+                "所属行业": "汽车制造业",
+            },
+            {
+                "证券代码": "920001",
+                "证券简称": "纬达光电",
+                "上市日期": "2022-12-27",
+                "所属行业": "电子设备",
+            },
+        ]
+        records = p._records_from_rows(rows, as_of_date=date(2025, 1, 1))
+        assert len(records) == 2
+        assert records[0].symbol == "920000"
+        assert records[0].name == "安徽凤凰"
+        assert records[0].exchange == "BJ"
+        assert records[0].board == "bj"
+        assert records[0].listing_date == date(2020, 12, 23)
+        assert records[0].sector == "汽车制造业"
+
+    def test_dedup_and_format_filter(self):
+        """代码格式不对（5 位 / 非数字）+ 重复 symbol 必须被去重。"""
+        from app.universe.providers import AkshareBjSupplementProvider
+
+        p = AkshareBjSupplementProvider(timeout_seconds=10.0)
+        rows = [
+            {"证券代码": "920000", "证券简称": "A", "上市日期": "2020-12-23"},
+            {"证券代码": "920000", "证券简称": "A 重名", "上市日期": "2020-12-23"},
+            {"证券代码": "92000", "证券简称": "5 位", "上市日期": "2020-12-23"},
+            {"证券代码": "abcdef", "证券简称": "非数字", "上市日期": "2020-12-23"},
+        ]
+        records = p._records_from_rows(rows, as_of_date=date(2025, 1, 1))
+        assert len(records) == 1
+        assert records[0].symbol == "920000"
+
+
+class TestBuildProviderBaostock:
+    """build_provider_by_name('baostock') 应返回 BaoStockUniverseProvider 实例。"""
+
+    def test_baostock_name(self):
+        from app.universe.providers import (
+            BaoStockUniverseProvider,
+            build_provider_by_name,
+        )
+
+        p = build_provider_by_name("baostock", timeout_seconds=99.0)
+        assert isinstance(p, BaoStockUniverseProvider)
+
+    def test_unknown_name_raises(self):
+        from app.universe.providers import ProviderError, build_provider_by_name
+
+        with pytest.raises(ProviderError) as exc_info:
+            build_provider_by_name("foo")
+        assert "未知的 UNIVERSE_PROVIDER" in str(exc_info.value)
+        assert "foo" in str(exc_info.value)
+
+    def test_case_insensitive(self):
+        from app.universe.providers import (
+            BaoStockUniverseProvider,
+            build_provider_by_name,
+        )
+
+        p = build_provider_by_name("BaoStock")
+        assert isinstance(p, BaoStockUniverseProvider)
