@@ -107,36 +107,38 @@ class ExclusionEngine:
         return None
 
 
-def _has_recent_history_ingest(
+def _get_recent_history_ingest(
     db: Session,
     as_of: date,
-    coverage_min_ratio: float = 0.5,
-    coverage_min_symbols: int = 100,
-) -> bool:
+    symbol: str,
+    threshold_days: int,
+) -> HistoryIngestBatch | None:
     """检查「最近一次成功的历史数据 ingest 批次」是否覆盖到 as_of 日期。
 
-    没有成功的 ingest 批次 → 视为 incomplete_history（不能判 long_suspension）。
-    有但 coverage_ratio < coverage_min_ratio → 覆盖不够，也算 incomplete_history。
+    只有目标 symbol 明确出现在 covered_symbols 中，才算该股票被成功覆盖。
+    全局 coverage_ratio 不能替代逐股票证据，否则部分批次会把未抓取股票误判停牌。
     """
-    batch = (
+    batches = (
         db.execute(
             select(HistoryIngestBatch)
             .where(HistoryIngestBatch.status == "succeeded")
             .where(HistoryIngestBatch.completed_at.isnot(None))
             .where(HistoryIngestBatch.end_date >= as_of - timedelta(days=1))
+            .where(
+                HistoryIngestBatch.start_date
+                <= as_of - timedelta(days=threshold_days)
+            )
             .order_by(HistoryIngestBatch.completed_at.desc())
-            .limit(1)
+            .limit(20)
         )
         .scalars()
-        .first()
+        .all()
     )
-    if batch is None:
-        return False
-    if batch.completed_symbols < coverage_min_symbols:
-        return False
-    if batch.coverage_ratio < coverage_min_ratio:
-        return False
-    return True
+    for batch in batches:
+        covered = batch.covered_symbols
+        if isinstance(covered, list) and symbol in covered:
+            return batch
+    return None
 
 
 def get_long_suspension_state(
@@ -158,7 +160,12 @@ def get_long_suspension_state(
     重要：返回 "ok" 表示这 N 天**有成交**或**有部分覆盖但不能定为长期停牌**。
     """
     # 关键：先看历史 ingest 覆盖。无覆盖 → 全部 incomplete_history（不能判 confirmed）
-    if not _has_recent_history_ingest(db, as_of=as_of):
+    if _get_recent_history_ingest(
+        db,
+        as_of=as_of,
+        symbol=symbol,
+        threshold_days=threshold_days,
+    ) is None:
         # 再分两层：symbol 在 securities 里 → incomplete_history（保守）；
         # 完全没记录 → provider_unknown
         sec = db.get(Security, symbol)

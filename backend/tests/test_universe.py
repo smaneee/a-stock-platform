@@ -714,7 +714,13 @@ class TestLongSuspensionStateDistinction:
     """
 
     def _make_history_ingest_batch(
-        self, db_session, *, as_of: date, completed_symbols: int = 1000, coverage: float = 0.9
+        self,
+        db_session,
+        *,
+        as_of: date,
+        covered_symbols: list[str],
+        completed_symbols: int = 1000,
+        coverage: float = 0.9,
     ) -> None:
         """模拟一次成功的 history_ingest 批次。"""
         from app.database.models import HistoryIngestBatch
@@ -731,6 +737,7 @@ class TestLongSuspensionStateDistinction:
             coverage_ratio=coverage,
             started_at=utc_now() - timedelta(hours=1),
             completed_at=utc_now(),
+            covered_symbols=covered_symbols,
         )
         db_session.add(batch)
         db_session.commit()
@@ -770,7 +777,11 @@ class TestLongSuspensionStateDistinction:
         for i in range(5):
             db_session.add(TradingDate(trade_date=date(2024, 1, 1) + timedelta(days=i)))
         # 关键：先有成功的 history_ingest 批次
-        self._make_history_ingest_batch(db_session, as_of=date(2024, 1, 5))
+        self._make_history_ingest_batch(
+            db_session,
+            as_of=date(2024, 1, 5),
+            covered_symbols=["688999"],
+        )
 
         state = get_long_suspension_state(db_session, "688999", date(2024, 1, 5), threshold_days=5)
         assert state == "confirmed_long_suspension", (
@@ -799,12 +810,42 @@ class TestLongSuspensionStateDistinction:
             )
         db_session.commit()
         # 关键：先有成功的 history_ingest 批次
-        self._make_history_ingest_batch(db_session, as_of=date(2024, 1, 3))
+        self._make_history_ingest_batch(
+            db_session,
+            as_of=date(2024, 1, 3),
+            covered_symbols=["600000"],
+        )
 
         state = get_long_suspension_state(
             db_session, "600000", date(2024, 1, 3), threshold_days=5
         )
         assert state == "ok"
+
+    def test_high_global_coverage_does_not_cover_unlisted_symbol(self, db_session):
+        """批次覆盖率再高，也不能替代 covered_symbols 的逐股票证据。"""
+        from app.database.models import TradingDate
+        from app.universe.exclusion import get_long_suspension_state
+
+        _seed_security(db_session, "688999", listing_date=date(2020, 1, 1))
+        for offset in range(5):
+            db_session.add(
+                TradingDate(trade_date=date(2024, 1, 1) + timedelta(days=offset))
+            )
+        self._make_history_ingest_batch(
+            db_session,
+            as_of=date(2024, 1, 5),
+            covered_symbols=["600000"],
+            completed_symbols=5000,
+            coverage=0.99,
+        )
+
+        state = get_long_suspension_state(
+            db_session,
+            "688999",
+            date(2024, 1, 5),
+            threshold_days=5,
+        )
+        assert state == "incomplete_history"
 
     def test_find_long_suspension_does_not_include_provider_unknown(self, db_session):
         """无 history_ingest 覆盖 + 无 securities 时不返回任何 confirmed。
