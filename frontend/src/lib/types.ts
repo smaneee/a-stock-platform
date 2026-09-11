@@ -1,0 +1,289 @@
+/** API 数据类型，对齐后端 Pydantic 响应模型。 */
+
+export interface QuoteData {
+  symbol: string;
+  name: string;
+  price: number;
+  open: number;
+  high: number;
+  low: number;
+  previous_close: number;
+  volume: number;
+  amount: number;
+  bid_price: number;
+  ask_price: number;
+  source: string;
+  market_time: string | null;
+  received_at: string;
+  is_stale: boolean;
+}
+
+export interface Watchlist {
+  id: number;
+  name: string;
+  symbols: Array<{ symbol: string; name: string | null }>;
+}
+
+export interface Strategy {
+  id: number;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  version: string;
+}
+
+export interface Signal {
+  signal_id: string;
+  symbol: string;
+  strategy_name: string;
+  direction: "BUY" | "SELL" | "ALERT";
+  strength: number;
+  reason: string;
+  price: number;
+  source_time: string;
+  created_at: string;
+  strategy_version: string;
+}
+
+export interface BacktestRequest {
+  symbol: string;
+  strategy_name: string;
+  start_time: string;
+  end_time: string;
+  initial_cash: number;
+  idempotency_key?: string;
+}
+
+export interface BacktestTrade {
+  time: string;
+  symbol: string;
+  side: "BUY" | "SELL";
+  price: number;
+  quantity: number;
+  commission: number;
+  stamp_tax?: number;
+  pnl: number;
+}
+
+export interface BacktestResult {
+  total_return: number;
+  annual_return: number;
+  max_drawdown: number;
+  sharpe_ratio: number;
+  win_rate: number;
+  profit_loss_ratio: number;
+  trade_count: number;
+  equity_curve: number[];
+  trades: BacktestTrade[];
+}
+
+export type BacktestStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface BacktestResponse {
+  id: number;
+  symbol: string;
+  strategy_name: string;
+  start_time: string;
+  end_time: string;
+  status: BacktestStatus;
+  progress: number;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  result: BacktestResult | null;
+}
+
+export interface BacktestSummary {
+  id: number;
+  symbol: string;
+  strategy_name: string;
+  start_time: string;
+  end_time: string;
+  status: BacktestStatus;
+  progress: number;
+  error_message: string | null;
+}
+
+/* ---------- 组合回测 ---------- */
+
+export interface PortfolioBacktestRequest {
+  symbols: string[];
+  strategy_name: string;
+  weights?: Record<string, number> | null;
+  benchmark_symbol?: string | null;
+  start_time: string;
+  end_time: string;
+  initial_cash: number;
+  max_single_position?: number;
+  max_total_position?: number;
+  commission_rate?: number;
+  slippage?: number;
+  risk_free_rate?: number;
+  idempotency_key?: string | null;
+}
+
+export interface PortfolioBacktestResult {
+  total_return: number;
+  annual_return: number;
+  max_drawdown: number;
+  sharpe_ratio: number;
+  win_rate: number;
+  profit_loss_ratio: number;
+  trade_count: number;
+  turnover: number;
+  concentration: number;
+  benchmark_return: number;
+  excess_return: number;
+  alpha: number;
+  beta: number;
+  information_ratio: number;
+  tracking_error: number;
+  equity_curve: number[];
+  benchmark_curve: number[];
+  dates: string[];
+  trades: BacktestTrade[];
+}
+
+export type PortfolioBacktestStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface PortfolioBacktestResponse {
+  id: number;
+  symbols: string[];
+  weights: Record<string, number> | null;
+  benchmark_symbol: string | null;
+  strategy_name: string;
+  start_time: string;
+  end_time: string;
+  initial_cash: number;
+  status: PortfolioBacktestStatus;
+  progress: number;
+  result: PortfolioBacktestResult | null;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+}
+
+export interface PaperAccount {
+  id: number;
+  name: string;
+  initial_cash: number;
+  available_cash: number;
+  frozen_cash: number;
+}
+
+export interface PaperPosition {
+  symbol: string;
+  quantity: number;
+  available_quantity: number;
+  avg_cost: number;
+  realized_pnl: number;
+}
+
+export interface PaperOrder {
+  order_id: number;
+  symbol: string;
+  side: "BUY" | "SELL";
+  quantity: number;
+  price: number;
+  status: string;
+}
+
+export interface PaperOrderDetail {
+  id: number;
+  symbol: string;
+  side: string;
+  quantity: number;
+  price: number;
+  status: string;
+  reject_reason: string | null;
+  signal_id: string | null;
+  created_at: string;
+}
+
+export interface PaperTrade {
+  id: number;
+  symbol: string;
+  side: "BUY" | "SELL";
+  quantity: number;
+  price: number;
+  commission: number;
+  stamp_tax: number;
+  realized_pnl: number;
+  signal_id: string | null;
+  executed_at: string;
+}
+
+export interface AssetPoint {
+  total_asset: number;
+  recorded_at: string;
+}
+
+export interface HealthDetail {
+  status: string;
+  disclaimer: string;
+  database: { ok: boolean; error?: string };
+  scheduler: { running: boolean };
+  providers: Record<string, boolean>;
+}
+
+export interface MetricsResponse {
+  data_status: "real-time" | "delayed" | "disconnected" | "simulated";
+  providers: Record<string, {
+    success: number;
+    failure: number;
+    success_rate: number;
+    avg_latency_ms: number;
+    consecutive_failures: number;
+    last_success_at: string | null;
+  }>;
+  websocket: {
+    connections: number;
+    peak_connections: number;
+    dropped_messages: number;
+  };
+  tasks: {
+    live: Record<string, number>;
+    cumulative: Record<string, number>;
+  };
+}
+
+export interface SelectionCandidate {
+  symbol: string;
+  name: string;
+  exchange: string;
+  board: string;
+  rank: number;
+  score: number;
+  momentum_20: number;
+  momentum_60: number;
+  volatility_20: number;
+  max_drawdown_60: number;
+  average_amount_20: number;
+  last_price: number;
+  bar_count: number;
+}
+
+export interface SelectionResult {
+  run_id: number;
+  trading_day: string;
+  total_candidates: number;
+  eligible_count: number;
+  candidates: SelectionCandidate[];
+  disclaimer: string;
+}
+
+/** 统一 API 错误格式。 */
+export interface ApiError {
+  detail: string;
+}
