@@ -21,6 +21,7 @@ from app.api.metrics import router as metrics_router
 from app.api.paper_accounts import router as paper_router
 from app.api.portfolio_backtests import router as portfolio_backtests_router
 from app.api.quotes import router as quotes_router
+from app.api.selections import router as selections_router
 from app.api.signals import router as signals_router
 from app.api.strategies import ensure_strategies, router as strategies_router
 from app.api.universe import router as universe_router
@@ -253,6 +254,7 @@ def create_app() -> FastAPI:
     app.include_router(metrics_router)
     app.include_router(universe_router)
     app.include_router(quotes_router)
+    app.include_router(selections_router)
     app.include_router(watchlists_router)
     app.include_router(signals_router)
     app.include_router(strategies_router)

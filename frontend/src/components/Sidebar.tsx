@@ -4,6 +4,7 @@ const NAV_ITEMS = [
   { to: "/", label: "看板", icon: "📊" },
   { to: "/watchlist", label: "自选股", icon: "⭐" },
   { to: "/signals", label: "信号", icon: "🔔" },
+  { to: "/selection", label: "智能选股", icon: "🎯" },
   { to: "/strategies", label: "策略", icon: "⚙️" },
   { to: "/backtest", label: "回测", icon: "📈" },
   { to: "/portfolio-backtest", label: "组合回测", icon: "🧮" },

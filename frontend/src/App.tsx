@@ -9,6 +9,7 @@ import StrategiesPage from "./pages/Strategies";
 import BacktestPage from "./pages/Backtest";
 import PortfolioBacktestPage from "./pages/PortfolioBacktest";
 import PaperTradingPage from "./pages/PaperTrading";
+import SelectionPage from "./pages/Selection";
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/watchlist" element={<WatchlistPage />} />
             <Route path="/signals" element={<SignalsPage />} />
+            <Route path="/selection" element={<SelectionPage />} />
             <Route path="/strategies" element={<StrategiesPage />} />
             <Route path="/backtest" element={<BacktestPage />} />
             <Route

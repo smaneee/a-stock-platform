@@ -178,6 +178,8 @@ cd backend
 | POST     | `/api/universe/sync`                    | 同步全市场股票池并原子生成交易日快照           |
 | GET      | `/api/universe/snapshots/{day}/members` | 查询不可变的历史交易日成员                  |
 | POST     | `/api/universe/filter`                  | 按交易日筛选可交易成员                    |
+| POST     | `/api/selections/rank`                  | 基于历史快照生成并保存多因子候选排名           |
+| GET      | `/api/selections/{run_id}`              | 读取可复现的选股运行及因子值                 |
 | WS       | `/ws/quotes`                            | 行情推送                           |
 | WS       | `/ws/signals`                           | 信号推送                           |
 
@@ -192,6 +194,12 @@ cd backend
 | Mock       | 演示/测试  | 仅在 `MARKET_PROVIDERS=mock` 时显式启用 |
 
 数据源按 `MARKET_PROVIDERS` 优先级故障转移，严禁静默混合来源。全部失败时返回缓存数据并标记 `is_stale=true`。Mock 不参与真实数据源的默认兜底，避免把随机价格误认为真实行情。
+
+## 智能选股
+
+选股服务严格使用指定交易日的 `UniverseSnapshot`，只读取该日及以前的日线，避免未来数据和当前成分股幸存者偏差。默认综合 20/60 日动量、20 日年化波动、60 日最大回撤和 20 日平均成交额；至少需要 61 根且最新行情不超过 10 天。结果连同配置哈希和数据指纹写入 `selection_runs`，同一快照、配置和数据重复执行会返回同一运行记录。
+
+该排名只作为研究候选，不会自动提交真实订单。下一步应先做样本外回测与模拟盘观察，再考虑由用户逐笔确认真实订单。
 
 ## 已知限制
 

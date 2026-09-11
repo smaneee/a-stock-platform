@@ -433,6 +433,63 @@ class HistoryIngestBatch(Base):
     covered_symbols: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
 
+class SelectionRun(Base):
+    """一次可复现的截面选股运行。"""
+
+    __tablename__ = "selection_runs"
+    __table_args__ = (
+        UniqueConstraint("snapshot_id", "config_hash", name="uq_selection_run_config"),
+        Index("ix_selection_runs_trading_day_created", "trading_day", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("universe_snapshots.id", ondelete="NO ACTION"), nullable=False
+    )
+    trading_day: Mapped[date] = mapped_column(Date, nullable=False)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    config_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    total_candidates: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    eligible_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+    candidates: Mapped[list["SelectionCandidate"]] = relationship(  # noqa: F821
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="SelectionCandidate.rank",
+    )
+
+
+class SelectionCandidate(Base):
+    """选股运行输出的不可变候选与因子快照。"""
+
+    __tablename__ = "selection_candidates"
+    __table_args__ = (
+        UniqueConstraint("run_id", "symbol", name="uq_selection_candidate_symbol"),
+        UniqueConstraint("run_id", "rank", name="uq_selection_candidate_rank"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("selection_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    exchange: Mapped[str] = mapped_column(String(8), nullable=False)
+    board: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    momentum_20: Mapped[float] = mapped_column(Float, nullable=False)
+    momentum_60: Mapped[float] = mapped_column(Float, nullable=False)
+    volatility_20: Mapped[float] = mapped_column(Float, nullable=False)
+    max_drawdown_60: Mapped[float] = mapped_column(Float, nullable=False)
+    average_amount_20: Mapped[float] = mapped_column(Float, nullable=False)
+    last_price: Mapped[float] = mapped_column(Float, nullable=False)
+    bar_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    run: Mapped[SelectionRun] = relationship(back_populates="candidates")
+
+
 class PortfolioBacktest(Base):
     """组合回测任务（可恢复，落库）。"""
 
