@@ -72,6 +72,16 @@ def test_data_source_status_disconnected_all_failing():
     assert data_source_status(m, ["tencent"]) == "disconnected"
 
 
+def test_data_source_status_no_records_yet_is_delayed_not_disconnected():
+    """刚启动 / 自选股为空（轮询器没打过请求）时不能报"数据断开"。
+
+    回归：此前 `not metrics_of_real` 分支直接返回 disconnected，导致新装环境
+    页面顶栏常驻红色"数据断开"，而实际上真实数据源一个都没失败过。
+    """
+    assert data_source_status({}, ["tencent", "akshare"]) == "delayed"
+    assert data_source_status({}, ["tencent", "akshare", "mock"]) == "delayed"
+
+
 def test_data_source_status_delayed():
     now = time.time()
     m = {"tencent": {"consecutive_failures": 0, "last_success_epoch": now - 300}}

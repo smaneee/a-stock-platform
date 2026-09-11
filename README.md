@@ -118,7 +118,7 @@ $env:E2E_MODE = "managed"
 backend\.venv-311\Scripts\python.exe scripts\e2e_smoke.py
 ```
 
-回归基线：后端 489 项测试全绿、前端类型检查与生产构建零错误、managed E2E 19/19。
+回归基线：后端 490 项测试全绿、前端类型检查与生产构建零错误、managed E2E 19/19。
 
 ## 第三方参考与许可证
 

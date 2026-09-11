@@ -193,6 +193,10 @@ def data_source_status(provider_metrics: dict[str, dict], provider_names: list[s
     - disconnected：所有真实数据源连续失败 >= 3 次
     - delayed：最近成功距今超过 120 秒
     - real-time：其余情况
+
+    注意"还没有任何记录"（刚启动、自选股为空所以轮询器没打过任何请求）不等于
+    "数据断开"：真实源有连续失败记录才算断开。没有记录一律按"没有新鲜数据"
+    处理，返回 delayed —— 否则新装环境的地图页会直接显示红色"数据断开"。
     """
     if not provider_names:
         return "disconnected"
@@ -209,7 +213,8 @@ def data_source_status(provider_metrics: dict[str, dict], provider_names: list[s
             mock_m = provider_metrics.get("mock")
             if mock_m and mock_m.get("last_success_epoch"):
                 return "simulated"
-        return "disconnected"
+        # 无任何记录（尚未轮询 / 自选股为空）→ 没有新鲜数据，而不是故障
+        return "delayed"
 
     # 所有真实源都在连续失败 -> disconnected
     if all(m["consecutive_failures"] >= 3 for m in metrics_of_real):
