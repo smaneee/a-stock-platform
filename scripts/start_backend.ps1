@@ -17,21 +17,13 @@ if (-not (Test-Path ".env")) {
     }
 }
 
-# 2. Create virtual environment if missing
-if (-not (Test-Path ".venv")) {
-    Write-Host "Creating virtual environment..."
-    python -m venv .venv
-}
+# 2. 复用已有 venv 或按 >=3.11 解释器新建（含国内镜像安装依赖）
+$venvPython = & (Join-Path $PSScriptRoot "ensure_backend_venv.ps1")
+Write-Host "Interpreter: $venvPython"
 
-# 3. Install dependencies from a mainland China mirror
-Write-Host "Installing dependencies..."
-& ".venv\Scripts\python.exe" -m pip install `
-    --index-url "https://pypi.tuna.tsinghua.edu.cn/simple" `
-    -r requirements.txt
+# 3. Run database migrations
+& $venvPython -m alembic upgrade head
 
-# 4. Run database migrations
-& ".venv\Scripts\python.exe" -m alembic upgrade head
-
-# 5. Start server
+# 4. Start server
 Write-Host "Starting uvicorn on http://127.0.0.1:8000 ..."
-& ".venv\Scripts\python.exe" -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+& $venvPython -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload

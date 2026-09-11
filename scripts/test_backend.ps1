@@ -3,18 +3,12 @@
 $ErrorActionPreference = "Stop"
 
 $BackendDir = Join-Path (Split-Path -Parent $PSScriptRoot) "backend"
+# 复用已有 venv 或按 >=3.11 解释器新建（含国内镜像安装依赖）
+$venvPython = & (Join-Path $PSScriptRoot "ensure_backend_venv.ps1")
 Set-Location $BackendDir
 
 Write-Host "=== A-stock backend tests ==="
-
-# Create venv if missing
-if (-not (Test-Path ".venv")) {
-    Write-Host "Creating virtual environment..."
-    python -m venv .venv
-    & ".venv\Scripts\python.exe" -m pip install `
-        --index-url "https://pypi.tuna.tsinghua.edu.cn/simple" `
-        -r requirements.txt
-}
+Write-Host "Interpreter: $venvPython"
 
 Write-Host "Running pytest..."
-& ".venv\Scripts\python.exe" -m pytest -v
+& $venvPython -m pytest -v

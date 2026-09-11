@@ -52,6 +52,11 @@ powershell -ExecutionPolicy Bypass -File scripts\stop_all.ps1
 `start_all.ps1` 会自动创建 `backend\.venv` 并使用清华 PyPI 镜像安装
 `backend\requirements.txt`。启动后：
 
+只想起后端或只跑测试时，用 `scripts\start_backend.ps1` 与 `scripts\test_backend.ps1`：
+两者都通过 `scripts\ensure_backend_venv.ps1` 复用已有 venv（`.venv` / `.venv-311` /
+`.venv-312`），没有则用 `py` 启动器挑选 Python 3.13/3.12/3.11 新建，避免 PATH 上的
+旧解释器（例如 3.6）被静默用来建出不可用的环境。
+
 | 入口        | 地址                                        |
 | --------- | ----------------------------------------- |
 | 前端界面      | <http://127.0.0.1:5173>                   |
