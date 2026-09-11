@@ -25,13 +25,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database.models import Security, TradingDate, HistoricalBar
+from app.database.models import (
+    HistoryIngestBatch,
+    Security,
+    TradingDate,
+    HistoricalBar,
+)
 
 
 @dataclass(frozen=True)
@@ -90,13 +95,48 @@ class ExclusionEngine:
             return "delisted"
         if sec.trading_status == "suspended":
             return "suspended"
-        if sec.listing_date is None:
-            return "incomplete_data"
-        if sec.listing_date > as_of:
+        # listing_date 缺失：仅审计标签，不排除。
+        # 原因：AKShare stock_info_a_code_name() 不返回 listing_date，
+        # 早期版本若按"缺 listing_date 就排除"会把全市场全干掉。
+        # 这里用 audit_reason = listing_date_unknown 暴露给 selection / paper trading
+        # 进一步判断，universe 本身保持宽松口径。
+        if sec.listing_date and sec.listing_date > as_of:
             return "not_listed_yet"
         if not self._include_st and sec.is_st:
             return "st_excluded"
         return None
+
+
+def _has_recent_history_ingest(
+    db: Session,
+    as_of: date,
+    coverage_min_ratio: float = 0.5,
+    coverage_min_symbols: int = 100,
+) -> bool:
+    """检查「最近一次成功的历史数据 ingest 批次」是否覆盖到 as_of 日期。
+
+    没有成功的 ingest 批次 → 视为 incomplete_history（不能判 long_suspension）。
+    有但 coverage_ratio < coverage_min_ratio → 覆盖不够，也算 incomplete_history。
+    """
+    batch = (
+        db.execute(
+            select(HistoryIngestBatch)
+            .where(HistoryIngestBatch.status == "succeeded")
+            .where(HistoryIngestBatch.completed_at.isnot(None))
+            .where(HistoryIngestBatch.end_date >= as_of - timedelta(days=1))
+            .order_by(HistoryIngestBatch.completed_at.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if batch is None:
+        return False
+    if batch.completed_symbols < coverage_min_symbols:
+        return False
+    if batch.coverage_ratio < coverage_min_ratio:
+        return False
+    return True
 
 
 def get_long_suspension_state(
@@ -111,8 +151,21 @@ def get_long_suspension_state(
     - "incomplete_history"：本地缓存覆盖不够，无法判断（不能强行归 confirmed）
     - "provider_unknown"：连真源（akshare）对此 symbol 都无数据（视为数据缺失）
 
+    关键前提（修复 P1）：必须先有「最近一次成功的 history_ingest 批次」覆盖
+    到 as_of 之前，否则一律 incomplete_history — 因为"0 行情"可能不是"停牌"，
+    而是"根本没拉过历史"。
+
     重要：返回 "ok" 表示这 N 天**有成交**或**有部分覆盖但不能定为长期停牌**。
     """
+    # 关键：先看历史 ingest 覆盖。无覆盖 → 全部 incomplete_history（不能判 confirmed）
+    if not _has_recent_history_ingest(db, as_of=as_of):
+        # 再分两层：symbol 在 securities 里 → incomplete_history（保守）；
+        # 完全没记录 → provider_unknown
+        sec = db.get(Security, symbol)
+        if sec is None:
+            return "provider_unknown"
+        return "incomplete_history"
+
     trading_days = (
         db.execute(
             select(TradingDate.trade_date)

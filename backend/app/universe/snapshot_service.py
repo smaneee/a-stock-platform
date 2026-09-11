@@ -1,28 +1,36 @@
 """UniverseSnapshotService — 落库某一交易日股票池快照 + 查询。
 
 设计：
-- get_or_create_snapshot(trading_day, source_provider, synced_at): 幂等。
-  若当天已有 snapshot → 直接返回；否则基于当前 Security 列表 + ExclusionEngine
-  创建新 snapshot + 全部 N 行 UniverseMember（包含与排除都落库）。
-- get_membership(trading_day, *, include=bool, exchange, exclude_reasons):
-  按交易日查成员；支持过滤。这是 selection / paper trading 调用的 API。
-- list_snapshots(limit): 元信息列表，供 API 列出历史。
+- get_or_create_snapshot(trading_day, source_provider, synced_at, *, as_of_date):
+  幂等 + 冲突检测。
+  - 若当天已有 snapshot 且 source_provider / total_count / source_synced_at 完全
+    一致 → 直接返回旧版（同内容幂等）
+  - 若已有 snapshot 但任一字段不同 → 抛 SnapshotConflictError（让调用方显式决定
+    revise / skip，不能静默返回旧版）
+  - 否则创建新 snapshot + 全部 N 行 UniverseMember
 
-注意：
-- 严格按 trading_day 查，禁止调用「今天」/「current snapshot」。
-  即使要最新，也要明确传 trading_day=今天；这是 anti-survivorship-bias 强制约束。
+- 单事务约束：本服务的所有方法都只 flush() 不 commit()，由调用方（sync_service
+  或 API 层）控制 commit 边界。失败时整个事务回滚，Security 写入也会一起撤销。
+
+- point-in-time 约束：trading_day 不能晚于 as_of_date+1，也不能早于 provider 的
+  earliest data date。禁止用当前数据生成过去快照。
+
+- 防 survivorship bias：member 的业务字段（name / exchange / board / sector /
+  is_st / listing_date / delisted_date / trading_status）全部从 Security 拷贝，
+  不 JOIN 当前 Security 表。Security 修改/删除不影响历史 member。
 """
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Sequence
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.database.models import (
+    HistoryIngestBatch,
     Security,  # noqa: F401  ← snapshot 创建时仍需要 Security 拷贝业务字段
     UniverseMember,
     UniverseSnapshot,
@@ -36,6 +44,18 @@ from app.universe.exclusion import (
 from app.time_utils import utc_now
 
 logger = logging.getLogger(__name__)
+
+
+class SnapshotConflictError(Exception):
+    """同 trading_day 已有 snapshot 但内容（source_provider / total_count /
+    source_synced_at）发生变化。
+
+    不允许静默返回旧版：调用方必须显式决定 revise / skip / overwrite。
+    """
+
+
+class InvalidTradingDayError(Exception):
+    """trading_day 违反 point-in-time 约束（晚于 as_of_date+1 或早于最早数据日）。"""
 
 
 @dataclass(frozen=True)
@@ -53,13 +73,19 @@ class MemberView:
     is_included: bool
     exclude_reason: str | None
     sort_rank: int
+    board: str = "unknown"
     listing_date: date | None = None
     delisted_date: date | None = None
     trading_status: str = "active"
+    audit_reason: str | None = None
 
 
 class UniverseSnapshotService:
-    """每个实例绑定一个 Session。"""
+    """每个实例绑定一个 Session。
+
+    重要：本服务**不调用 self._db.commit()**。所有写操作都用 flush()，
+    事务边界由调用方控制。这是与 sync_service 真正原子的关键。
+    """
 
     def __init__(
         self,
@@ -78,11 +104,28 @@ class UniverseSnapshotService:
         trading_day: date,
         source_provider: str,
         source_synced_at: datetime | None = None,
+        *,
+        as_of_date: date | None = None,
+        total_count_hint: int | None = None,
+        force_overwrite: bool = False,
     ) -> UniverseSnapshot:
-        """幂等：若该 trading_day 已有 snapshot 则返回；否则新建。
+        """幂等 + 冲突检测版 snapshot 创建。
 
-        新建时按当前 Security 表的状态做一次全面评估，N 行 N 列。
+        Args:
+            trading_day: 交易日 YYYY-MM-DD
+            source_provider: 主数据源（akshare / mock）
+            source_synced_at: 主数据拉取时间（UTC）
+            as_of_date: Provider 拉数据的截止日（ProviderError 必传；point-in-time 校验用）
+            total_count_hint: 拉取记录数（用于冲突检测；None 时不校验 total_count）
+            force_overwrite: True → 冲突时静默覆盖；False → 抛 SnapshotConflictError
+
+        Raises:
+            InvalidTradingDayError: trading_day > as_of_date+1 或 trading_day 太早
+            SnapshotConflictError: 同 day 内容变化且未 force_overwrite
         """
+        # ───── point-in-time 校验 ─────
+        self._validate_trading_day(trading_day, as_of_date)
+
         existing = (
             self._db.execute(
                 select(UniverseSnapshot).where(
@@ -93,14 +136,46 @@ class UniverseSnapshotService:
             .first()
         )
         if existing is not None:
-            return existing
+            # ───── 同 day 冲突检测 ─────
+            same_source = existing.source_provider == source_provider
+            same_synced = (
+                source_synced_at is None
+                or existing.source_synced_at == source_synced_at
+            )
+            same_total = (
+                total_count_hint is None
+                or existing.total_count == total_count_hint
+            )
+            if same_source and same_synced and same_total:
+                # 内容完全一致 → 幂等返回
+                return existing
+            if not force_overwrite:
+                raise SnapshotConflictError(
+                    f"trading_day={trading_day} 已有 snapshot 但内容变化："
+                    f"existing=(provider={existing.source_provider}, "
+                    f"synced_at={existing.source_synced_at}, total={existing.total_count}) vs "
+                    f"new=(provider={source_provider}, synced_at={source_synced_at}, "
+                    f"total={total_count_hint})；调用 force_overwrite=True 显式覆盖，"
+                    "或调用 delete_snapshot(trading_day) 先清空"
+                )
+            # force_overwrite：先删旧的，递归创建新的
+            logger.warning(
+                "snapshot trading_day=%s 强制覆盖：existing=(p=%s, t=%s) vs new=(p=%s, t=%s)",
+                trading_day,
+                existing.source_provider,
+                existing.total_count,
+                source_provider,
+                total_count_hint,
+            )
+            self._db.delete(existing)
+            self._db.flush()
 
         # 收集所有当前 Security
         all_securities: list[Security] = list(
             self._db.execute(select(Security)).scalars().all()
         )
 
-        # 计算长期停牌集合（合并进 excluded）
+        # 计算长期停牌集合（仅当有 history_ingest_batches 覆盖时才判 confirmed）
         long_susp = find_long_suspension_symbols(
             self._db, as_of=trading_day, threshold_days=self._threshold
         )
@@ -117,19 +192,17 @@ class UniverseSnapshotService:
             source_synced_at=source_synced_at,
         )
         self._db.add(snap)
-        self._db.flush()  # 拿到 snap.id
+        self._db.flush()  # 拿到 snap.id；不 commit
 
         included = 0
         excluded = 0
         for rank, dec in enumerate(decisions):
-            # 默认从 ExclusionEngine 取值（delisted/suspended/...）
             final_reason = dec.reason
 
-            # 长期停牌的 3 状态区分（迁移 0009 + 修复 P1）：
+            # 长期停牌的 3 状态：
             #  - confirmed_long_suspension：is_included=False, exclude_reason="long_suspension"
-            #  - incomplete_history      ：审计标签，存到 audit_reason，is_included 保持默认
-            #  - provider_unknown        ：审计标签，存到 audit_reason，is_included 保持默认
-            #  - ok（无异常）           ：is_included=True,  exclude_reason=None
+            #  - incomplete_history      ：审计标签，audit_reason 记录，is_included 不变
+            #  - provider_unknown        ：审计标签，audit_reason 记录，is_included 不变
             long_susp_state = get_long_suspension_state(
                 self._db,
                 dec.symbol,
@@ -137,21 +210,21 @@ class UniverseSnapshotService:
                 threshold_days=self._threshold,
             )
             if long_susp_state == "confirmed_long_suspension":
-                # 仅 confirmed 才改变 is_included
                 final_reason = "long_suspension"
-            # incomplete_history / provider_unknown 是审计标签（不再决定 is_included）
-            # 它们会让 UniverseMember.audit_reason 写入（通过 get_membership 暴露），
-            # selection / paper trading 可按需进一步过滤
 
-            is_included = final_reason is None
-
-            # 关联 Security — 必须存在（sync 必须先跑过）
+            # 组合 audit_reason：long_susp 状态 + listing_date 缺失
+            audit_bits: list[str] = []
+            if long_susp_state != "ok":
+                audit_bits.append(long_susp_state)
+            # 这里需要 sec 来判断 listing_date；先在循环内取一次
             sec = self._db.get(Security, dec.symbol)
             if sec is None:
-                # 防御：snapshot 时间点 security 突然不存在（极端 race）
-                # 这种情况下 attach 一个 placeholder 不可行，跳过并记日志
                 logger.warning("Snapshot skip missing security: %s", dec.symbol)
                 continue
+            if sec.listing_date is None:
+                audit_bits.append("listing_date_unknown")
+
+            is_included = final_reason is None
 
             member = UniverseMember(
                 snapshot_id=snap.id,
@@ -160,18 +233,16 @@ class UniverseSnapshotService:
                 is_included=is_included,
                 exclude_reason=final_reason,
                 sort_rank=rank,
-                # ───────── 不可变业务字段（迁移 0009） ─────────
-                # 在 snapshot 时一次性从 Security 拷贝；后续 Security 表的
-                # 修改或删除不影响这一行的业务字段。
+                # ───────── 不可变业务字段（迁移 0009/0010） ─────────
                 name=sec.name,
                 exchange=sec.exchange,
+                board=sec.board,  # 迁移 0010
                 sector=sec.sector,
                 is_st=sec.is_st,
                 listing_date=sec.listing_date,
                 delisted_date=sec.delisted_date,
                 trading_status=sec.trading_status,
-                # 审计标签：记录 long_suspension 状态（区分 3 种）
-                audit_reason=long_susp_state if long_susp_state != "ok" else None,
+                audit_reason=",".join(audit_bits) if audit_bits else None,
             )
             self._db.add(member)
             if is_included:
@@ -181,7 +252,8 @@ class UniverseSnapshotService:
 
         snap.included_count = included
         snap.excluded_count = excluded
-        self._db.commit()
+        # 注意：这里不 commit。调用方在 sync 顶层统一 commit / rollback
+        self._db.flush()
         self._db.refresh(snap)
         return snap
 
@@ -225,13 +297,7 @@ class UniverseSnapshotService:
     ) -> list[MemberView]:
         """按 trading_day 查成员。strict as_of 防幸存者偏差。
 
-        Args:
-            include_only:
-                - True  → 只返回包含（is_included=True）
-                - False → 只返回排除
-                - None  → 全部
-            exchange: 过滤 SH / SZ / BJ（None 不过滤）
-            exclude_reasons: 对 is_included=False 的成员再按 exclude_reason 过滤
+        直接读 UniverseMember 不可变字段，不再 JOIN 当前 Security。
         """
         snap = (
             self._db.execute(
@@ -245,8 +311,6 @@ class UniverseSnapshotService:
         if snap is None:
             return []
 
-        # 直接读 UniverseMember 不可变字段，不再 JOIN 当前 Security。
-        # 这是迁移 0009 引入的核心修复：防 survivorship bias 漂移。
         stmt = select(UniverseMember).where(UniverseMember.snapshot_id == snap.id)
         if include_only is True:
             stmt = stmt.where(UniverseMember.is_included.is_(True))
@@ -268,9 +332,11 @@ class UniverseSnapshotService:
                 is_included=m.is_included,
                 exclude_reason=m.exclude_reason,
                 sort_rank=m.sort_rank,
+                board=m.board or "unknown",
                 listing_date=m.listing_date,
                 delisted_date=m.delisted_date,
                 trading_status=m.trading_status or "active",
+                audit_reason=m.audit_reason,
             )
             for m in rows
         ]
@@ -283,3 +349,29 @@ class UniverseSnapshotService:
             .limit(1)
         ).scalar_one_or_none()
         return row
+
+    # ───────── internal ─────────
+
+    @staticmethod
+    def _validate_trading_day(trading_day: date, as_of_date: date | None) -> None:
+        """point-in-time 校验：trading_day 不能晚于 as_of_date+1，也不能早于 1990-12-19。
+
+        晚于 as_of_date+1 → 未来日期（伪造未来快照）
+        早于 1990-12-19 → 早于 A 股最早交易日
+        """
+        # 1) trading_day 不能晚于 as_of_date + 1 天（容忍时区 + 收盘后当晚算次日）
+        if as_of_date is not None and trading_day > as_of_date + timedelta(days=1):
+            raise InvalidTradingDayError(
+                f"trading_day={trading_day} 晚于 as_of_date={as_of_date}+1（伪造未来快照）"
+            )
+        # 2) trading_day 不能晚于今天 + 1（无 as_of_date 时的兜底）
+        if as_of_date is None and trading_day > utc_now().date() + timedelta(days=1):
+            raise InvalidTradingDayError(
+                f"trading_day={trading_day} 晚于今天+1（伪造未来快照）"
+            )
+        # 3) A 股最早交易日 1990-12-19（上海老八股）
+        earliest = date(1990, 12, 19)
+        if trading_day < earliest:
+            raise InvalidTradingDayError(
+                f"trading_day={trading_day} 早于 A 股最早交易日 {earliest}"
+            )

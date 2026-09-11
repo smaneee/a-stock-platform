@@ -9,6 +9,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Date,
     DateTime,
@@ -357,6 +358,8 @@ class UniverseMember(Base):
     # 这些字段在 snapshot 时从 Security 拷贝，断绝 JOIN 漂移。
     name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     exchange: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # board 不可变字段（迁移 0010 新增）：main / gem / star / bj / b_share / unknown
+    board: Mapped[str | None] = mapped_column(String(16), nullable=True)
     sector: Mapped[str | None] = mapped_column(String(50), nullable=True)
     is_st: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     listing_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -394,6 +397,40 @@ class DataSourceHealth(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+
+class HistoryIngestBatch(Base):
+    """历史数据 ingest 批次记录。
+
+    记录每次历史数据拉取的覆盖范围（start/end + 实际拉到的 symbol 数 + 完成的 bar 数）。
+    long_suspension 判定必须以「最近一次成功的 ingest 批次覆盖」为前提：
+    没有覆盖就只能是 incomplete_history，不能判 confirmed。
+    """
+
+    __tablename__ = "history_ingest_batches"
+    __table_args__ = (
+        Index("ix_history_ingest_batches_status_completed", "status", "completed_at"),
+        Index("ix_history_ingest_batches_source_completed", "source", "completed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)  # akshare / mock / tencent
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="running"
+    )  # running / succeeded / failed
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    requested_symbols: Mapped[int] = mapped_column(Integer, default=0)
+    completed_symbols: Mapped[int] = mapped_column(Integer, default=0)
+    total_bars: Mapped[int] = mapped_column(Integer, default=0)
+    coverage_ratio: Mapped[float] = mapped_column(
+        Float, default=0.0
+    )  # completed_symbols / requested_symbols
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 拉到的 symbol 列表（JSON 数组），用于 long_suspension 覆盖检查
+    covered_symbols: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
 
 class PortfolioBacktest(Base):

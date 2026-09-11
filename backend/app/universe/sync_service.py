@@ -38,6 +38,7 @@ from app.universe.providers import (
     UniverseProvider,
     build_provider_by_name,
 )
+from app.universe.snapshot_service import UniverseSnapshotService  # noqa: F401 顶部 import，避免 conditional import 引发 UnboundLocalError
 
 logger = logging.getLogger(__name__)
 
@@ -134,13 +135,17 @@ class UniverseSyncService:
     async def sync(self, *, create_snapshot: bool = False, trading_day=None) -> SyncResult:
         """同步全部证券主数据。
 
+        **真原子（修复 P0）**：
+        - _persist_records / _record_provider_health / get_or_create_snapshot 全部
+          只 flush() 不 commit()，本方法顶层用 try/except/rollback 统一事务边界
+        - 任何一个阶段失败 → 整个事务回滚 → Security 写入撤销
+        - 全部成功 → 一次 commit
+
         行为：
         1) 顺序尝试 self._providers（按 settings.universe_provider_list 顺序）
         2) 每个 provider 内最多 self._max_retries 次（指数退避 + 抖动）
         3) 任一 provider 一次成功即止
         4) 全部失败 → 抛 AllProvidersFailedError（每个 provider 的失败都写 health 表）
-        5) **成功后立即在同一个 Session 中创建当日 snapshot**（除非 create_snapshot=False）
-           — 这是 /sync → /filter 闭环的硬性保证；不在 snapshot 阶段的失败也要让整体失败。
 
         严禁：真实源失败后静默回落到 mock —— 这是用户 P0 反馈的核心。
         """
@@ -151,38 +156,60 @@ class UniverseSyncService:
             try:
                 records = await self._fetch_with_retry(provider)
             except ProviderError as exc:
+                # 失败路径：单独提交 health 记录（审计跟踪需要保留），
+                # 然后让 session 回到干净状态，避免污染下一个 provider。
                 logger.warning("Provider %s 全部重试失败: %s", provider.source_id, exc)
                 self._record_provider_health(provider.source_id, success=False, error=str(exc))
+                self._db.commit()
                 health_snapshot[provider.source_id] = "failed"
                 continue
 
-            synced_at = utc_now()
-            new_count, upd_count = self._persist_records(records, provider.source_id)
-            self._record_provider_health(
-                provider.source_id, success=True, synced_at=synced_at
-            )
-            health_snapshot[provider.source_id] = "ok"
-            # 其余 provider 也打一次 health（标记为 "not_attempted"）以供 status API
-            for p in self._providers:
-                if p.source_id not in health_snapshot:
-                    health_snapshot[p.source_id] = "skipped"
+            try:
+                # ─────────── 真原子：所有写入都在 try/except 内 ───────────
+                synced_at = utc_now()
+                new_count, upd_count = self._persist_records(records, provider.source_id)
+                # 拿 records 里的 as_of_date 作为 snapshot 校验参考
+                as_of_date = None
+                for r in records:
+                    if r.as_of_date is not None:
+                        as_of_date = r.as_of_date
+                        break
 
-            # ───────── 原子化：sync 成功后立即在同 session 创建 snapshot ─────────
-            snapshot_id: int | None = None
-            snapshot_trading_day = None
-            if create_snapshot:
-                from app.universe.snapshot_service import UniverseSnapshotService
-                from datetime import date as _date
-
-                snap_svc = UniverseSnapshotService(self._db)
-                td = trading_day or synced_at.date() or _date.today()
-                snap = snap_svc.get_or_create_snapshot(
-                    trading_day=td,
-                    source_provider=provider.source_id,
-                    source_synced_at=synced_at,
+                self._record_provider_health(
+                    provider.source_id, success=True, synced_at=synced_at
                 )
-                snapshot_id = snap.id
-                snapshot_trading_day = snap.trading_day.isoformat()
+                health_snapshot[provider.source_id] = "ok"
+                for p in self._providers:
+                    if p.source_id not in health_snapshot:
+                        health_snapshot[p.source_id] = "skipped"
+
+                # ───────── 原子化：sync 成功后立即在同 session 创建 snapshot ─────────
+                snapshot_id: int | None = None
+                snapshot_trading_day = None
+                snap_svc = UniverseSnapshotService(self._db)
+                if create_snapshot:
+                    td = trading_day or as_of_date or synced_at.date() or _date.today()
+                    snap = snap_svc.get_or_create_snapshot(
+                        trading_day=td,
+                        source_provider=provider.source_id,
+                        source_synced_at=synced_at,
+                        as_of_date=as_of_date,
+                        total_count_hint=len(records),
+                        # sync 操作的默认语义：同 day 重复 sync 自动覆盖
+                        # （同 day 第二次 sync 的 source_synced_at 一定不同 → 必然冲突）
+                        force_overwrite=True,
+                    )
+                    snapshot_id = snap.id
+                    snapshot_trading_day = snap.trading_day.isoformat()
+
+                # ─────────── 顶层统一 commit ───────────
+                self._db.commit()
+
+            except Exception:
+                # 任何阶段失败 → 整个事务回滚（包括 Security 写入和 health 写入）
+                logger.exception("sync 流程异常，事务回滚")
+                self._db.rollback()
+                raise
 
             return SyncResult(
                 source_provider=provider.source_id,
@@ -217,16 +244,15 @@ class UniverseSyncService:
         assert last_error is not None
         raise last_error
 
-    # ───────── persist ─────────
+    # ───────── persist（重要：本方法只 flush 不 commit） ─────────
 
     def _persist_records(
         self, records: list[SecurityRecord], source: str
     ) -> tuple[int, int]:
         """写入 securities 表。返回 (新增, 更新) 计数。
 
-        不调用 SecurityMasterService — 因为我们需要更细粒度的计数
-        （区分新增与覆盖）。但仍走 ensure() 是另一个选择；这里直接
-        实现 upsert 简化测试断言。
+        **不调用 self._db.commit()** — 由 sync() 顶层控制事务边界。
+        Security 写入失败时整个事务回滚，snapshot 也会一起撤销（真原子）。
         """
         from sqlalchemy import select as _sel
 
@@ -252,10 +278,10 @@ class UniverseSyncService:
                 new_count += 1
             else:
                 upd_count += 1
-        self._db.commit()
+        self._db.flush()  # 不 commit
         return new_count, upd_count
 
-    # ───────── health ─────────
+    # ───────── health（重要：本方法只 flush 不 commit） ─────────
 
     def _record_provider_health(
         self,
@@ -264,8 +290,10 @@ class UniverseSyncService:
         synced_at: datetime | None = None,
         error: str | None = None,
     ) -> None:
-        """Upsert health row — 必须用 SQL 探查后再决定 INSERT/UPDATE，
-        避免被 session 缓存的 stale identity 导致重复插入失败。"""
+        """Upsert health row — 必须用 SQL 探查后再决定 INSERT/UPDATE。
+
+        **不调用 self._db.commit()** — 由 sync() 顶层统一提交。
+        """
         from sqlalchemy import select
 
         now = utc_now()
@@ -294,7 +322,7 @@ class UniverseSyncService:
                 row.last_status = "failed"
                 row.consecutive_failures = (row.consecutive_failures or 0) + 1
                 row.last_error = error
-        self._db.commit()
+        self._db.flush()  # 不 commit
 
     def get_provider_health(self) -> list[dict]:
         """返回所有 provider 的最新健康记录，便于 status API。"""

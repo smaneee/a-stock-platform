@@ -9,16 +9,27 @@
 2) 失败抛 ProviderError，便于 SyncService 区分成功/失败
 3) Provider 自身不带重试，重试由 SyncService 统一管理
 4) Provider 不准静默降级：失败就是失败，由调用方决定是否切下一个 provider
+5) Provider 必须通过【全市场质量门槛】：
+   - 总数 ≥ min_total（生产 3500）
+   - SH/SZ/BJ 三交易所都有覆盖
+   - 代码 6 位数字格式
+   - 重复率 ≤ 1%
+   - 关键字段（name / exchange）完整率 ≥ 99%
+   任一不达标 → ProviderError("insufficient_market_coverage", ...)，
+   18 行 / 缩量 / 异常返回 503，不得落库。
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from abc import ABC, abstractmethod
-from datetime import date
-from typing import Any
+from datetime import date, datetime, timezone
+from typing import Any, Iterable
 
 from pydantic import BaseModel
+
+from app.time_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +40,15 @@ class SecurityRecord(BaseModel):
     symbol: str
     name: str = ""
     exchange: str = ""  # sh / sz / bj
-    board: str = "unknown"
+    board: str = "unknown"  # main / gem / star / bj / unknown
     is_st: bool = False
     listing_date: date | None = None
     delisted_date: date | None = None
     trading_status: str = "active"
     sector: str | None = None
+    # 数据拉取的时间点（UTC date）。用于 point-in-time 约束：snapshot trading_day
+    # 不能晚于 as_of_date，provider 也必须明确告诉调用方"这是何时拉的数据"。
+    as_of_date: date | None = None
 
 
 class ProviderError(Exception):
@@ -57,6 +71,112 @@ class UniverseProvider(ABC):
         失败必须抛 ProviderError，不要返回 []。
         不要静默降级到 Mock — 这是调用方的责任。
         """
+
+
+# ───────────── 全市场质量门槛配置 ─────────────
+# 任一不达标即视为「缩量 / 异常返回」→ ProviderError，503 落库拒绝。
+# 数值参考 2024 年 A 股规模：沪深京合计约 5300 只，其中 SH≈2300, SZ≈2900, BJ≈250。
+# 阈值给到 3500 / 1000 / 1500 / 100，留 30% 缓冲，防止数据源临时缩量也算成功。
+MARKET_COVERAGE_MIN_TOTAL = 3500
+MARKET_COVERAGE_MIN_PER_EXCHANGE = {"SH": 1000, "SZ": 1500, "BJ": 100}
+MARKET_COVERAGE_MAX_DUPLICATE_RATE = 0.01  # 1%
+MARKET_COVERAGE_MIN_NAME_COMPLETENESS = 0.99
+MARKET_COVERAGE_MIN_EXCHANGE_COMPLETENESS = 0.99
+SYMBOL_PATTERN = re.compile(r"^\d{6}$")  # A 股代码 6 位数字
+
+
+def validate_market_coverage(
+    records: list[SecurityRecord],
+    *,
+    source_id: str = "akshare",
+) -> None:
+    """全市场质量门槛校验。
+
+    校验项（任一不达标即 ProviderError）：
+    1. 总数 ≥ MARKET_COVERAGE_MIN_TOTAL（3500）
+    2. SH/SZ/BJ 三交易所都有覆盖，且每家 ≥ MARKET_COVERAGE_MIN_PER_EXCHANGE
+    3. 代码格式（6 位数字）100%
+    4. 重复率（输入原始 records 中 symbol 重复）≤ 1%
+    5. name 完整率 ≥ 99%
+    6. exchange 完整率 ≥ 99%
+    """
+    if not records:
+        raise ProviderError(source_id, "全市场质量门槛：records 为空（不可能零只）")
+
+    total = len(records)
+    if total < MARKET_COVERAGE_MIN_TOTAL:
+        raise ProviderError(
+            source_id,
+            f"全市场质量门槛：总数 {total} < {MARKET_COVERAGE_MIN_TOTAL}（数据源缩量）",
+        )
+
+    # 代码格式 + 重复率
+    invalid_format = 0
+    seen: set[str] = set()
+    duplicate = 0
+    for r in records:
+        if not SYMBOL_PATTERN.match(r.symbol or ""):
+            invalid_format += 1
+            continue
+        if r.symbol in seen:
+            duplicate += 1
+        seen.add(r.symbol)
+
+    if invalid_format > 0:
+        raise ProviderError(
+            source_id,
+            f"全市场质量门槛：{invalid_format}/{total} 行代码不符合 6 位数字格式",
+        )
+
+    dup_rate = duplicate / total if total > 0 else 0.0
+    if dup_rate > MARKET_COVERAGE_MAX_DUPLICATE_RATE:
+        raise ProviderError(
+            source_id,
+            f"全市场质量门槛：重复率 {dup_rate:.2%} > {MARKET_COVERAGE_MAX_DUPLICATE_RATE:.2%}",
+        )
+
+    # 分交易所覆盖
+    per_exchange: dict[str, int] = {}
+    for r in records:
+        ex = (r.exchange or "").upper()
+        per_exchange[ex] = per_exchange.get(ex, 0) + 1
+
+    for ex, required in MARKET_COVERAGE_MIN_PER_EXCHANGE.items():
+        actual = per_exchange.get(ex, 0)
+        if actual < required:
+            raise ProviderError(
+                source_id,
+                f"全市场质量门槛：{ex} 覆盖 {actual} < {required}（交易所缩量）",
+            )
+
+    # name 完整率
+    name_missing = sum(1 for r in records if not (r.name or "").strip())
+    name_complete_rate = 1 - name_missing / total
+    if name_complete_rate < MARKET_COVERAGE_MIN_NAME_COMPLETENESS:
+        raise ProviderError(
+            source_id,
+            f"全市场质量门槛：name 完整率 {name_complete_rate:.2%} < "
+            f"{MARKET_COVERAGE_MIN_NAME_COMPLETENESS:.2%}（字段缩量）",
+        )
+
+    # exchange 完整率
+    ex_missing = sum(1 for r in records if not (r.exchange or "").strip())
+    ex_complete_rate = 1 - ex_missing / total
+    if ex_complete_rate < MARKET_COVERAGE_MIN_EXCHANGE_COMPLETENESS:
+        raise ProviderError(
+            source_id,
+            f"全市场质量门槛：exchange 完整率 {ex_complete_rate:.2%} < "
+            f"{MARKET_COVERAGE_MIN_EXCHANGE_COMPLETENESS:.2%}",
+        )
+
+    logger.info(
+        "全市场质量门槛通过：total=%d, sh=%d, sz=%d, bj=%d, duplicate=%d",
+        total,
+        per_exchange.get("SH", 0),
+        per_exchange.get("SZ", 0),
+        per_exchange.get("BJ", 0),
+        duplicate,
+    )
 
 
 class MockUniverseProvider(UniverseProvider):
@@ -108,18 +228,23 @@ class MockUniverseProvider(UniverseProvider):
     )
 
     async def fetch_all(self) -> list[SecurityRecord]:
+        as_of = utc_now().date()
         records: list[SecurityRecord] = []
         for row in self._SEED:
+            code = row["symbol"]
+            exchange = row.get("exchange", "")
             records.append(
                 SecurityRecord(
-                    symbol=row["symbol"],
+                    symbol=code,
                     name=row["name"],
-                    exchange=row.get("exchange", ""),
+                    exchange=exchange,
+                    board=_infer_board(code, exchange),
                     listing_date=date.fromisoformat(row["listing_date"]) if row.get("listing_date") else None,
                     delisted_date=date.fromisoformat(row["delisted_date"]) if row.get("delisted_date") else None,
                     is_st=row.get("is_st", False),
                     trading_status=row.get("trading_status", "active"),
                     sector=row.get("sector"),
+                    as_of_date=as_of,
                 )
             )
         return records
@@ -149,6 +274,42 @@ def _normalize_exchange(symbol: str) -> str:
     if head in ("4", "8"):
         return "BJ"
     return ""
+
+
+def _infer_board(symbol: str, exchange: str) -> str:
+    """根据代码前缀推断板块（不可变字段，snapshot 时一次性拷贝）。
+
+    规则（业界惯例 + AKShare 文档）：
+      - SH 600/601/603/605 → main（主板，含 605 主板新股）
+      - SH 688            → star（科创板）
+      - SH 9              → b_share（B 股）
+      - SZ 000/001/002/003 → main（主板，含 003 主板新股）
+      - SZ 300/301        → gem（创业板）
+      - SZ 15             → b_share（B 股）
+      - BJ 8/4            → bj（北交所，83/87/43 等）
+    """
+    s = str(symbol or "").strip()
+    ex = (exchange or "").upper()
+    if not s:
+        return "unknown"
+    head3 = s[:3]
+    head2 = s[:2]
+    head1 = s[0]
+    if ex == "SH":
+        if head3.startswith("688"):
+            return "star"
+        if head1 == "9":
+            return "b_share"
+        return "main"  # 600/601/603/605
+    if ex == "SZ":
+        if head3 in ("300", "301"):
+            return "gem"
+        if head1 == "2":
+            return "b_share"
+        return "main"  # 000/001/002/003
+    if ex == "BJ":
+        return "bj"
+    return "unknown"
 
 
 def _parse_date(value: Any) -> date | None:
@@ -226,7 +387,16 @@ class AkshareUniverseProvider(UniverseProvider):
             # akshare 自身异常（网络、解析、字段缺失等） → 统一包成 ProviderError
             raise ProviderError(self.source_id, f"AKShare 调用失败: {exc}")
 
-        return self._records_from_dataframe(df)
+        # 标注 as_of_date（用于 point-in-time 约束）
+        as_of = utc_now().date()
+        records = self._records_from_dataframe(df, as_of_date=as_of)
+
+        # ─────────── 全市场质量门槛（必须在落库前硬拦截） ───────────
+        # 18 行 / 缩量 / 缺交易所覆盖 / 代码格式异常 → ProviderError，
+        # 上层 SyncService 会让 /sync 返回 503，**不会**落库。
+        validate_market_coverage(records, source_id=self.source_id)
+
+        return records
 
     # ───────────── 阻塞调用（线程池内执行） ─────────────
 
@@ -258,7 +428,9 @@ class AkshareUniverseProvider(UniverseProvider):
 
     # ───────────── dataframe → SecurityRecord ─────────────
 
-    def _records_from_dataframe(self, rows: list[dict]) -> list[SecurityRecord]:
+    def _records_from_dataframe(
+        self, rows: list[dict], as_of_date: date | None = None
+    ) -> list[SecurityRecord]:
         records: list[SecurityRecord] = []
         seen: set[str] = set()
         skipped_missing_code = 0
@@ -278,6 +450,7 @@ class AkshareUniverseProvider(UniverseProvider):
             seen.add(code)
 
             exchange = _normalize_exchange(code)
+            board = _infer_board(code, exchange)
             listing_date = _parse_date(
                 row.get("ipo_date")
                 or row.get("listing_date")
@@ -295,10 +468,12 @@ class AkshareUniverseProvider(UniverseProvider):
                     symbol=code,
                     name=str(name).strip(),
                     exchange=exchange,
+                    board=board,
                     listing_date=listing_date,
                     delisted_date=delisted_date,
                     trading_status=trading_status,
                     is_st=is_st,
+                    as_of_date=as_of_date,
                 )
             )
 

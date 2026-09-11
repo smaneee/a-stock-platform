@@ -54,11 +54,25 @@ def _reset_app_engine_state():
 @pytest.fixture
 def db_session():
     """提供独立的内存 SQLite 会话。"""
+    from sqlalchemy import event, text
+
     test_engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    # 每个新连接自动开启 FK 约束（不然 0009 迁移里 NO ACTION 失效，
+    # 删 Security 时会静默清空历史 UniverseMember）。
+    def _enable_fk(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+
+    event.listen(test_engine, "connect", _enable_fk)
+
     Base.metadata.create_all(bind=test_engine)
     TestingSession = sessionmaker(bind=test_engine, autoflush=False, autocommit=False)
     session = TestingSession()

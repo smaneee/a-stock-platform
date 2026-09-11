@@ -75,12 +75,18 @@ async def sync(
 
     原子化：sync 成功后立即在同一个 session 中创建当日 UniverseSnapshot，
     使 /sync 之后 /filter 必定可用 — 这是用户 P0 闭环的硬性要求。
+
+    同 day 重复 sync：默认 force_overwrite=True（这是 sync 操作的预期语义，
+    每天同步多次的常见场景）；如果不想覆盖，调用方需显式传 force_overwrite=False。
     """
     from datetime import date as _date
 
     sync_svc = UniverseSyncService(db)
     try:
-        result = await sync_svc.sync(create_snapshot=True, trading_day=_date.today())
+        result = await sync_svc.sync(
+            create_snapshot=True,
+            trading_day=_date.today(),
+        )
     except AllProvidersFailedError as exc:
         raise HTTPException(
             status_code=503, detail={
@@ -154,10 +160,14 @@ def get_members(
                 "symbol": m.symbol,
                 "name": m.name,
                 "exchange": m.exchange,
+                "board": m.board,
                 "is_st": m.is_st,
                 "is_included": m.is_included,
                 "exclude_reason": m.exclude_reason,
+                "audit_reason": m.audit_reason,
                 "sort_rank": m.sort_rank,
+                "listing_date": m.listing_date.isoformat() if m.listing_date else None,
+                "trading_status": m.trading_status,
             }
             for m in members
         ],
