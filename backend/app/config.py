@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     # 同步重试参数（每个 provider 内最多 max_retries+1 次尝试）
     universe_max_retries: int = 2
     universe_backoff_base_ms: int = 50
+    history_ingest_max_concurrency: int = 4
 
     # 各数据源密钥（仅通过环境变量提供）
     qmt_api_key: str = "YOUR_API_KEY"

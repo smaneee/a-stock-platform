@@ -283,6 +283,25 @@ export interface SelectionResult {
   disclaimer: string;
 }
 
+export interface HistoryIngestTask {
+  id: number;
+  snapshot_id: number | null;
+  status: "queued" | "running" | "succeeded" | "partial" | "failed" | "cancelled";
+  progress: number;
+  start_date: string;
+  end_date: string;
+  adjust: string;
+  requested_symbols: number;
+  completed_symbols: number;
+  coverage_ratio: number;
+  total_bars: number;
+  failed_count: number;
+  failed_symbols: Record<string, string>;
+  last_error: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
 /** 统一 API 错误格式。 */
 export interface ApiError {
   detail: string;

@@ -22,6 +22,7 @@ import type {
   Watchlist,
   AssetPoint,
   SelectionResult,
+  HistoryIngestTask,
 } from "./types";
 
 const BASE = "/api";
@@ -87,6 +88,22 @@ export const rankStocks = (body: {
   request<SelectionResult>("/selections/rank", {
     method: "POST",
     body: JSON.stringify(body),
+  });
+
+export const createHistoryIngest = (tradingDay: string) =>
+  request<HistoryIngestTask>("/history-ingest", {
+    method: "POST",
+    body: JSON.stringify({ trading_day: tradingDay, lookback_days: 365 }),
+  });
+
+export const listHistoryIngest = () =>
+  request<{ items: HistoryIngestTask[] }>("/history-ingest", {
+    params: { limit: 5 },
+  });
+
+export const cancelHistoryIngest = (taskId: number) =>
+  request<HistoryIngestTask>(`/history-ingest/${taskId}/cancel`, {
+    method: "POST",
   });
 
 // ---------- 行情 ----------

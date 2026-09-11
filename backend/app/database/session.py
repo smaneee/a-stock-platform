@@ -28,6 +28,9 @@ def _enable_sqlite_foreign_keys(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
     try:
         cursor.execute("PRAGMA foreign_keys=ON")
+        # History ingest uses a few short-lived writer sessions concurrently.
+        # Wait briefly for the writer lock instead of failing immediately.
+        cursor.execute("PRAGMA busy_timeout=5000")
     finally:
         cursor.close()
 

@@ -17,6 +17,7 @@ from starlette.responses import JSONResponse
 
 from app.api.backtests import router as backtests_router
 from app.api.health import router as health_router
+from app.api.history_ingest import router as history_ingest_router
 from app.api.metrics import router as metrics_router
 from app.api.paper_accounts import router as paper_router
 from app.api.portfolio_backtests import router as portfolio_backtests_router
@@ -43,6 +44,7 @@ from app.realtime.signal_engine import SignalEngine
 from app.realtime.websocket_manager import ConnectionManager
 from app.strategies import registry
 from app.tasks.portfolio_worker import PortfolioBacktestWorker
+from app.tasks.history_ingest_worker import HistoryIngestWorker
 from app.tasks.worker import BacktestWorker
 from app.validation import sanitize_symbols
 
@@ -181,10 +183,14 @@ async def lifespan(app: FastAPI):
     portfolio_worker: PortfolioBacktestWorker = app.state.portfolio_backtest_worker
     await portfolio_worker.start()
 
+    history_ingest_worker: HistoryIngestWorker = app.state.history_ingest_worker
+    await history_ingest_worker.start()
+
     logger.info("A 股实时分析平台后端已启动")
     try:
         yield
     finally:
+        await history_ingest_worker.stop()
         await worker.stop()
         await portfolio_worker.stop()
         await settlement_scheduler.stop()
@@ -237,6 +243,10 @@ def create_app() -> FastAPI:
     portfolio_backtest_worker = PortfolioBacktestWorker(
         provider_manager=provider_manager
     )
+    history_ingest_worker = HistoryIngestWorker(
+        provider_manager=provider_manager,
+        max_concurrency=settings.history_ingest_max_concurrency,
+    )
 
     app.state.provider_manager = provider_manager
     # 把当前实际在跑的 provider 注册到 metrics（决定 data_status）
@@ -247,11 +257,13 @@ def create_app() -> FastAPI:
     app.state.scheduler = scheduler
     app.state.backtest_worker = backtest_worker
     app.state.portfolio_backtest_worker = portfolio_backtest_worker
+    app.state.history_ingest_worker = history_ingest_worker
     app.state.settlement_scheduler = settlement_scheduler
 
     # 注册路由
     app.include_router(health_router)
     app.include_router(metrics_router)
+    app.include_router(history_ingest_router)
     app.include_router(universe_router)
     app.include_router(quotes_router)
     app.include_router(selections_router)

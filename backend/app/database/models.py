@@ -414,10 +414,18 @@ class HistoryIngestBatch(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    source: Mapped[str] = mapped_column(String(32), nullable=False)  # akshare / mock / tencent
+    snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("universe_snapshots.id", ondelete="NO ACTION"), nullable=True
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False)  # provider_manager / mock
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="running"
-    )  # running / succeeded / failed
+    )  # queued / running / succeeded / partial / failed / cancelled
+    adjust: Mapped[str] = mapped_column(String(8), nullable=False, default="none")
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cancel_requested: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
     requested_symbols: Mapped[int] = mapped_column(Integer, default=0)
@@ -431,6 +439,10 @@ class HistoryIngestBatch(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 拉到的 symbol 列表（JSON 数组），用于 long_suspension 覆盖检查
     covered_symbols: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # queued 任务必须持久化请求集合，服务重启后才能恢复执行
+    requested_symbol_list: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # symbol -> 简短错误摘要，便于局部重试与前端诊断
+    failed_symbols: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class SelectionRun(Base):

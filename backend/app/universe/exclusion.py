@@ -121,7 +121,7 @@ def _get_recent_history_ingest(
     batches = (
         db.execute(
             select(HistoryIngestBatch)
-            .where(HistoryIngestBatch.status == "succeeded")
+            .where(HistoryIngestBatch.status.in_(("succeeded", "partial")))
             .where(HistoryIngestBatch.completed_at.isnot(None))
             .where(HistoryIngestBatch.end_date >= as_of - timedelta(days=1))
             .where(
