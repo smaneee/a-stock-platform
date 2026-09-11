@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   cancelHistoryIngest,
   createHistoryIngest,
+  evaluateSelection,
   listHistoryIngest,
   listUniverseSnapshots,
   rankStocks,
@@ -21,6 +22,10 @@ export default function SelectionPage() {
   const ranking = useMutation({
     mutationFn: rankStocks,
   });
+  const evaluation = useMutation({
+    mutationFn: (runId: number) => evaluateSelection(runId, 20),
+  });
+  const displayedResult = evaluation.data ?? ranking.data;
   const ingestTasks = useQuery({
     queryKey: ["history-ingest"],
     queryFn: listHistoryIngest,
@@ -129,18 +134,39 @@ export default function SelectionPage() {
         )}
       </div>
 
-      {ranking.isError && (
+      {(ranking.isError || evaluation.isError) && (
         <div className="rounded border border-rose-900 bg-rose-950/30 p-4 text-sm text-rose-300">
-          {ranking.error instanceof Error ? ranking.error.message : "选股失败"}
+          {evaluation.error instanceof Error
+            ? evaluation.error.message
+            : ranking.error instanceof Error
+              ? ranking.error.message
+              : "选股或评估失败"}
         </div>
       )}
 
-      {ranking.data && (
+      {displayedResult && (
         <div className="space-y-3">
-          <div className="text-sm text-slate-400">
-            运行 #{ranking.data.run_id} · 基础候选 {ranking.data.total_candidates} ·
-            数据合格 {ranking.data.eligible_count}
+          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-400">
+            <span>
+              运行 #{displayedResult.run_id} · 基础候选 {displayedResult.total_candidates} ·
+              数据合格 {displayedResult.eligible_count}
+            </span>
+            <button
+              type="button"
+              disabled={evaluation.isPending}
+              onClick={() => evaluation.mutate(displayedResult.run_id)}
+              className="ml-auto rounded border border-slate-700 px-3 py-1.5 text-xs hover:border-sky-500 disabled:opacity-40"
+            >
+              {evaluation.isPending ? "评估中..." : "验证未来20日表现"}
+            </button>
           </div>
+          {displayedResult.evaluation_coverage !== null && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <Metric label="评估覆盖率" value={percent(displayedResult.evaluation_coverage)} />
+              <Metric label="平均未来收益" value={percent(displayedResult.mean_forward_return ?? 0)} />
+              <Metric label="候选胜率" value={percent(displayedResult.forward_win_rate ?? 0)} />
+            </div>
+          )}
           <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-xs text-slate-500 bg-slate-950">
@@ -154,10 +180,11 @@ export default function SelectionPage() {
                   <th className="px-3 py-2 text-right">60日回撤</th>
                   <th className="px-3 py-2 text-right">均成交额</th>
                   <th className="px-3 py-2 text-right">收盘价</th>
+                  <th className="px-3 py-2 text-right">未来20日</th>
                 </tr>
               </thead>
               <tbody>
-                {ranking.data.candidates.map((item) => (
+                {displayedResult.candidates.map((item) => (
                   <tr key={item.symbol} className="border-t border-slate-800">
                     <td className="px-3 py-2 text-sky-300">#{item.rank}</td>
                     <td className="px-3 py-2">
@@ -173,6 +200,9 @@ export default function SelectionPage() {
                     <td className="px-3 py-2 text-right">{percent(item.max_drawdown_60)}</td>
                     <td className="px-3 py-2 text-right">{(item.average_amount_20 / 1e6).toFixed(1)}M</td>
                     <td className="px-3 py-2 text-right">{item.last_price.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right">
+                      {item.forward_return === null ? "—" : percent(item.forward_return)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -180,6 +210,15 @@ export default function SelectionPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-slate-800 bg-slate-900 p-3">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 text-lg font-semibold">{value}</div>
     </div>
   );
 }

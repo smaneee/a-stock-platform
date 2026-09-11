@@ -8,7 +8,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database.session import get_db
-from app.selection import SelectionConfig, SelectionError, SelectionResult, SelectionService
+from app.selection import (
+    SelectionConfig,
+    SelectionError,
+    SelectionEvaluationService,
+    SelectionResult,
+    SelectionService,
+)
 
 router = APIRouter(prefix="/api/selections", tags=["selections"])
 
@@ -29,6 +35,12 @@ def _serialize(result: SelectionResult) -> dict:
         "trading_day": result.trading_day.isoformat(),
         "total_candidates": result.total_candidates,
         "eligible_count": result.eligible_count,
+        "evaluation_horizon": result.evaluation_horizon,
+        "evaluation_coverage": result.evaluation_coverage,
+        "mean_forward_return": result.mean_forward_return,
+        "median_forward_return": result.median_forward_return,
+        "forward_win_rate": result.forward_win_rate,
+        "evaluated_at": result.evaluated_at.isoformat() if result.evaluated_at else None,
         "candidates": [
             {
                 "symbol": item.symbol,
@@ -44,6 +56,9 @@ def _serialize(result: SelectionResult) -> dict:
                 "average_amount_20": item.average_amount_20,
                 "last_price": item.last_price,
                 "bar_count": item.bar_count,
+                "entry_date": item.entry_date.isoformat() if item.entry_date else None,
+                "exit_date": item.exit_date.isoformat() if item.exit_date else None,
+                "forward_return": item.forward_return,
             }
             for item in result.candidates
         ],
@@ -76,3 +91,22 @@ def get_selection_run(run_id: int, db: Session = Depends(get_db)) -> dict:
         return _serialize(SelectionService(db).get_run(run_id))
     except SelectionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{run_id}/evaluate")
+def evaluate_selection_run(
+    run_id: int,
+    horizon_days: int = 20,
+    min_coverage_ratio: float = 0.8,
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        result = SelectionEvaluationService(db).evaluate(
+            run_id,
+            horizon_days=horizon_days,
+            min_coverage_ratio=min_coverage_ratio,
+        )
+    except SelectionError as exc:
+        status_code = 404 if "不存在" in str(exc) else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return _serialize(result)

@@ -90,6 +90,12 @@ export const rankStocks = (body: {
     body: JSON.stringify(body),
   });
 
+export const evaluateSelection = (runId: number, horizonDays = 20) =>
+  request<SelectionResult>(`/selections/${runId}/evaluate`, {
+    method: "POST",
+    params: { horizon_days: horizonDays, min_coverage_ratio: 0.8 },
+  });
+
 export const createHistoryIngest = (tradingDay: string) =>
   request<HistoryIngestTask>("/history-ingest", {
     method: "POST",

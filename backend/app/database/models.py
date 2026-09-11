@@ -463,6 +463,12 @@ class SelectionRun(Base):
     config_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     total_candidates: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     eligible_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    evaluation_horizon: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evaluation_coverage: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mean_forward_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    median_forward_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    forward_win_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     candidates: Mapped[list["SelectionCandidate"]] = relationship(  # noqa: F821
@@ -498,6 +504,9 @@ class SelectionCandidate(Base):
     average_amount_20: Mapped[float] = mapped_column(Float, nullable=False)
     last_price: Mapped[float] = mapped_column(Float, nullable=False)
     bar_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    entry_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    exit_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    forward_return: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     run: Mapped[SelectionRun] = relationship(back_populates="candidates")
 

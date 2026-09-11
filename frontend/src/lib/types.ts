@@ -272,6 +272,9 @@ export interface SelectionCandidate {
   average_amount_20: number;
   last_price: number;
   bar_count: number;
+  entry_date: string | null;
+  exit_date: string | null;
+  forward_return: number | null;
 }
 
 export interface SelectionResult {
@@ -279,6 +282,12 @@ export interface SelectionResult {
   trading_day: string;
   total_candidates: number;
   eligible_count: number;
+  evaluation_horizon: number | null;
+  evaluation_coverage: number | null;
+  mean_forward_return: number | null;
+  median_forward_return: number | null;
+  forward_win_rate: number | null;
+  evaluated_at: string | null;
   candidates: SelectionCandidate[];
   disclaimer: string;
 }

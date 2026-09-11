@@ -7,7 +7,7 @@ import math
 import statistics
 from bisect import bisect_left, bisect_right
 from dataclasses import asdict, dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -63,6 +63,9 @@ class SelectionCandidateView:
     average_amount_20: float
     last_price: float
     bar_count: int
+    entry_date: date | None = None
+    exit_date: date | None = None
+    forward_return: float | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +75,12 @@ class SelectionResult:
     total_candidates: int
     eligible_count: int
     candidates: list[SelectionCandidateView]
+    evaluation_horizon: int | None = None
+    evaluation_coverage: float | None = None
+    mean_forward_return: float | None = None
+    median_forward_return: float | None = None
+    forward_win_rate: float | None = None
+    evaluated_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -373,6 +382,9 @@ class SelectionService:
                 average_amount_20=item.average_amount_20,
                 last_price=item.last_price,
                 bar_count=item.bar_count,
+                entry_date=item.entry_date,
+                exit_date=item.exit_date,
+                forward_return=item.forward_return,
             )
             for item in run.candidates
         ]
@@ -382,4 +394,10 @@ class SelectionService:
             total_candidates=run.total_candidates,
             eligible_count=run.eligible_count,
             candidates=candidates,
+            evaluation_horizon=run.evaluation_horizon,
+            evaluation_coverage=run.evaluation_coverage,
+            mean_forward_return=run.mean_forward_return,
+            median_forward_return=run.median_forward_return,
+            forward_win_rate=run.forward_win_rate,
+            evaluated_at=run.evaluated_at,
         )

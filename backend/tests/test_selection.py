@@ -7,7 +7,12 @@ from decimal import Decimal
 import pytest
 
 from app.database.models import HistoricalBar, Security, UniverseMember, UniverseSnapshot
-from app.selection import SelectionConfig, SelectionError, SelectionService
+from app.selection import (
+    SelectionConfig,
+    SelectionError,
+    SelectionEvaluationService,
+    SelectionService,
+)
 
 
 def _seed_snapshot(db, trading_day: date, symbols: list[str], *, st_symbol: str | None = None):
@@ -79,6 +84,36 @@ def _seed_bars(
                 amount=amount,
                 source="test",
                 fetched_at=datetime.combine(current, datetime.min.time()),
+            )
+        )
+    db.commit()
+
+
+def _seed_future_bars(
+    db,
+    symbol: str,
+    trading_day: date,
+    *,
+    entry_open: float,
+    exit_close: float,
+    count: int = 20,
+):
+    for offset in range(1, count + 1):
+        current = trading_day + timedelta(days=offset)
+        close = exit_close if offset == count else entry_open
+        db.add(
+            HistoricalBar(
+                symbol=symbol,
+                period="daily",
+                adjust="none",
+                trade_date=current,
+                open=Decimal(str(entry_open)),
+                high=Decimal(str(max(entry_open, close))),
+                low=Decimal(str(min(entry_open, close))),
+                close=Decimal(str(close)),
+                volume=100_000,
+                amount=1_000_000,
+                source="future-test",
             )
         )
     db.commit()
@@ -186,9 +221,66 @@ class TestSelectionService:
             SelectionService(db_session).rank(date(2026, 1, 1))
 
 
+class TestSelectionEvaluation:
+    def test_uses_next_day_open_and_future_horizon_close(self, db_session):
+        trading_day = date(2026, 2, 1)
+        _seed_snapshot(db_session, trading_day, ["600001", "600002"])
+        for symbol in ["600001", "600002"]:
+            _seed_bars(db_session, symbol, trading_day, daily_growth=0.001)
+        run = SelectionService(db_session).rank(
+            trading_day, SelectionConfig(top_n=2)
+        )
+        _seed_future_bars(
+            db_session, "600001", trading_day, entry_open=10, exit_close=12
+        )
+        _seed_future_bars(
+            db_session, "600002", trading_day, entry_open=20, exit_close=18
+        )
+
+        result = SelectionEvaluationService(db_session).evaluate(run.run_id)
+
+        assert result.evaluation_horizon == 20
+        assert result.evaluation_coverage == 1.0
+        assert result.mean_forward_return == pytest.approx(0.05)
+        assert result.median_forward_return == pytest.approx(0.05)
+        assert result.forward_win_rate == 0.5
+        evaluated = {item.symbol: item for item in result.candidates}
+        assert evaluated["600001"].entry_date == trading_day + timedelta(days=1)
+        assert evaluated["600001"].exit_date == trading_day + timedelta(days=20)
+        assert evaluated["600001"].forward_return == pytest.approx(0.2)
+        assert evaluated["600002"].forward_return == pytest.approx(-0.1)
+
+    def test_insufficient_coverage_does_not_mutate_run(self, db_session):
+        trading_day = date(2026, 2, 1)
+        _seed_snapshot(db_session, trading_day, ["600001", "600002"])
+        for symbol in ["600001", "600002"]:
+            _seed_bars(db_session, symbol, trading_day, daily_growth=0.001)
+        run = SelectionService(db_session).rank(
+            trading_day, SelectionConfig(top_n=2)
+        )
+        _seed_future_bars(
+            db_session, "600001", trading_day, entry_open=10, exit_close=12
+        )
+
+        with pytest.raises(SelectionError, match="覆盖率"):
+            SelectionEvaluationService(db_session).evaluate(run.run_id)
+
+        unchanged = SelectionService(db_session).get_run(run.run_id)
+        assert unchanged.evaluated_at is None
+        assert all(item.forward_return is None for item in unchanged.candidates)
+
+    @pytest.mark.parametrize("horizon", [0, 121])
+    def test_rejects_invalid_horizon(self, db_session, horizon):
+        with pytest.raises(SelectionError, match="horizon_days"):
+            SelectionEvaluationService(db_session).evaluate(
+                999, horizon_days=horizon
+            )
+
+
 def test_selection_routes_registered():
     from app.main import app
 
     paths = app.openapi()["paths"]
     assert "post" in paths["/api/selections/rank"]
     assert "get" in paths["/api/selections/{run_id}"]
+    assert "post" in paths["/api/selections/{run_id}/evaluate"]

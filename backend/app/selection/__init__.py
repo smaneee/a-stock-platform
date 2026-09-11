@@ -7,6 +7,7 @@ from app.selection.service import (
     SelectionResult,
     SelectionService,
 )
+from app.selection.evaluation import SelectionEvaluationService
 
 __all__ = [
     "SelectionCandidateView",
@@ -14,4 +15,5 @@ __all__ = [
     "SelectionError",
     "SelectionResult",
     "SelectionService",
+    "SelectionEvaluationService",
 ]
