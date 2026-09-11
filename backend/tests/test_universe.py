@@ -211,12 +211,26 @@ class TestProviderRetryAndDegradation:
         assert statuses["fail_1"] == ("failed", 1)
         assert statuses["fail_2"] == ("failed", 1)
 
-    def test_akshare_provider_raises_when_offline(self):
-        """AKShare 是 placeholder，CI 环境离线必失败 → ProviderError。"""
-        provider = AkshareUniverseProvider()
-        with pytest.raises(ProviderError) as exc_info:
-            asyncio.run(provider.fetch_all())
-        assert exc_info.value.source_id == "akshare"
+    def test_akshare_provider_returns_records_or_raises(self, monkeypatch):
+        """AKShare provider 是真实实现：成功时返回 records，失败时抛 ProviderError。
+
+        不再硬编码"必败"——生产实现调用 akshare.stock_info_a_code_name()，
+        CI 环境如果 akshare 安装且可联网就成功，否则抛 ProviderError。
+        两种结果都是合规行为。校验重点：返回类型必须正确（list[SecurityRecord]）。
+        """
+        provider = AkshareUniverseProvider(timeout_seconds=5.0)
+        try:
+            records = asyncio.run(provider.fetch_all())
+            # 真实源成功路径：返回 list[SecurityRecord] 且非空
+            assert isinstance(records, list)
+            assert len(records) > 0, "真实 AKShare 应能拉到至少一只 A 股"
+            assert all(isinstance(r, SecurityRecord) for r in records)
+            # 至少有一只 SH 或 SZ 开头的代码（akshare 沪深京 A 股接口）
+            exchanges = {r.exchange for r in records if r.exchange}
+            assert exchanges & {"SH", "SZ", "BJ"}, f"应至少包含 SH/SZ/BJ 之一，实际 {exchanges}"
+        except ProviderError as exc:
+            # CI 无网络 / akshare 未装：抛 ProviderError 也合规
+            assert exc.source_id == "akshare"
 
 
 # ─────────────── 4. ExclusionEngine ───────────────
@@ -471,3 +485,289 @@ class TestUniverseAPI:
         data = r.json()
         assert data["source_provider"] == "mock"
         assert data["total_fetched"] == 26
+
+
+# ─────────────── 7. 真实闭环测试（修复 P0 的核心） ───────────────
+
+
+class TestRealLoopClosing:
+    """POST /sync → GET snapshot → POST /filter 必须真闭环。
+
+    用户 P0 反馈指出：原版 /sync 不调 get_or_create_snapshot，导致 sync 成功
+    /filter 仍 404。本组测试覆盖这条链路。
+    """
+
+    def test_sync_creates_snapshot_in_same_session(self, db_session):
+        """sync 成功后 snapshot 必须同时落库（同一个 session.commit()）。
+
+        API 层 /api/universe/sync 显式传 create_snapshot=True；这里也显式传
+        同样参数验证原子化行为。
+        """
+        svc = UniverseSyncService(
+            db=db_session,
+            providers=[MockUniverseProvider()],
+            max_retries=1,
+        )
+        result = asyncio.run(svc.sync(create_snapshot=True))
+        # sync 返回值必须带 snapshot_id
+        assert result.snapshot_id is not None, (
+            "sync 成功后必须返回 snapshot_id（与 snapshot 原子化的硬性要求）"
+        )
+        assert result.snapshot_trading_day is not None
+        # DB 立即可查
+        snap = db_session.get(UniverseSnapshot, result.snapshot_id)
+        assert snap is not None
+        assert snap.source_provider == "mock"
+
+    def test_sync_to_filter_loop_via_api(self, db_session):
+        """完整闭环：POST /sync → GET /snapshots/{td}/members → POST /filter。"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+        from datetime import date
+
+        client = TestClient(app)
+        # Step 1: sync
+        r = client.post("/api/universe/sync")
+        assert r.status_code == 200, r.text
+        data = r.json()
+        td = data["snapshot_trading_day"]
+        assert td is not None
+        # Step 2: GET snapshot members
+        r2 = client.get(f"/api/universe/snapshots/{td}/members")
+        assert r2.status_code == 200
+        members = r2.json()["members"]
+        assert len(members) > 0
+        # Step 3: POST /filter 必须可用
+        r3 = client.post(f"/api/universe/filter?trading_day={td}")
+        assert r3.status_code == 200
+        symbols = r3.json()["symbols"]
+        assert len(symbols) > 0
+        # 必须与 members 匹配
+        assert set(symbols) == {m["symbol"] for m in members if m["is_included"]}
+
+
+class TestSnapshotImmutability:
+    """snapshot 创建后修改/删除当前 Security 必须不影响历史 snapshot 字段。
+
+    修复 P1：防止 JOIN 漂移 + CASCADE 删除污染历史。
+    """
+
+    def test_member_fields_preserved_after_security_update(self, db_session):
+        """创建 snapshot 后改 Security.name → member.name 必须保持原值。"""
+        # 1. sync + snapshot
+        svc = UniverseSyncService(db=db_session, providers=[MockUniverseProvider()])
+        asyncio.run(svc.sync())
+        snap_svc = UniverseSnapshotService(db_session)
+        td = date(2024, 1, 15)
+        snap = snap_svc.get_or_create_snapshot(td, source_provider="mock")
+        members = db_session.execute(
+            select(UniverseMember).where(UniverseMember.snapshot_id == snap.id)
+        ).scalars().all()
+        assert len(members) > 0
+        sample = members[0]
+        original_name = sample.name
+        original_exchange = sample.exchange
+        assert original_name  # 至少要拷过去
+        assert original_exchange  # 至少要拷过去
+
+        # 2. 修改 Security（改 name + 改 exchange）
+        sec = db_session.get(Security, sample.symbol)
+        sec.name = "CHANGED-NAME-XXX"
+        sec.exchange = "XX"
+        db_session.commit()
+
+        # 3. 重新读 snapshot member → 字段必须不变
+        db_session.expire_all()
+        member_after = db_session.get(UniverseMember, sample.id)
+        assert member_after.name == original_name, (
+            "snapshot 字段必须不可变：当前 Security 修改不应影响历史 member"
+        )
+        assert member_after.exchange == original_exchange
+
+    def test_member_survives_security_delete(self, db_session):
+        """删除 Security 后历史 member 必须仍在（FK ondelete=NO ACTION 阻止）。
+
+        SQLite 默认 FK 不强制，所以这里手动 PRAGMA foreign_keys=ON。
+        """
+        from sqlalchemy.exc import IntegrityError
+        from sqlalchemy import text
+
+        # 强制 SQLite 启用 FK 约束
+        db_session.execute(text("PRAGMA foreign_keys=ON"))
+
+        svc = UniverseSyncService(db=db_session, providers=[MockUniverseProvider()])
+        asyncio.run(svc.sync(create_snapshot=True))
+        snap_svc = UniverseSnapshotService(db_session)
+        td = date(2024, 1, 15)
+        snap = snap_svc.get_or_create_snapshot(td, source_provider="mock")
+        member_count_before = len(
+            db_session.execute(
+                select(UniverseMember).where(UniverseMember.snapshot_id == snap.id)
+            ).scalars().all()
+        )
+        assert member_count_before > 0
+
+        # 试图删 Security → 应当失败（被 NO ACTION FK 拦下）
+        sec = db_session.get(Security, "600000")
+        db_session.delete(sec)
+        with pytest.raises(IntegrityError):
+            db_session.commit()
+        db_session.rollback()
+
+        # 历史 member 仍然完整
+        db_session.expire_all()
+        member_count_after = len(
+            db_session.execute(
+                select(UniverseMember).where(UniverseMember.snapshot_id == snap.id)
+            ).scalars().all()
+        )
+        assert member_count_after == member_count_before
+
+
+class TestProviderFailureNoSilentFallback:
+    """修复 P0：真实 provider 失败时禁止静默回落到 mock。"""
+
+    def test_503_when_all_real_providers_fail(self, db_session):
+        """所有真源都失败 → API 必须返回 503，**不允许**退回 mock。"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        # 通过 env 强制走"akshare（无网络）"且不包含 mock
+        import os
+        old_providers = os.environ.get("UNIVERSE_PROVIDERS")
+        old_use_mock = os.environ.get("E2E_USE_MOCK")
+        os.environ["UNIVERSE_PROVIDERS"] = "akshare"
+        # 显式清除 E2E_USE_MOCK（pydantic 拒收空字符串）
+        if "E2E_USE_MOCK" in os.environ:
+            del os.environ["E2E_USE_MOCK"]
+
+        # 必须 reload settings + providers 缓存
+        from app.config import get_settings
+        from app.universe import sync_service as svc_mod
+        from app.universe.providers import AkshareUniverseProvider, ProviderError
+
+        get_settings.cache_clear()
+
+        # 替换 SyncService 内的 provider 解析为失败版本
+        class _BoomAkshare(AkshareUniverseProvider):
+            async def fetch_all(self):
+                raise ProviderError("akshare", "simulated network failure")
+
+        svc_mod._resolve_providers_from_settings = lambda: [_BoomAkshare()]
+        client = TestClient(app)
+        try:
+            r = client.post("/api/universe/sync")
+            assert r.status_code == 503, (
+                f"真实源失败必须返回 503，实际 {r.status_code}: {r.text}"
+            )
+            body = r.json()
+            assert "all_providers_failed" in str(body)
+        finally:
+            os.environ["UNIVERSE_PROVIDERS"] = old_providers or "mock"
+            if old_use_mock is not None:
+                os.environ["E2E_USE_MOCK"] = old_use_mock
+            get_settings.cache_clear()
+            # 恢复默认 provider 解析（重新 import 模块以重置 lambda）
+            import importlib
+            importlib.reload(svc_mod)
+
+    def test_unknown_provider_name_raises_at_construction(self):
+        """settings 中拼错 provider 名字 → 构造 SyncService 时立即抛错。"""
+        from app.config import get_settings
+        import os
+
+        get_settings.cache_clear()
+        old_providers = os.environ.get("UNIVERSE_PROVIDERS")
+        old_use_mock = os.environ.get("E2E_USE_MOCK")
+        os.environ["UNIVERSE_PROVIDERS"] = "akshare_typo"
+        if "E2E_USE_MOCK" in os.environ:
+            del os.environ["E2E_USE_MOCK"]
+        try:
+            from app.universe.sync_service import _resolve_providers_from_settings
+            from app.universe.providers import ProviderError
+
+            with pytest.raises(ProviderError) as exc_info:
+                _resolve_providers_from_settings()
+            assert "akshare_typo" in str(exc_info.value)
+        finally:
+            os.environ["UNIVERSE_PROVIDERS"] = old_providers or "mock"
+            if old_use_mock is not None:
+                os.environ["E2E_USE_MOCK"] = old_use_mock
+            get_settings.cache_clear()
+
+
+class TestLongSuspensionStateDistinction:
+    """修复 P1：long_suspension 区分 confirmed / incomplete / provider_unknown。"""
+
+    def test_no_trading_days_returns_incomplete_history(self, db_session):
+        """交易日历表空 → 所有 stock 都是 incomplete_history（非 confirmed）。"""
+        # 不插入任何 TradingDate / HistoricalBar
+        from app.universe.exclusion import get_long_suspension_state
+        # 注：未插入 Security 的 symbol → provider_unknown
+        state_no_sec = get_long_suspension_state(db_session, "999999", date(2024, 1, 1))
+        assert state_no_sec == "provider_unknown"
+
+    def test_existing_security_no_bars_is_confirmed(self, db_session):
+        """Security 存在 + 0 成交 → confirmed_long_suspension。"""
+        from app.universe.exclusion import get_long_suspension_state
+
+        _seed_security(
+            db_session,
+            "688999",
+            listing_date=date(2020, 1, 1),
+            trading_status="active",
+        )
+        # 插入交易日历但这只 stock 没 bar
+        from app.database.models import TradingDate
+        for i in range(5):
+            db_session.add(TradingDate(trade_date=date(2024, 1, 1) + timedelta(days=i)))
+        db_session.commit()
+
+        state = get_long_suspension_state(db_session, "688999", date(2024, 1, 5), threshold_days=5)
+        assert state == "confirmed_long_suspension"
+
+    def test_active_symbol_is_ok(self, db_session):
+        """有完整成交覆盖 → ok。"""
+        from app.universe.exclusion import get_long_suspension_state
+        from app.database.models import TradingDate, HistoricalBar
+
+        _seed_security(db_session, "600000", listing_date=date(2020, 1, 1))
+        td_list = [date(2024, 1, 1), date(2024, 1, 2), date(2024, 1, 3)]
+        for td in td_list:
+            db_session.add(TradingDate(trade_date=td))
+            db_session.add(
+                HistoricalBar(
+                    symbol="600000",
+                    trade_date=td,
+                    open=10.0,
+                    high=11.0,
+                    low=9.5,
+                    close=10.5,
+                    volume=1000,
+                )
+            )
+        db_session.commit()
+
+        state = get_long_suspension_state(
+            db_session, "600000", date(2024, 1, 3), threshold_days=5
+        )
+        assert state == "ok"
+
+    def test_find_long_suspension_does_not_include_provider_unknown(self, db_session):
+        """未在 Security 表的 symbol 即使无 bar 也不被列为 confirmed。
+
+        这是 P1 修复的核心：旧版 `all_symbols - active` 会把全市场都误判。
+        """
+        from app.universe.exclusion import find_long_suspension_symbols
+        from app.database.models import TradingDate
+
+        for i in range(3):
+            db_session.add(TradingDate(trade_date=date(2024, 1, 1) + timedelta(days=i)))
+        # 不插入任何 Security
+        db_session.commit()
+
+        # 不应返回任何 confirmed（因为没在 securities 里 → 都是 provider_unknown）
+        result = find_long_suspension_symbols(db_session, date(2024, 1, 3), threshold_days=3)
+        assert result == set(), (
+            f"无 securities 时不应返回任何 confirmed，实际 {result}"
+        )

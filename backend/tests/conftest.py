@@ -14,6 +14,9 @@ if str(BACKEND_DIR) not in sys.path:
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("MARKET_PROVIDERS", "mock")
 os.environ.setdefault("AUTO_CREATE_TABLES", "true")
+# 测试环境默认走 mock（CI 友好）；真实 AKShare 测试单独切到 akshare provider
+os.environ.setdefault("UNIVERSE_PROVIDERS", "mock")
+os.environ.setdefault("E2E_USE_MOCK", "true")
 
 import pytest  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
@@ -32,7 +35,20 @@ from app.universe import (  # noqa: E402,F401
 
 # 测试运行开始前，在 app 自身引擎上把全部表建好（TestClient 走这个引擎）
 if str(_app_engine.url).startswith("sqlite"):
+    # 重建表（alembic 测试可能让 in-memory DB 状态污染）
+    Base.metadata.drop_all(bind=_app_engine)
     Base.metadata.create_all(bind=_app_engine)
+
+
+@pytest.fixture(autouse=True)
+def _reset_app_engine_state():
+    """每个测试前清空 app 引擎的表 + 重建（防止 alembic 等测试造成 in-memory
+    状态污染）。TestClient 类测试依赖 app.database.session.engine 干净。
+    """
+    if str(_app_engine.url).startswith("sqlite"):
+        Base.metadata.drop_all(bind=_app_engine)
+        Base.metadata.create_all(bind=_app_engine)
+    yield
 
 
 @pytest.fixture

@@ -8,16 +8,19 @@
 1) 返回标准 SecurityRecord 列表（与 ORM 字段对应）
 2) 失败抛 ProviderError，便于 SyncService 区分成功/失败
 3) Provider 自身不带重试，重试由 SyncService 统一管理
+4) Provider 不准静默降级：失败就是失败，由调用方决定是否切下一个 provider
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from abc import ABC, abstractmethod
-from datetime import date, datetime
-from typing import Iterable
+from datetime import date
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from app.time_utils import utc_now
+logger = logging.getLogger(__name__)
 
 
 class SecurityRecord(BaseModel):
@@ -52,6 +55,7 @@ class UniverseProvider(ABC):
         """拉取整个市场的证券主数据。
 
         失败必须抛 ProviderError，不要返回 []。
+        不要静默降级到 Mock — 这是调用方的责任。
         """
 
 
@@ -60,6 +64,9 @@ class MockUniverseProvider(UniverseProvider):
 
     数据预设：A 股 + 深 A + 创业板 + 北证 + ST + 已退市，共 26 条
     跨越 SH/SZ/BJ 三个交易所，覆盖各种排除场景。
+
+    注意：本 Provider 只用于 CI / 离线 / 单测场景，生产环境必须显式
+    通过 UNIVERSE_PROVIDERS=mock 启用并意识到这是测试模式。
     """
 
     source_id = "mock"
@@ -118,19 +125,207 @@ class MockUniverseProvider(UniverseProvider):
         return records
 
 
-class AkshareUniverseProvider(UniverseProvider):
-    """AKShare 数据源（生产）。
+# ───────────── AKShare 真实实现 ─────────────
 
-    注：CI 不依赖 AKShare 网络可达；managed e2e 默认不启用此 provider。
-    网络失败 → ProviderError("akshare", "...") 让 SyncService 退到 mock。
+
+def _normalize_exchange(symbol: str) -> str:
+    """根据 6 位股票代码推断交易所前缀。
+
+    AKShare 返回的 code 列不带交易所，但根据行业惯例：
+      - 6xxxxx / 9xxxxx → SH（含 605/688 科创板、900 B 股）
+      - 0xxxxx / 2xxxxx / 30xxxx → SZ（含 000/002 主板、300 创业板）
+      - 4xxxxx / 8xxxxx → BJ（北证，代码一般 6 位但 83/87/43 开头）
+
+    不会 100% 精确（依赖 AKShare 实际格式），但是 fallback；优先 trust 真实源字段。
+    """
+    s = str(symbol).strip()
+    if not s:
+        return ""
+    head = s[0]
+    if head in ("6", "9"):
+        return "SH"
+    if head in ("0", "2", "3"):
+        return "SZ"
+    if head in ("4", "8"):
+        return "BJ"
+    return ""
+
+
+def _parse_date(value: Any) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return value
+    s = str(value).strip()
+    if not s or s in ("nan", "NaT", "NaN", "None"):
+        return None
+    # 常见格式：YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y%m%d"):
+        try:
+            return date.fromisoformat(s.replace("/", "-")) if fmt != "%Y%m%d" else date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def _is_st_name(name: str) -> bool:
+    """根据股票名称判断是否带 ST / *ST 标记。"""
+    if not name:
+        return False
+    n = name.upper()
+    return "ST" in n or "*ST" in n or "S*" in n
+
+
+def _is_delisted_name(name: str) -> bool:
+    """根据名称判断是否已退市（A 股惯例是「退」字 + 公司简称）。"""
+    if not name:
+        return False
+    return "退市" in name or name.startswith("退")
+
+
+class AkshareUniverseProvider(UniverseProvider):
+    """AKShare 数据源（生产环境）。
+
+    实现要点：
+    1. **线程隔离**：akshare 是同步阻塞库，必须放在线程池里跑，
+       否则会阻塞 asyncio 事件循环，让整个 /sync 路由 hang 住。
+    2. **超时控制**：调用 akshare.stock_info_a_code_name() 可能因为
+       网络抖动或 akshare 服务器限速而卡死，必须有 timeout。
+    3. **字段校验**：返回的 dataframe 必须有 code / name 列，缺字段直接抛错。
+    4. **空结果保护**：返回 0 行 → ProviderError，不允许落库空 universe。
+    5. **重试交给 SyncService**：本 provider 自身不重试。
+
+    真实源失败必须抛 ProviderError，绝不允许返回 [] 让 SyncService "以为成功"。
     """
 
     source_id = "akshare"
 
+    def __init__(self, *, timeout_seconds: float = 30.0):
+        self._timeout_seconds = timeout_seconds
+
     async def fetch_all(self) -> list[SecurityRecord]:
-        # 网络调用在生产由真实 AKShare 实现；这里故意抛错表示离线不可用
-        # 真实接入是在 SyncService 选真实 provider 时才走这条路径
-        raise ProviderError(
-            self.source_id,
-            "AKShare provider 是 placeholder，需要在生产环境真正实现",
-        )
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            raise ProviderError(self.source_id, f"无运行中的事件循环: {exc}")
+
+        try:
+            df = await asyncio.wait_for(
+                loop.run_in_executor(None, self._fetch_sync),
+                timeout=self._timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            raise ProviderError(
+                self.source_id,
+                f"AKShare 调用超时（>{self._timeout_seconds}s）",
+            )
+        except ProviderError:
+            # _fetch_sync 已经包装好 ProviderError，原样抛
+            raise
+        except Exception as exc:
+            # akshare 自身异常（网络、解析、字段缺失等） → 统一包成 ProviderError
+            raise ProviderError(self.source_id, f"AKShare 调用失败: {exc}")
+
+        return self._records_from_dataframe(df)
+
+    # ───────────── 阻塞调用（线程池内执行） ─────────────
+
+    def _fetch_sync(self):
+        """阻塞调用 akshare，捕获其网络/解析异常统一包装为 ProviderError。"""
+        try:
+            import akshare as ak  # type: ignore
+        except ImportError as exc:
+            raise ProviderError(
+                self.source_id,
+                f"akshare 未安装: {exc}",
+            )
+
+        try:
+            # 沪深京 A 股主数据（最新一次接口签名）
+            df = ak.stock_info_a_code_name()
+        except Exception as exc:
+            raise ProviderError(self.source_id, f"akshare.stock_info_a_code_name 失败: {exc}")
+
+        if df is None:
+            raise ProviderError(self.source_id, "akshare 返回 None dataframe")
+        try:
+            rows = df.to_dict("records")
+        except Exception as exc:
+            raise ProviderError(self.source_id, f"dataframe → dict 失败: {exc}")
+        if not rows:
+            raise ProviderError(self.source_id, "akshare 返回空列表（market 不可达或接口已废弃）")
+        return rows
+
+    # ───────────── dataframe → SecurityRecord ─────────────
+
+    def _records_from_dataframe(self, rows: list[dict]) -> list[SecurityRecord]:
+        records: list[SecurityRecord] = []
+        seen: set[str] = set()
+        skipped_missing_code = 0
+
+        for row in rows:
+            # 字段名兼容：akshare 不同版本可能叫 code / symbol / stock_code
+            code = row.get("code") or row.get("symbol") or row.get("stock_code")
+            name = row.get("name") or row.get("stock_name") or ""
+
+            if not code:
+                skipped_missing_code += 1
+                continue
+
+            code = str(code).strip()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+
+            exchange = _normalize_exchange(code)
+            listing_date = _parse_date(
+                row.get("ipo_date")
+                or row.get("listing_date")
+                or row.get("issue_date")
+            )
+
+            is_st = _is_st_name(str(name))
+            is_delisted = _is_delisted_name(str(name))
+
+            trading_status = "delisted" if is_delisted else "active"
+            delisted_date = None  # AKShare 不返回精确退市日期，由 ExclusionEngine 用 listing_date/delisted 标记兜底
+
+            records.append(
+                SecurityRecord(
+                    symbol=code,
+                    name=str(name).strip(),
+                    exchange=exchange,
+                    listing_date=listing_date,
+                    delisted_date=delisted_date,
+                    trading_status=trading_status,
+                    is_st=is_st,
+                )
+            )
+
+        if not records:
+            raise ProviderError(
+                self.source_id,
+                f"akshare 返回 {len(rows)} 行但解析后 0 条有效（缺 code 字段或全为空）",
+            )
+
+        if skipped_missing_code > 0:
+            logger.warning(
+                "akshare provider skipped %d rows missing code (kept %d)",
+                skipped_missing_code,
+                len(records),
+            )
+
+        return records
+
+
+def build_provider_by_name(name: str, **kwargs) -> UniverseProvider:
+    """根据 provider 名称构造实例，未知名称 → ProviderError。
+
+    这是 SyncService 启动时校验的入口，防止拼错 provider 名字后静默退回 mock。
+    """
+    n = (name or "").strip().lower()
+    if n == "mock":
+        return MockUniverseProvider()
+    if n == "akshare":
+        return AkshareUniverseProvider(**kwargs)
+    raise ProviderError("factory", f"未知的 UNIVERSE_PROVIDER: {name!r}（仅支持 mock / akshare）")

@@ -1,12 +1,18 @@
 """UniverseSyncService — 全市场证券主数据同步编排。
 
 职责：
-1) 顺序尝试多个 Provider（先 mock，再 akshare 等），任一成功即返回；
-   全部失败抛 AllProvidersFailedError。
+1) 顺序尝试多个 Provider（按 UNIVERSE_PROVIDERS 配置顺序），任一成功即返回；
+   全部失败抛 AllProvidersFailedError → /sync 返回 503，**禁止**静默退回 mock。
 2) 单 provider 调用 N 次（retry+backoff），N 次都失败才切到下一个。
 3) 持久化 DataSourceHealth（最近成功/失败/连续失败数）。
 4) 写入 Security 表（upsert），不变更调用方原有逻辑。
-5) 触发 SnapshotService 形成当天的 UniverseSnapshot。
+5) **与 snapshot 原子化**：sync 成功后立即在同一个 Session/事务中创建
+   当日 UniverseSnapshot，使 /sync 之后 /filter 必定可用。
+
+配置驱动（不允许硬编码默认 Provider）：
+- 生产默认 UNIVERSE_PROVIDERS=akshare
+- 测试 / managed E2E 模式：E2E_USE_MOCK=true → 自动切到 mock
+- 也可以显式传 universe_providers=mock
 """
 from __future__ import annotations
 
@@ -20,6 +26,7 @@ from typing import Sequence
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.database.models import DataSourceHealth, Security
 from app.market_rules.security_master import SecurityMasterService
 from app.time_utils import utc_now
@@ -29,6 +36,7 @@ from app.universe.providers import (
     ProviderError,
     SecurityRecord,
     UniverseProvider,
+    build_provider_by_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +57,8 @@ class SyncResult:
     updated_securities: int = 0
     attempted_providers: list[str] = field(default_factory=list)
     provider_health: dict[str, str] = field(default_factory=dict)
+    snapshot_id: int | None = None
+    snapshot_trading_day: str | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -59,42 +69,80 @@ class SyncResult:
             "updated_securities": self.updated_securities,
             "attempted_providers": list(self.attempted_providers),
             "provider_health": dict(self.provider_health),
+            "snapshot_id": self.snapshot_id,
+            "snapshot_trading_day": self.snapshot_trading_day,
         }
+
+
+def _resolve_providers_from_settings() -> list[UniverseProvider]:
+    """从 settings 构造 provider 实例。
+
+    关键约束：
+    - 生产默认从 UNIVERSE_PROVIDERS 配置读取（默认 akshare）
+    - E2E_USE_MOCK=true 时强制切到 mock（CI/managed 模式）
+    - 任何拼错的名字都直接抛 ProviderError，禁止静默 fallback
+    """
+    settings = get_settings()
+    names = settings.universe_provider_list
+    providers: list[UniverseProvider] = []
+    for name in names:
+        if name == "akshare":
+            providers.append(
+                AkshareUniverseProvider(
+                    timeout_seconds=settings.akshare_universe_timeout_seconds
+                )
+            )
+        elif name == "mock":
+            providers.append(MockUniverseProvider())
+        else:
+            # 拼错名字直接抛错（不许静默 fallback）
+            raise ProviderError(
+                "factory",
+                f"未知的 UNIVERSE_PROVIDER: {name!r}（仅支持 mock / akshare）",
+            )
+    return providers
 
 
 class UniverseSyncService:
     """编排同步逻辑；每个实例绑定一个 Session。"""
 
-    DEFAULT_PROVIDERS: tuple[type[UniverseProvider], ...] = (
-        MockUniverseProvider,
-        AkshareUniverseProvider,
-    )
-
     def __init__(
         self,
         db: Session,
         providers: Sequence[UniverseProvider] | None = None,
-        max_retries: int = 2,
-        backoff_base_ms: int = 50,
+        max_retries: int | None = None,
+        backoff_base_ms: int | None = None,
     ):
         self._db = db
-        # 用户传入 provider 实例列表；否则按默认顺序构造
-        self._providers: list[UniverseProvider] = list(
-            providers
-            if providers is not None
-            else [cls() for cls in self.DEFAULT_PROVIDERS]
+        # 用户传入 provider 实例列表；否则按 settings.universe_provider_list 构造
+        if providers is not None:
+            self._providers: list[UniverseProvider] = list(providers)
+        else:
+            self._providers = _resolve_providers_from_settings()
+        settings = get_settings()
+        self._max_retries = (
+            max_retries if max_retries is not None else settings.universe_max_retries
         )
-        self._max_retries = max_retries
-        self._backoff_base_ms = backoff_base_ms
+        self._backoff_base_ms = (
+            backoff_base_ms if backoff_base_ms is not None else settings.universe_backoff_base_ms
+        )
 
-    async def sync(self) -> SyncResult:
+    @property
+    def providers(self) -> list[UniverseProvider]:
+        return list(self._providers)
+
+    async def sync(self, *, create_snapshot: bool = False, trading_day=None) -> SyncResult:
         """同步全部证券主数据。
 
         行为：
-        1) 顺序尝试 self._providers（mock 优先）
+        1) 顺序尝试 self._providers（按 settings.universe_provider_list 顺序）
         2) 每个 provider 内最多 self._max_retries 次（指数退避 + 抖动）
         3) 任一 provider 一次成功即止
         4) 全部失败 → 抛 AllProvidersFailedError（每个 provider 的失败都写 health 表）
+        5) **成功后立即在同一个 Session 中创建当日 snapshot**（除非 create_snapshot=False）
+           — 这是 /sync → /filter 闭环的硬性保证；不在 snapshot 阶段的失败也要让整体失败。
+
+        严禁：真实源失败后静默回落到 mock —— 这是用户 P0 反馈的核心。
         """
         attempted: list[str] = []
         health_snapshot: dict[str, str] = {}
@@ -119,6 +167,23 @@ class UniverseSyncService:
                 if p.source_id not in health_snapshot:
                     health_snapshot[p.source_id] = "skipped"
 
+            # ───────── 原子化：sync 成功后立即在同 session 创建 snapshot ─────────
+            snapshot_id: int | None = None
+            snapshot_trading_day = None
+            if create_snapshot:
+                from app.universe.snapshot_service import UniverseSnapshotService
+                from datetime import date as _date
+
+                snap_svc = UniverseSnapshotService(self._db)
+                td = trading_day or synced_at.date() or _date.today()
+                snap = snap_svc.get_or_create_snapshot(
+                    trading_day=td,
+                    source_provider=provider.source_id,
+                    source_synced_at=synced_at,
+                )
+                snapshot_id = snap.id
+                snapshot_trading_day = snap.trading_day.isoformat()
+
             return SyncResult(
                 source_provider=provider.source_id,
                 synced_at=synced_at,
@@ -127,9 +192,12 @@ class UniverseSyncService:
                 updated_securities=upd_count,
                 attempted_providers=attempted,
                 provider_health=health_snapshot,
+                snapshot_id=snapshot_id,
+                snapshot_trading_day=snapshot_trading_day,
             )
 
-        # 所有 provider 都失败
+        # 所有 provider 都失败：必须抛错，让上层 API 返回 503
+        # 不允许在这里退回 mock —— 那是"伪闭环"，违背用户的 P0 约束
         raise AllProvidersFailedError(
             f"全部 {len(self._providers)} 个 provider 都失败：{attempted}"
         )

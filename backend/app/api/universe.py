@@ -72,10 +72,15 @@ async def sync(
 
     同步是异步调用（provider fetch_all 内部可能 await 网络调用）。
     失败 → 抛 503。所有 provider 失败 → 503，附 partial provider 状态。
+
+    原子化：sync 成功后立即在同一个 session 中创建当日 UniverseSnapshot，
+    使 /sync 之后 /filter 必定可用 — 这是用户 P0 闭环的硬性要求。
     """
+    from datetime import date as _date
+
     sync_svc = UniverseSyncService(db)
     try:
-        result = await sync_svc.sync()
+        result = await sync_svc.sync(create_snapshot=True, trading_day=_date.today())
     except AllProvidersFailedError as exc:
         raise HTTPException(
             status_code=503, detail={

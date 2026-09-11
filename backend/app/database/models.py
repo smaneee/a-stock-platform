@@ -279,7 +279,10 @@ class Security(Base):
 
     members: Mapped[list["UniverseMember"]] = relationship(  # noqa: F821
         back_populates="security",
-        cascade="all, delete-orphan",
+        # 重要：禁止 delete-orphan / cascade 删历史快照。
+        # 删除 Security 必须显式清理 UniverseMember；ORM 不会自动级联。
+        cascade="save-update, merge",
+        passive_deletes=True,
     )
 
 
@@ -320,6 +323,14 @@ class UniverseMember(Base):
 
     一只股票在某一快照只有一行：要么 is_included=True，要么 is_included=False
     且 exclude_reason 描述为什么被排除。即使被排除也必须落库（用于审计/重放）。
+
+    重要：业务字段（name / exchange / sector / is_st / listing_date /
+    delisted_date / trading_status）在 snapshot 创建时**一次性从 Security 拷贝**，
+    形成不可变快照（immutable snapshot）。后续即便 Security 表的对应行被修改
+    或删除，本行的字段也不会变。这是 point-in-time 查询的硬性保证。
+
+    FK 行为：security_id 外键的 ondelete=NO ACTION（迁移 0009 修改），
+    阻止删除被引用的 Security 时静默清空历史 UniverseMember。
     """
 
     __tablename__ = "universe_members"
@@ -336,11 +347,26 @@ class UniverseMember(Base):
     )
     symbol: Mapped[str] = mapped_column(String(16), nullable=False)
     security_id: Mapped[str] = mapped_column(
-        ForeignKey("securities.symbol", ondelete="CASCADE"), nullable=False
+        ForeignKey("securities.symbol", ondelete="NO ACTION"), nullable=False
     )
     is_included: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     exclude_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
     sort_rank: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # ───────────── 不可变业务字段（迁移 0009 新增） ─────────────
+    # 这些字段在 snapshot 时从 Security 拷贝，断绝 JOIN 漂移。
+    name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    exchange: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    sector: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    is_st: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    listing_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    delisted_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    trading_status: Mapped[str | None] = mapped_column(
+        String(16), nullable=True, default="active"
+    )
+    # 审计标签：incomplete_history / provider_unknown / ok
+    # 不影响 is_included；selection / paper trading 可按需过滤
+    audit_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     snapshot: Mapped[UniverseSnapshot] = relationship(back_populates="members")
     security: Mapped[Security] = relationship(back_populates="members")

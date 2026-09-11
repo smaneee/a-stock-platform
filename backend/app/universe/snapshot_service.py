@@ -23,11 +23,16 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.database.models import (
-    Security,
+    Security,  # noqa: F401  ← snapshot 创建时仍需要 Security 拷贝业务字段
     UniverseMember,
     UniverseSnapshot,
 )
-from app.universe.exclusion import ExclusionEngine, find_long_suspension_symbols
+from app.universe.exclusion import (
+    ExclusionEngine,
+    classify_long_suspension_status,
+    find_long_suspension_symbols,
+    get_long_suspension_state,
+)
 from app.time_utils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -35,7 +40,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class MemberView:
-    """API 返回 / 选股查询使用的成员视图。"""
+    """API 返回 / 选股查询使用的成员视图。
+
+    所有字段直接来自 UniverseMember 行（snapshot 时拷贝的不可变字段），
+    不再 JOIN 当前 Security 表 — 这是 point-in-time 的硬性保证。
+    """
 
     symbol: str
     name: str
@@ -44,6 +53,9 @@ class MemberView:
     is_included: bool
     exclude_reason: str | None
     sort_rank: int
+    listing_date: date | None = None
+    delisted_date: date | None = None
+    trading_status: str = "active"
 
 
 class UniverseSnapshotService:
@@ -110,9 +122,27 @@ class UniverseSnapshotService:
         included = 0
         excluded = 0
         for rank, dec in enumerate(decisions):
+            # 默认从 ExclusionEngine 取值（delisted/suspended/...）
             final_reason = dec.reason
-            if dec.is_included and dec.symbol in long_susp:
+
+            # 长期停牌的 3 状态区分（迁移 0009 + 修复 P1）：
+            #  - confirmed_long_suspension：is_included=False, exclude_reason="long_suspension"
+            #  - incomplete_history      ：审计标签，存到 audit_reason，is_included 保持默认
+            #  - provider_unknown        ：审计标签，存到 audit_reason，is_included 保持默认
+            #  - ok（无异常）           ：is_included=True,  exclude_reason=None
+            long_susp_state = get_long_suspension_state(
+                self._db,
+                dec.symbol,
+                as_of=trading_day,
+                threshold_days=self._threshold,
+            )
+            if long_susp_state == "confirmed_long_suspension":
+                # 仅 confirmed 才改变 is_included
                 final_reason = "long_suspension"
+            # incomplete_history / provider_unknown 是审计标签（不再决定 is_included）
+            # 它们会让 UniverseMember.audit_reason 写入（通过 get_membership 暴露），
+            # selection / paper trading 可按需进一步过滤
+
             is_included = final_reason is None
 
             # 关联 Security — 必须存在（sync 必须先跑过）
@@ -130,6 +160,18 @@ class UniverseSnapshotService:
                 is_included=is_included,
                 exclude_reason=final_reason,
                 sort_rank=rank,
+                # ───────── 不可变业务字段（迁移 0009） ─────────
+                # 在 snapshot 时一次性从 Security 拷贝；后续 Security 表的
+                # 修改或删除不影响这一行的业务字段。
+                name=sec.name,
+                exchange=sec.exchange,
+                sector=sec.sector,
+                is_st=sec.is_st,
+                listing_date=sec.listing_date,
+                delisted_date=sec.delisted_date,
+                trading_status=sec.trading_status,
+                # 审计标签：记录 long_suspension 状态（区分 3 种）
+                audit_reason=long_susp_state if long_susp_state != "ok" else None,
             )
             self._db.add(member)
             if is_included:
@@ -203,33 +245,34 @@ class UniverseSnapshotService:
         if snap is None:
             return []
 
-        stmt = (
-            select(UniverseMember, Security)
-            .join(Security, UniverseMember.symbol == Security.symbol)
-            .where(UniverseMember.snapshot_id == snap.id)
-        )
+        # 直接读 UniverseMember 不可变字段，不再 JOIN 当前 Security。
+        # 这是迁移 0009 引入的核心修复：防 survivorship bias 漂移。
+        stmt = select(UniverseMember).where(UniverseMember.snapshot_id == snap.id)
         if include_only is True:
             stmt = stmt.where(UniverseMember.is_included.is_(True))
         elif include_only is False:
             stmt = stmt.where(UniverseMember.is_included.is_(False))
         if exchange:
-            stmt = stmt.where(Security.exchange == exchange)
+            stmt = stmt.where(UniverseMember.exchange == exchange)
         if exclude_reasons:
             stmt = stmt.where(UniverseMember.exclude_reason.in_(exclude_reasons))
 
         stmt = stmt.order_by(UniverseMember.sort_rank).limit(limit)
-        results = self._db.execute(stmt).all()
+        rows = self._db.execute(stmt).scalars().all()
         return [
             MemberView(
                 symbol=m.symbol,
-                name=sec.name,
-                exchange=sec.exchange,
-                is_st=sec.is_st,
+                name=m.name or "",
+                exchange=m.exchange or "",
+                is_st=bool(m.is_st) if m.is_st is not None else False,
                 is_included=m.is_included,
                 exclude_reason=m.exclude_reason,
                 sort_rank=m.sort_rank,
+                listing_date=m.listing_date,
+                delisted_date=m.delisted_date,
+                trading_status=m.trading_status or "active",
             )
-            for m, sec in results
+            for m in rows
         ]
 
     def latest_snapshot_date(self) -> date | None:
