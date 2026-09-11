@@ -45,8 +45,14 @@ class Settings(BaseSettings):
     universe_providers: str = "baostock,akshare"
     # AKShare 超时（秒）：超过这个时间就算失败，让 SyncService 切下一个 provider。
     akshare_universe_timeout_seconds: float = 30.0
-    # BaoStock 超时（秒）：point-in-time 主数据源，含 query_all_stock + query_stock_basic + login/logout
-    baostock_universe_timeout_seconds: float = 60.0
+    # BaoStock 超时（秒）：point-in-time 主数据源，含 query_all_stock + query_stock_basic
+    # + BJ 子源 + login/logout。实机测量全市场约 70~210 秒（query_all_stock 逐行读取
+    # 7382 行约 11s、query_stock_basic 逐行读取 8950 行约 36s 是主要耗时），
+    # 原默认 60s 会让每次同步都判超时并丢弃已经拉好的结果。
+    baostock_universe_timeout_seconds: float = 300.0
+    # AKShare BJ 子源（补 BaoStock 北交所缺口）超时（秒）：该接口分 18 页拉取，
+    # 实测 12~20s。
+    baostock_bj_supplement_timeout_seconds: float = 60.0
     # 同步重试参数（每个 provider 内最多 max_retries+1 次尝试）
     universe_max_retries: int = 2
     universe_backoff_base_ms: int = 50

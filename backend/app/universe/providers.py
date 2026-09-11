@@ -666,6 +666,11 @@ def _baostock_query_trade_dates(
     return rows
 
 
+# BaoStock 内部 socket 默认无超时：连接静默断开时会永久阻塞在 rs.next()。
+# 实测单个查询的结果集读取在正常网络下 <1s，30s 只用于兜住"挂死"的情况。
+_BAOSTOCK_SOCKET_TIMEOUT_SECONDS = 30.0
+
+
 class BaoStockUniverseProvider(UniverseProvider):
     """BaoStock 数据源（生产环境，point-in-time 主数据源）。
 
@@ -707,12 +712,14 @@ class BaoStockUniverseProvider(UniverseProvider):
         *,
         timeout_seconds: float = 60.0,
         as_of_date: date | None = None,
-        bj_supplement_timeout_seconds: float = 15.0,
+        bj_supplement_timeout_seconds: float = 60.0,
     ):
         """Args:
-        timeout_seconds: BaoStock fetch 总超时
+        timeout_seconds: BaoStock fetch 总超时（全市场实测 70~210s，
+            秒级默认值必然误判超时并丢弃已拉到的数据）
         as_of_date: 指定拉数据的交易日；None → 用最近交易日
-        bj_supplement_timeout_seconds: AKShare BJ 子源超时
+        bj_supplement_timeout_seconds: AKShare BJ 子源超时（该接口分 18 页拉取，
+            实测 12~20s，原 15s 会随机超时并把整个股票池同步判为失败）
         """
         self._timeout_seconds = timeout_seconds
         self._as_of_date = as_of_date
@@ -762,7 +769,19 @@ class BaoStockUniverseProvider(UniverseProvider):
         query_stock_basic → 装配 SecurityRecord。
 
         返回 (records, effective_day)。
+
+        实机测量（2026-09-11，全市场 7382/8950 行）：整体约 70~210 秒，其中
+        query_all_stock 取结果集约 10s、逐行读取 7382 行约 11s、query_stock_basic
+        约 7s、逐行读取 8950 行约 36s、logout 约 4s，其余为 BJ 子源与组装。
+        两个直接后果：
+        1. 调用方的总超时必须给足（见 BAOSTOCK_UNIVERSE_TIMEOUT_SECONDS），
+           否则慢但成功的拉取会被当成超时丢弃；
+        2. 必须显式设置 socket 超时：BaoStock 内部 socket 默认无超时，一旦连接
+           静默断开就会永久阻塞在 rs.next()；此时事件循环的 wait_for 取消不了
+           已在线程池里运行的调用（实测把进程卡死 10 分钟以上）。
         """
+        import socket
+
         try:
             import baostock as bs  # type: ignore
         except ImportError as exc:
@@ -771,19 +790,24 @@ class BaoStockUniverseProvider(UniverseProvider):
                 f"baostock 未安装: {exc}",
             )
 
-        lg = bs.login()
-        if lg is None or lg.error_code != "0":
-            raise ProviderError(
-                self.source_id,
-                f"baostock.login 失败: {getattr(lg, 'error_msg', 'unknown')}",
-            )
+        previous_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(_BAOSTOCK_SOCKET_TIMEOUT_SECONDS)
         try:
-            return self._fetch_sync_inner(bs)
-        finally:
+            lg = bs.login()
+            if lg is None or lg.error_code != "0":
+                raise ProviderError(
+                    self.source_id,
+                    f"baostock.login 失败: {getattr(lg, 'error_msg', 'unknown')}",
+                )
             try:
-                bs.logout()
-            except Exception:  # noqa: BLE001
-                pass
+                return self._fetch_sync_inner(bs)
+            finally:
+                try:
+                    bs.logout()
+                except Exception:  # noqa: BLE001
+                    pass
+        finally:
+            socket.setdefaulttimeout(previous_timeout)
 
     def _fetch_sync_inner(self, bs) -> tuple[list[SecurityRecord], date]:
         """实际拉取逻辑（已 login，调用方负责 logout）。"""

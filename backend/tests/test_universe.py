@@ -1829,3 +1829,63 @@ class TestSyncAPIDoesNotPassDateToday:
         assert "_date.today()" not in source, (
             "sync_service.sync 不应 fallback 到 _date.today()"
         )
+
+
+class TestBaoStockSocketTimeout:
+    """BaoStock 内部 socket 无超时会永久阻塞：必须在拉取期间显式设置。
+
+    实机教训：BaoStock 连接静默断开时 rs.next() 会永久阻塞，而事件循环的
+    wait_for 取消不了已经在线程池里运行的调用，整个进程会卡死（实测 >10 分钟）。
+    """
+
+    def _install_fake_baostock(self, monkeypatch, login):
+        import sys
+        import types
+
+        monkeypatch.setitem(
+            sys.modules, "baostock", types.SimpleNamespace(login=login)
+        )
+
+    def test_socket_timeout_applied_during_fetch(self, monkeypatch):
+        import socket
+
+        from app.universe.providers import (
+            _BAOSTOCK_SOCKET_TIMEOUT_SECONDS,
+            BaoStockUniverseProvider,
+        )
+
+        observed: dict = {}
+
+        def login():
+            observed["timeout"] = socket.getdefaulttimeout()
+            return type("R", (), {"error_code": "1", "error_msg": "fake"})()
+
+        self._install_fake_baostock(monkeypatch, login)
+        before = socket.getdefaulttimeout()
+        try:
+            with pytest.raises(ProviderError):
+                BaoStockUniverseProvider()._fetch_sync()
+            assert observed["timeout"] == _BAOSTOCK_SOCKET_TIMEOUT_SECONDS
+            # 不得把全局 socket 超时泄漏给其它线程/后续调用
+            assert socket.getdefaulttimeout() == before
+        finally:
+            socket.setdefaulttimeout(before)
+
+    def test_socket_timeout_restored_when_login_raises(self, monkeypatch):
+        import socket
+
+        from app.universe.providers import BaoStockUniverseProvider
+
+        def login():
+            raise OSError("connection reset")
+
+        self._install_fake_baostock(monkeypatch, login)
+        before = socket.getdefaulttimeout()
+        try:
+            # 原始异常类型不重要（fetch_all 会统一包成 ProviderError），
+            # 关键是 finally 里把全局 socket 超时还原回去。
+            with pytest.raises(OSError):
+                BaoStockUniverseProvider()._fetch_sync()
+            assert socket.getdefaulttimeout() == before
+        finally:
+            socket.setdefaulttimeout(before)

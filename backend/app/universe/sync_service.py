@@ -98,6 +98,9 @@ def _resolve_providers_from_settings() -> list[UniverseProvider]:
             providers.append(
                 BaoStockUniverseProvider(
                     timeout_seconds=settings.baostock_universe_timeout_seconds,
+                    bj_supplement_timeout_seconds=(
+                        settings.baostock_bj_supplement_timeout_seconds
+                    ),
                 )
             )
         elif name == "mock":

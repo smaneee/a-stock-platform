@@ -100,7 +100,8 @@ cd backend
 | `AUTO_CREATE_TABLES`      | 启动时自动建表（仅测试/演示）     | `false`                  |
 | `MARKET_PROVIDERS`        | 数据源优先级              | `tencent,akshare`        |
 | `UNIVERSE_PROVIDERS`      | 股票池主数据源优先级          | `baostock,akshare`       |
-| `BAOSTOCK_UNIVERSE_TIMEOUT_SECONDS` | BaoStock 股票池超时（秒） | `60` |
+| `BAOSTOCK_UNIVERSE_TIMEOUT_SECONDS` | BaoStock 股票池超时（秒） | `300` |
+| `BAOSTOCK_BJ_SUPPLEMENT_TIMEOUT_SECONDS` | AKShare BJ 子源超时（秒） | `60` |
 | `QUOTE_POLL_INTERVAL`     | 轮询间隔（秒）             | `3`                      |
 | `ROLLING_WINDOW_SIZE`     | 滚动窗口大小              | `300`                    |
 | `SIGNAL_COOLDOWN_SECONDS` | 信号冷却时间              | `60`                     |
