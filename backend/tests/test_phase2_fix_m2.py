@@ -14,7 +14,6 @@ import asyncio
 from datetime import date
 from decimal import Decimal
 
-import pytest
 from sqlalchemy import select
 
 from app.database.models import (
@@ -22,7 +21,6 @@ from app.database.models import (
     DailySettlementRecord,
     PaperAccount,
 )
-from app.database.session import Base
 from app.market_rules.calendar import (
     TradingCalendar,
     sync_trading_calendar,

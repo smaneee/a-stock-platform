@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
-from app.database.models import PaperAccount, PaperPosition, PaperTrade
+from app.database.models import PaperAccount, PaperPosition
 from app.paper_trading.broker import PaperBroker
 
 from tests.helpers import make_quote

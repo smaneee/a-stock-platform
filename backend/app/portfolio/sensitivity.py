@@ -7,11 +7,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from app.backtest.execution import ExecutionConfig
 from app.market_data.base import QuoteData
 from app.portfolio.config import PortfolioConfig
 from app.portfolio.engine import PortfolioBacktestEngine
-from app.strategies.base import Strategy
 
 
 def _run_with_config(

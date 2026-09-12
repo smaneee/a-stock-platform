@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from sqlalchemy import text
 
-from app.api.deps import get_provider_manager
 from app.database.session import SessionLocal
 
 logger = logging.getLogger(__name__)

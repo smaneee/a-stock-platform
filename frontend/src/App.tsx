@@ -10,6 +10,7 @@ import BacktestPage from "./pages/Backtest";
 import PortfolioBacktestPage from "./pages/PortfolioBacktest";
 import PaperTradingPage from "./pages/PaperTrading";
 import SelectionPage from "./pages/Selection";
+import MarketPage from "./pages/Market";
 
 export default function App() {
   return (
@@ -51,4 +52,3 @@ export default function App() {
     </div>
   );
 }
-import MarketPage from "./pages/Market";

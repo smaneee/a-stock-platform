@@ -6,14 +6,12 @@
 from __future__ import annotations
 
 import json
-import sys
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 

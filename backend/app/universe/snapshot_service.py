@@ -26,18 +26,16 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Sequence
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database.models import (
-    HistoryIngestBatch,
     Security,  # noqa: F401  ← snapshot 创建时仍需要 Security 拷贝业务字段
     UniverseMember,
     UniverseSnapshot,
 )
 from app.universe.exclusion import (
     ExclusionEngine,
-    classify_long_suspension_status,
     find_long_suspension_symbols,
     get_long_suspension_state,
 )

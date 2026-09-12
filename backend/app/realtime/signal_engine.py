@@ -14,7 +14,7 @@ from app.database.models import Signal as SignalModel
 from app.market_data.base import QuoteData
 from app.realtime.quote_cache import QuoteCache
 from app.realtime.websocket_manager import ConnectionManager
-from app.strategies.base import Signal, Strategy
+from app.strategies.base import Signal
 from app.time_utils import utc_now
 
 logger = logging.getLogger(__name__)

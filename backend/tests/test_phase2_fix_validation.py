@@ -10,14 +10,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import subprocess
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select
 
-from app.database.models import PortfolioBacktest
 from app.history.quality import QualityReport
 from app.history.service import HistoryResult
 from app.market_data.base import QuoteData

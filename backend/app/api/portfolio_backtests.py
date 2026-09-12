@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.database.models import PortfolioBacktest
 from app.database.session import get_db
-from app.tasks.status import CANCELLED, FAILED, RUNNING, SUCCEEDED
+from app.tasks.status import CANCELLED, FAILED, SUCCEEDED
 from app.validation import validate_symbol
 
 logger = logging.getLogger(__name__)

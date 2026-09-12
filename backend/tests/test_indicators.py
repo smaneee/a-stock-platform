@@ -1,5 +1,4 @@
 """技术指标计算测试。"""
-import math
 
 import pytest
 

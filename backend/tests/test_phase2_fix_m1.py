@@ -12,7 +12,6 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 
-import pytest
 from sqlalchemy import select
 
 from app.database.models import PaperAccount, PaperPosition, Security

@@ -1,5 +1,5 @@
 """后台回测任务 worker 测试。"""
-from datetime import date, datetime
+from datetime import datetime
 
 import pytest
 from sqlalchemy.orm import sessionmaker

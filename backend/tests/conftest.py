@@ -54,7 +54,7 @@ def _reset_app_engine_state():
 @pytest.fixture
 def db_session():
     """提供独立的内存 SQLite 会话。"""
-    from sqlalchemy import event, text
+    from sqlalchemy import event
 
     test_engine = create_engine(
         "sqlite:///:memory:",

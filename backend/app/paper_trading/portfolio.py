@@ -5,10 +5,9 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database.models import AssetRecord, PaperAccount, PaperPosition
