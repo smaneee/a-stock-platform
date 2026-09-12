@@ -37,7 +37,6 @@ from app.universe.providers import (
     ProviderError,
     SecurityRecord,
     UniverseProvider,
-    build_provider_by_name,
 )
 from app.universe.snapshot_service import UniverseSnapshotService  # noqa: F401 顶部 import，避免 conditional import 引发 UnboundLocalError
 
