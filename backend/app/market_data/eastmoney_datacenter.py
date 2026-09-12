@@ -2,7 +2,7 @@
 
 行情走 ``push2*/api/qt/*``、板块与资金流走 ``clist``，此外东财还提供一套结构化
 「数据中心」报表：龙虎榜、大宗交易、融资融券、沪深港通、机构调研、股东户数、
-限售解禁、业绩预告、分红送配。它们共用同一入口
+限售解禁、业绩预告、分红送配、高管持股变动、股权质押比例、可转债。它们共用同一入口
 ``datacenter-web.eastmoney.com/api/data/v1/get``，用 ``reportName`` 选择报表、
 用 ``filter`` 传过滤表达式。
 
@@ -438,6 +438,98 @@ DIVIDEND = DatasetSpec(
     ),
 )
 
+EXECUTIVE_HOLD = DatasetSpec(
+    key="executive-hold",
+    label="高管持股变动",
+    description="董监高及其关联人的持股变动：变动股数、成交均价、金额、占总股本比例与职务。",
+    report="RPT_EXECUTIVE_HOLD_DETAILS",
+    date_column="CHANGE_DATE",
+    symbol_column="SECURITY_CODE",
+    sort_column="CHANGE_DATE",
+    fields=(
+        Field("change_date", "CHANGE_DATE", "date", title="变动日期"),
+        Field("symbol", "SECURITY_CODE", "text", title="股票代码"),
+        Field("name", "SECURITY_NAME", "text", title="股票名称"),
+        Field("person_name", "PERSON_NAME", "text", title="姓名"),
+        Field("position", "POSITION_NAME", "text", title="职务"),
+        Field("change_shares", "CHANGE_SHARES", "num", title="变动股数(股)"),
+        Field("average_price", "AVERAGE_PRICE", "opt_num", title="成交均价(元)"),
+        Field("change_amount", "CHANGE_AMOUNT", "num", title="变动金额(元)"),
+        Field("change_ratio", "CHANGE_RATIO", "opt_num", title="占总股本(%)"),
+        Field("after_hold_num", "CHANGE_AFTER_HOLDNUM", "opt_num", title="变动后持股(股)"),
+        Field("hold_type", "HOLD_TYPE", "text", title="股份类型"),
+        Field("change_reason", "CHANGE_REASON", "text", title="变动原因"),
+        Field("related_person", "DSE_PERSON_NAME", "text", title="关联人"),
+        Field("relation", "PERSON_DSE_RELATION", "text", title="与董监高关系"),
+    ),
+)
+
+PLEDGE = DatasetSpec(
+    key="pledge",
+    label="股权质押比例",
+    description="个股质押快照：质押比例、质押股数与质押市值（单位万元/万股，可用股票代码过滤）。",
+    report="RPT_CSDC_LIST",
+    date_column="TRADE_DATE",
+    symbol_column="SECURITY_CODE",
+    sort_column="TRADE_DATE",
+    fields=(
+        Field("trade_date", "TRADE_DATE", "date", title="交易日期"),
+        Field("symbol", "SECURITY_CODE", "text", title="股票代码"),
+        Field("name", "SECURITY_NAME_ABBR", "text", title="股票名称"),
+        Field("pledge_ratio", "PLEDGE_RATIO", "opt_num", title="质押比例(%)"),
+        Field("pledge_shares", "REPURCHASE_BALANCE", "opt_num", title="质押股数(万股)"),
+        Field("pledge_deal_num", "PLEDGE_DEAL_NUM", "opt_num", title="质押笔数"),
+        Field("pledge_market_cap", "PLEDGE_MARKET_CAP", "opt_num", title="质押市值(万元)"),
+        Field(
+            "unlimited_balance",
+            "REPURCHASE_UNLIMITED_BALANCE",
+            "opt_num",
+            title="无限售质押股数(万股)",
+        ),
+        Field(
+            "limited_balance",
+            "REPURCHASE_LIMITED_BALANCE",
+            "opt_num",
+            title="有限售质押股数(万股)",
+        ),
+        Field("industry", "INDUSTRY", "text", title="所属行业"),
+        Field("stat_month", "PAYYEAR", "text", title="统计月份"),
+    ),
+)
+
+CONVERTIBLE_BOND = DatasetSpec(
+    key="convertible-bond",
+    label="可转债",
+    description="可转债发行与条款：信用评级、发行规模、票面利率、初始转股价与到期日（可用转债代码过滤；赎回/回售条款原文过长，未列入表格）。",
+    report="RPT_BOND_CB_LIST",
+    symbol_column="SECURITY_CODE",
+    sort_column="LISTING_DATE",
+    fields=(
+        Field("symbol", "SECURITY_CODE", "text", title="转债代码"),
+        Field("name", "SECURITY_NAME_ABBR", "text", title="转债名称"),
+        Field("stock_symbol", "CONVERT_STOCK_CODE", "text", title="正股代码"),
+        Field("rating", "RATING", "text", title="信用评级"),
+        Field("issue_scale", "ACTUAL_ISSUE_SCALE", "opt_num", title="发行规模(亿元)"),
+        Field("par_value", "PAR_VALUE", "opt_num", title="面值(元)"),
+        Field("issue_price", "ISSUE_PRICE", "opt_num", title="发行价(元)"),
+        Field("coupon_rate", "COUPON_IR", "opt_num", title="票面利率(%)"),
+        Field(
+            "initial_transfer_price",
+            "INITIAL_TRANSFER_PRICE",
+            "opt_num",
+            title="初始转股价(元)",
+        ),
+        Field("value_date", "VALUE_DATE", "date", title="起息日"),
+        Field("listing_date", "LISTING_DATE", "date", title="上市日期"),
+        Field("transfer_start_date", "TRANSFER_START_DATE", "date", title="转股起始日"),
+        Field("transfer_end_date", "TRANSFER_END_DATE", "date", title="转股截止日"),
+        Field("expire_date", "EXPIRE_DATE", "date", title="到期日"),
+        Field("is_convert_stock", "IS_CONVERT_STOCK", "text", title="是否可转股"),
+        Field("is_redeem", "IS_REDEEM", "text", title="是否可赎回"),
+        Field("is_sellback", "IS_SELLBACK", "text", title="是否可回售"),
+    ),
+)
+
 
 DATASETS: dict[str, DatasetSpec] = {
     spec.key: spec
@@ -451,6 +543,9 @@ DATASETS: dict[str, DatasetSpec] = {
         RESTRICTED_RELEASE,
         EARNINGS_FORECAST,
         DIVIDEND,
+        EXECUTIVE_HOLD,
+        PLEDGE,
+        CONVERTIBLE_BOND,
     )
 }
 

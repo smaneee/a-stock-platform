@@ -20,6 +20,7 @@ import {
   listStockFundFlowRank,
 } from "../lib/api";
 import DatacenterPanel from "../components/DatacenterPanel";
+import LimitUpPanel from "../components/LimitUpPanel";
 import type { BoardKind, FundFlowPoint, FundFlowRow } from "../lib/types";
 
 const BOARD_KINDS: Array<{ value: BoardKind; label: string }> = [
@@ -32,6 +33,7 @@ const TABS = [
   { value: "boards", label: "板块行情" },
   { value: "board-flow", label: "板块资金流" },
   { value: "stock-flow", label: "个股资金流" },
+  { value: "limit-up", label: "涨停板" },
   { value: "datacenter", label: "数据中心" },
 ] as const;
 
@@ -367,6 +369,8 @@ export default function MarketPage() {
       )}
 
       {tab === "datacenter" && <DatacenterPanel />}
+
+      {tab === "limit-up" && <LimitUpPanel />}
 
       {tab === "stock-flow" && (
         <div className="space-y-4">

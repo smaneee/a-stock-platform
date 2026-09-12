@@ -9,6 +9,7 @@
 - A 股实时行情监控（东方财富 / 腾讯 / AKShare / QMT 多源故障转移，免费源约 3 秒轮询自选股）
 - 全市场股票池（东方财富 / BaoStock / AKShare，point-in-time 不可变交易日快照）
 - 东方财富板块行情、资金流与数据中心（龙虎榜、大宗交易、融资融券、沪深港通、机构调研等）
+- 东方财富涨停板情绪池（涨停 / 跌停 / 炸板 / 强势 / 次新，含封板资金、连板数与所属行业）
 - 自选股管理
 - 技术指标计算（MA / EMA / MACD / RSI / 成交量均线 / 涨跌幅 / 振幅 / 量比）
 - 策略信号生成（MA 交叉、放量突破、RSI 超买超卖、MACD 金叉死叉）
@@ -188,6 +189,8 @@ cd backend
 | GET      | `/api/market/datacenter`                | 数据中心数据集目录与字段说明                 |
 | GET      | `/api/market/datacenter/{dataset}`      | 数据中心数据集查询（支持日期区间与股票代码）        |
 | GET      | `/api/market/datacenter/dragon-tiger/{symbol}/seats` | 龙虎榜买入/卖出席位明细          |
+| GET      | `/api/market/limit-up`                  | 涨停板情绪池目录（涨停/跌停/炸板/强势/次新）    |
+| GET      | `/api/market/limit-up/{pool}`           | 单个情绪池的最近交易日快照（支持分页与排序）      |
 | GET      | `/api/quotes/{symbol}`                  | 单只行情                           |
 | POST     | `/api/quotes/batch`                     | 批量行情                           |
 | GET/POST | `/api/watchlists`                       | 自选股列表                          |
@@ -247,7 +250,8 @@ cd backend
 | ------------- | ------ | ---------------------------------------------------------- |
 | QMT/xtdata    | 正式实时行情 | 可选，推送模式，延迟 <1s                                             |
 | 东方财富（Eastmoney） | 免费轮询 + 股票池 | 默认首选：实时行情 `ulist.np`、分时 `trends2`、日/周/月 K 线 `kline`（K 线受本机路径限流，见「已知限制」8）；股票池 `clist/get` |
-| 东方财富数据中心   | 横截面研究数据 | 龙虎榜与席位、大宗交易、融资融券、沪深港通、机构调研、股东户数、限售解禁、业绩预告、分红送配 |
+| 东方财富数据中心   | 横截面研究数据 | 龙虎榜与席位、大宗交易、融资融券、沪深港通、机构调研、股东户数、限售解禁、业绩预告、分红送配、高管持股变动、股权质押比例、可转债 |
+| 东方财富涨停板行情 | 情绪与打板数据 | `push2ex.eastmoney.com`：涨停/跌停/炸板/强势/次新 5 个池，含封板资金、连板数、封板时间 |
 | 腾讯行情          | 免费轮询   | 备援实时行情；东财被限流熔断时接管                                          |
 | AKShare       | 历史数据   | 东财 / 新浪双通道（东财通道与 EastmoneyProvider 同源）                     |
 | BaoStock      | 股票池备援  | 按交易日成员、上市日期与当日停牌状态；支持历史交易日快照，东财股票池的回退目标              |
@@ -293,7 +297,7 @@ ProviderManager 在一次请求内不会对同一上游重复请求。
 
 ### 东方财富数据中心（`/api/market/datacenter*`）
 
-数据中心走 `datacenter-web.eastmoney.com/api/data/v1/get`，以 `reportName` 选报表。9 个数据集共用
+数据中心走 `datacenter-web.eastmoney.com/api/data/v1/get`，以 `reportName` 选报表。12 个数据集共用
 一套声明式字段映射（输出名 / 东财列名 / 解析方式 / 中文表头），前端表头直接由
 `GET /api/market/datacenter` 的返回驱动，新增数据集无需改前端。
 
@@ -309,6 +313,9 @@ ProviderManager 在一次请求内不会对同一上游重复请求。
 | `restricted-release` | `RPT_LIFT_STAGE`                    | 限售解禁（含未来日期，建议配合 `date_from`） |
 | `earnings-forecast` | `RPT_PUBLIC_OP_NEWPREDICT`           | 业绩预告                     |
 | `dividend`          | `RPT_SHAREBONUS_DET`                 | 分红送配                     |
+| `executive-hold`    | `RPT_EXECUTIVE_HOLD_DETAILS`         | 高管持股变动（职务、均价、变动金额与变动比例）  |
+| `pledge`            | `RPT_CSDC_LIST`                      | 股权质押比例（质押股数/市值按万股、万元）    |
+| `convertible-bond`  | `RPT_BOND_CB_LIST`                   | 可转债发行与条款（评级、规模、票面利率、转股价） |
 
 实现细节：
 
@@ -320,6 +327,29 @@ ProviderManager 在一次请求内不会对同一上游重复请求。
 - 金额统一换算为元：沪深港通报表的金额列东财以**百万元**计（沪股通 `142256.09` ≈ 1422.6 亿元，
   与十大成交股合计约 171 亿元一致），服务端乘 `1e6` 后返回；`HOLD_MARKET_CAP` 本身是元。
 - 上游若改名或删列，解析时会立即抛错（`EastmoneyDataError`），不会静默返回一堆 0。
+- 按上游口径返回、不做二次换算的数据集：`pledge` 的质押股数是**万股**、质押市值是**万元**
+  （实查 000001 为 2438.48 万股 / 28627.76 万元，折合股价 11.74 元，与当日行情一致）；
+  `convertible-bond` 的发行规模是**亿元**。可转债报表没有可靠的逐行交易日，因此不支持
+  `date` 过滤，只按转债代码过滤；赎回/回售条款原文长达数百字，未列入表格。
+
+### 东方财富涨停板情绪池（`/api/market/limit-up*`）
+
+涨停板行情走 `push2ex.eastmoney.com`，共 5 个池：涨停股池 `getTopicZTPool`、
+跌停股池 `getTopicDTPool`、炸板股池 `getTopicZBPool`、强势股池 `getTopicQSPool`、
+次新股池 `getTopicCXPool`。`GET /api/market/limit-up` 返回池目录与字段声明（前端表头据此渲染），
+`GET /api/market/limit-up/{pool}` 返回某池的最近交易日快照，支持 `limit`（≤200）、`page`
+与 `order`（排序字段由各池声明，如涨停池按首次封板时间升序、跌停池按封单资金降序）。
+
+口径与局限：
+
+- 价格字段是「元 × 1000」（`13880` = 13.88 元），已逐只与腾讯行情核对（000993 13.88 /
+  002161 8.04 / 002790 9.31）。上市首日等「无涨跌幅限制」场景上游给 `1e9` 占位，
+  超出合理价格区间时返回 `null`，不会显示成 1000000.00 元。
+- `fbt` / `lbt` 是 HHMMSS 整数（`92500` → `09:25:00`）；`zttj` 是 `{days, ct}` 对象，
+  统一输出为「3天3板」。
+- **`date` 参数被上游忽略**（实测传 20260909 / 20260910 / 20260912 都返回同一交易日），
+  因此只提供「最近交易日」快照，并把上游回传的 `qdate` 作为 `trade_date` 返回，
+  **不提供历史查询**；需要历史情绪数据请另行入库。
 
 ## 智能选股
 

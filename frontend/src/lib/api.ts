@@ -37,6 +37,8 @@ import type {
   LiveRebalancePlan,
   LiveTradingStatus,
   StockFundFlowHistoryResponse,
+  LimitUpCatalogResponse,
+  LimitUpPoolResponse,
 } from "./types";
 
 const BASE = "/api";
@@ -457,3 +459,18 @@ export const fetchDragonTigerSeats = (
     `/market/datacenter/dragon-tiger/${symbol}/seats`,
     { params: compactParams({ trade_date: tradeDate, limit }) },
   );
+
+// ---------- 东方财富：涨停板情绪池 ----------
+
+export const fetchLimitUpCatalog = () =>
+  request<LimitUpCatalogResponse>("/market/limit-up");
+
+export const fetchLimitUpPool = (
+  pool: string,
+  limit = 50,
+  page = 1,
+  order?: "desc" | "asc",
+) =>
+  request<LimitUpPoolResponse>(`/market/limit-up/${pool}`, {
+    params: order ? { limit, page, order } : { limit, page },
+  });

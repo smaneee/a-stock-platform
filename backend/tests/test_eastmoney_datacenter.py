@@ -3,12 +3,15 @@ import httpx
 import pytest
 
 from app.market_data.eastmoney_datacenter import (
+    CONVERTIBLE_BOND,
     DATASETS,
     DATA_HOSTS,
     DRAGON_TIGER,
     DRAGON_TIGER_SEATS,
+    EXECUTIVE_HOLD,
     MUTUAL_TYPE_LABELS,
     NORTHBOUND,
+    PLEDGE,
     DatasetSpec,
     EastmoneyDataError,
     EastmoneyDatacenterService,
@@ -57,7 +60,7 @@ def _service(handler, **kwargs) -> EastmoneyDatacenterService:
 def test_catalog_describes_every_dataset():
     catalog = dataset_catalog()
     assert [item["key"] for item in catalog] == list(DATASETS)
-    assert len(catalog) == 9
+    assert len(catalog) == 12
     for item in catalog:
         assert item["label"]
         assert item["description"]
@@ -79,6 +82,23 @@ def test_declared_fields_are_unique():
 def test_date_and_symbol_support_flags():
     assert DRAGON_TIGER.supports_date and DRAGON_TIGER.supports_symbol
     assert NORTHBOUND.supports_date and not NORTHBOUND.supports_symbol
+
+
+def test_new_datasets_are_registered_with_expected_labels():
+    assert [EXECUTIVE_HOLD.key, PLEDGE.key, CONVERTIBLE_BOND.key] == [
+        "executive-hold",
+        "pledge",
+        "convertible-bond",
+    ]
+    assert [item.label for item in (EXECUTIVE_HOLD, PLEDGE, CONVERTIBLE_BOND)] == [
+        "高管持股变动",
+        "股权质押比例",
+        "可转债",
+    ]
+    assert EXECUTIVE_HOLD.supports_date and EXECUTIVE_HOLD.supports_symbol
+    assert PLEDGE.supports_date and PLEDGE.supports_symbol
+    # 可转债报表没有逐行交易日，按代码过滤即可
+    assert CONVERTIBLE_BOND.supports_symbol and not CONVERTIBLE_BOND.supports_date
 
 
 # ──────── 行解析 ────────
@@ -105,6 +125,49 @@ def test_parse_rows_maps_declared_fields():
     assert parsed["billboard_net_amount"] == -30848753.0
     assert parsed["reason"] == "日跌幅达到15%的前5只证券"
     assert parsed["change_1d_pct"] is None
+
+
+def test_parse_rows_keeps_signed_executive_change():
+    """减持是负数：变动股数与变动金额必须保留符号，不能被 em_to_float 抹平。"""
+    row = _row(
+        EXECUTIVE_HOLD,
+        SECURITY_CODE="600165",
+        SECURITY_NAME="宁科生物",
+        PERSON_NAME="符杰",
+        POSITION_NAME="董事",
+        CHANGE_SHARES=-300000,
+        AVERAGE_PRICE=3.21,
+        CHANGE_AMOUNT=-963000,
+        CHANGE_RATIO=0.0186,
+        CHANGE_AFTER_HOLDNUM=780500,
+    )
+    parsed = _parse_rows(EXECUTIVE_HOLD, [row])[0]
+    assert parsed["change_date"] == "2026-09-11"
+    assert parsed["symbol"] == "600165"
+    assert parsed["person_name"] == "符杰"
+    assert parsed["position"] == "董事"
+    assert parsed["change_shares"] == -300000.0
+    assert parsed["change_amount"] == -963000.0
+    assert parsed["change_ratio"] == 0.0186
+
+
+def test_pledge_fields_keep_upstream_units():
+    """质押股数与质押市值按上游口径返回万股 / 万元，不做二次换算。"""
+    row = _row(
+        PLEDGE,
+        SECURITY_CODE="000001",
+        SECURITY_NAME_ABBR="平安银行",
+        PLEDGE_RATIO=0.13,
+        REPURCHASE_BALANCE=2438.48,
+        PLEDGE_MARKET_CAP=28627.7552,
+    )
+    parsed = _parse_rows(PLEDGE, [row])[0]
+    assert parsed["pledge_ratio"] == 0.13
+    assert parsed["pledge_shares"] == 2438.48
+    assert parsed["pledge_market_cap"] == 28627.7552
+    titles = [item.title for item in PLEDGE.fields]
+    assert "质押股数(万股)" in titles
+    assert "质押市值(万元)" in titles
 
 
 def test_parse_rows_handles_dash_and_empty():

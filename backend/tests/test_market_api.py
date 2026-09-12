@@ -12,6 +12,7 @@ from app.market_data.eastmoney_market import (
     FundFlowPoint,
     FundFlowRow,
 )
+from app.market_data.eastmoney_limit_up import LIMIT_UP, LimitUpResult
 
 
 def _board() -> BoardQuote:
@@ -148,12 +149,40 @@ class _StubDatacenterService:
         return None
 
 
-def _client(service: _StubMarketService, datacenter=None) -> TestClient:
+class _StubLimitUpService:
+    """可控的涨停板情绪池桩服务。"""
+
+    def __init__(self, *, exc: Exception | None = None):
+        self._exc = exc
+        self.calls: list[tuple] = []
+
+    def _check(self, *call) -> None:
+        self.calls.append(call)
+        if self._exc is not None:
+            raise self._exc
+
+    async def query(self, pool, **kwargs):
+        self._check("query", pool, kwargs)
+        return LimitUpResult(
+            pool=LIMIT_UP,
+            trade_date="2026-09-11",
+            total=40,
+            page=kwargs.get("page", 1),
+            items=[{"symbol": "000993", "name": "闽东电力", "price": 13.88}],
+        )
+
+    async def close(self) -> None:
+        return None
+
+
+def _client(service: _StubMarketService, datacenter=None, limit_up=None) -> TestClient:
     client = TestClient(app)
     client.__enter__()
     client.app.state.market_service = service
     if datacenter is not None:
         client.app.state.datacenter_service = datacenter
+    if limit_up is not None:
+        client.app.state.limit_up_service = limit_up
     return client
 
 
@@ -271,9 +300,11 @@ def test_datacenter_catalog_lists_datasets():
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["count"] == 9
+    assert body["count"] == 12
     keys = [item["key"] for item in body["datasets"]]
     assert "dragon-tiger" in keys and "northbound" in keys
+    assert "executive-hold" in keys and "pledge" in keys
+    assert "convertible-bond" in keys
     dragon = body["datasets"][keys.index("dragon-tiger")]
     assert dragon["supports_date"] is True
     assert dragon["supports_symbol"] is True
@@ -387,4 +418,83 @@ def test_dragon_tiger_seats_rejects_bad_symbol():
     finally:
         client.__exit__(None, None, None)
     assert resp.status_code == 422
+    assert service.calls == []
+
+
+# ──────── 涨停板情绪池 ────────
+
+
+def test_limit_up_catalog_lists_pools():
+    client = _client(_StubMarketService())
+    try:
+        resp = client.get("/api/market/limit-up")
+    finally:
+        client.__exit__(None, None, None)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 5
+    keys = [item["key"] for item in body["pools"]]
+    assert keys == ["limit-up", "limit-down", "broken-board", "strong", "sub-new"]
+    limit_up = body["pools"][keys.index("limit-up")]
+    assert limit_up["label"] == "涨停股池"
+    assert any(field["title"] == "封板资金(元)" for field in limit_up["fields"])
+
+
+def test_limit_up_pool_returns_items():
+    service = _StubLimitUpService()
+    client = _client(_StubMarketService(), limit_up=service)
+    try:
+        resp = client.get(
+            "/api/market/limit-up/limit-up", params={"limit": 3, "page": 2}
+        )
+    finally:
+        client.__exit__(None, None, None)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pool"] == "limit-up"
+    assert body["label"] == "涨停股池"
+    assert body["trade_date"] == "2026-09-11"
+    assert body["total"] == 40
+    assert body["count"] == 1
+    assert body["items"][0]["symbol"] == "000993"
+    assert service.calls == [
+        ("query", "limit-up", {"limit": 3, "page": 2, "order": None})
+    ]
+
+
+def test_limit_up_pool_rejects_bad_pool():
+    service = _StubLimitUpService(exc=ValueError("未知情绪池: 'bogus'"))
+    client = _client(_StubMarketService(), limit_up=service)
+    try:
+        resp = client.get("/api/market/limit-up/bogus")
+    finally:
+        client.__exit__(None, None, None)
+    assert resp.status_code == 422
+    assert "未知情绪池" in resp.json()["detail"]
+
+
+def test_limit_up_pool_returns_503_when_source_down():
+    service = _StubLimitUpService(exc=RuntimeError("all hosts down"))
+    client = _client(_StubMarketService(), limit_up=service)
+    try:
+        resp = client.get("/api/market/limit-up/limit-up")
+    finally:
+        client.__exit__(None, None, None)
+    assert resp.status_code == 503
+
+
+def test_limit_up_pool_validates_query_bounds():
+    service = _StubLimitUpService()
+    client = _client(_StubMarketService(), limit_up=service)
+    try:
+        too_big = client.get("/api/market/limit-up/limit-up", params={"limit": 999})
+        bad_order = client.get(
+            "/api/market/limit-up/limit-up", params={"order": "sideways"}
+        )
+    finally:
+        client.__exit__(None, None, None)
+    assert too_big.status_code == 422
+    assert bad_order.status_code == 422
     assert service.calls == []

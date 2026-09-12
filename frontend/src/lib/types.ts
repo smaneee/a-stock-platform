@@ -583,3 +583,36 @@ export interface DragonTigerSeatsResponse {
   buy: DatacenterRow[];
   sell: DatacenterRow[];
 }
+
+/** 涨停板情绪池：字段说明（kind 决定前端格式化方式）。 */
+export interface LimitUpFieldInfo {
+  key: string;
+  title: string;
+  kind: string;
+}
+
+/** 情绪池自描述信息（涨停 / 跌停 / 炸板 / 强势 / 次新）。 */
+export interface LimitUpPoolInfo {
+  key: string;
+  label: string;
+  description: string;
+  fields: LimitUpFieldInfo[];
+}
+
+export interface LimitUpCatalogResponse {
+  count: number;
+  pools: LimitUpPoolInfo[];
+}
+
+/** 情绪池一行；「无涨跌幅限制」的个股涨停价会是 null。 */
+export type LimitUpRow = Record<string, string | number | null>;
+
+export interface LimitUpPoolResponse {
+  pool: string;
+  label: string;
+  trade_date: string;
+  total: number;
+  page: number;
+  count: number;
+  items: LimitUpRow[];
+}

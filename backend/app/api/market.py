@@ -13,10 +13,18 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel
 
-from app.api.deps import get_datacenter_service, get_market_service
+from app.api.deps import (
+    get_datacenter_service,
+    get_limit_up_service,
+    get_market_service,
+)
 from app.market_data.eastmoney_datacenter import (
     EastmoneyDatacenterService,
     dataset_catalog,
+)
+from app.market_data.eastmoney_limit_up import (
+    EastmoneyLimitUpService,
+    pool_catalog,
 )
 from app.market_data.eastmoney_market import (
     BOARD_KINDS,
@@ -55,6 +63,34 @@ class StockFundFlowHistoryResponse(BaseModel):
     symbol: str
     count: int
     items: list[FundFlowPoint]
+
+
+class LimitUpFieldInfo(BaseModel):
+    key: str
+    title: str
+    kind: str
+
+
+class LimitUpPoolInfo(BaseModel):
+    key: str
+    label: str
+    description: str
+    fields: list[LimitUpFieldInfo]
+
+
+class LimitUpCatalogResponse(BaseModel):
+    count: int
+    pools: list[LimitUpPoolInfo]
+
+
+class LimitUpPoolResponse(BaseModel):
+    pool: str
+    label: str
+    trade_date: str
+    total: int
+    page: int
+    count: int
+    items: list[dict[str, Any]]
 
 
 class DatacenterFieldInfo(BaseModel):
@@ -191,6 +227,39 @@ async def datacenter_catalog() -> DatacenterCatalogResponse:
     """数据集目录与字段说明（前端据此渲染表头与筛选条件）。"""
     datasets = [DatacenterDatasetInfo(**item) for item in dataset_catalog()]
     return DatacenterCatalogResponse(count=len(datasets), datasets=datasets)
+
+
+@router.get("/limit-up", response_model=LimitUpCatalogResponse)
+async def limit_up_catalog() -> LimitUpCatalogResponse:
+    """涨停板情绪池目录（涨停 / 跌停 / 炸板 / 强势 / 次新）。"""
+    pools = [LimitUpPoolInfo(**item) for item in pool_catalog()]
+    return LimitUpCatalogResponse(count=len(pools), pools=pools)
+
+
+@router.get("/limit-up/{pool}", response_model=LimitUpPoolResponse)
+async def limit_up_pool(
+    pool: str,
+    limit: int = Query(50, ge=1, le=200),
+    page: int = Query(1, ge=1),
+    order: str | None = Query(None, pattern="^(asc|desc)$"),
+    service: EastmoneyLimitUpService = Depends(get_limit_up_service),
+) -> LimitUpPoolResponse:
+    """单个情绪池的最近交易日快照（上游不提供历史日期，date 参数会被忽略）。"""
+    try:
+        result = await service.query(pool, limit=limit, page=page, order=order)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise _unavailable(exc)
+    return LimitUpPoolResponse(
+        pool=result.pool.key,
+        label=result.pool.label,
+        trade_date=result.trade_date,
+        total=result.total,
+        page=result.page,
+        count=len(result.items),
+        items=result.items,
+    )
 
 
 @router.get(

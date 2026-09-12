@@ -37,6 +37,7 @@ from app.logging_config import setup_logging
 from app.market_data.akshare_provider import AkshareProvider
 from app.market_data.eastmoney_market import EastmoneyMarketService
 from app.market_data.eastmoney_datacenter import EastmoneyDatacenterService
+from app.market_data.eastmoney_limit_up import EastmoneyLimitUpService
 from app.market_data.eastmoney_provider import EastmoneyProvider
 from app.market_data.mock_provider import MockProvider
 from app.market_data.provider_manager import ProviderManager
@@ -222,6 +223,7 @@ async def lifespan(app: FastAPI):
         await app.state.provider_manager.close()
         await app.state.market_service.close()
         await app.state.datacenter_service.close()
+        await app.state.limit_up_service.close()
         logger.info("后端已关闭")
 
 
@@ -252,6 +254,8 @@ def create_app() -> FastAPI:
     market_service = EastmoneyMarketService()
     # 东方财富数据中心（龙虎榜 / 大宗 / 融资融券 / 沪深港通 …）只读服务
     datacenter_service = EastmoneyDatacenterService()
+    # 东方财富涨停板行情（涨停/跌停/炸板/强势/次新情绪池）只读服务
+    limit_up_service = EastmoneyLimitUpService()
     quote_cache = QuoteCache()
     connection_manager = ConnectionManager()
     signal_engine = SignalEngine(
@@ -283,6 +287,7 @@ def create_app() -> FastAPI:
     app.state.provider_manager = provider_manager
     app.state.market_service = market_service
     app.state.datacenter_service = datacenter_service
+    app.state.limit_up_service = limit_up_service
     # 把当前实际在跑的 provider 注册到 metrics（决定 data_status）
     _register_active_providers(provider_manager)
     app.state.quote_cache = quote_cache

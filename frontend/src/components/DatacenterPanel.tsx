@@ -13,10 +13,10 @@ import {
 } from "../lib/api";
 import type {
   DatacenterDatasetInfo,
-  DatacenterFieldInfo,
   DatacenterRow,
   DragonTigerSeatsResponse,
 } from "../lib/types";
+import { formatCell, formatNumber, trendClass } from "../lib/format";
 
 const PAGE_SIZE = 50;
 
@@ -25,38 +25,6 @@ const th = "px-3 py-2 text-left text-xs font-medium text-slate-400 whitespace-no
 const td = "px-3 py-2 text-sm whitespace-nowrap";
 const input =
   "bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-200 numeric";
-
-/** A 股习惯：红涨绿跌 */
-const trendClass = (value: number) =>
-  value > 0 ? "text-rose-400" : value < 0 ? "text-emerald-400" : "text-slate-400";
-
-const pct = (value: number) => `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
-
-/** 按量级自动换算，价格保留两位小数，金额显示为万/亿。 */
-const formatNumber = (value: number): string => {
-  const abs = Math.abs(value);
-  if (abs >= 1e8) return `${(value / 1e8).toFixed(2)}亿`;
-  if (abs >= 1e6) return `${(value / 1e4).toFixed(1)}万`;
-  return value.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
-};
-
-function formatCell(field: DatacenterFieldInfo, raw: DatacenterRow[string]) {
-  if (raw === null || raw === undefined || raw === "") {
-    return <span className="text-slate-600">—</span>;
-  }
-  if (field.kind === "date" || field.kind === "text") {
-    return <span className="text-slate-300">{String(raw)}</span>;
-  }
-  const value = Number(raw);
-  if (!Number.isFinite(value)) {
-    return <span className="text-slate-300">{String(raw)}</span>;
-  }
-  // 百分比字段带涨跌色，其余保持中性，避免把成交额也染成红绿
-  if (field.title.includes("(%)")) {
-    return <span className={`numeric ${trendClass(value)}`}>{pct(value)}</span>;
-  }
-  return <span className="numeric text-slate-300">{formatNumber(value)}</span>;
-}
 
 function SeatsTable({ title, rows }: { title: string; rows: DatacenterRow[] }) {
   return (

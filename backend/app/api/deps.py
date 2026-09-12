@@ -8,6 +8,7 @@ from fastapi import Request
 
 from app.market_data.provider_manager import ProviderManager
 from app.market_data.eastmoney_datacenter import EastmoneyDatacenterService
+from app.market_data.eastmoney_limit_up import EastmoneyLimitUpService
 from app.market_data.eastmoney_market import EastmoneyMarketService
 from app.realtime.quote_cache import QuoteCache
 from app.realtime.signal_engine import SignalEngine
@@ -24,6 +25,10 @@ def get_market_service(request: Request) -> EastmoneyMarketService:
 
 def get_datacenter_service(request: Request) -> EastmoneyDatacenterService:
     return request.app.state.datacenter_service
+
+
+def get_limit_up_service(request: Request) -> EastmoneyLimitUpService:
+    return request.app.state.limit_up_service
 
 
 def get_quote_cache(request: Request) -> QuoteCache:
