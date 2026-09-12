@@ -6,12 +6,18 @@
 
 ## 功能特性
 
-- A 股实时行情监控（免费源约 3 秒轮询自选股）
+- A 股实时行情监控（东方财富 / 腾讯 / AKShare / QMT 多源故障转移，免费源约 3 秒轮询自选股）
+- 全市场股票池（东方财富 / BaoStock / AKShare，point-in-time 不可变交易日快照）
+- 东方财富板块行情、资金流与数据中心（龙虎榜、大宗交易、融资融券、沪深港通、机构调研等）
 - 自选股管理
 - 技术指标计算（MA / EMA / MACD / RSI / 成交量均线 / 涨跌幅 / 振幅 / 量比）
 - 策略信号生成（MA 交叉、放量突破、RSI 超买超卖、MACD 金叉死叉）
-- 历史回测（T+1、涨跌停、停牌、手续费、滑点、无未来数据）
+- 历史回测与组合回测（T+1、涨跌停、停牌、手续费、滑点、无未来数据）
+- 全市场历史入库（日线本地缓存，东财 → 新浪 → BaoStock 回退链）
+- 智能选股与样本外评估（多因子排名、RankIC、换手率、模拟调仓草案）
 - 模拟交易（含风控：仓位、日亏损、回撤、T+1、信号幂等）
+- 每日流水线（股票池 → 历史入库 → 选股 → 模拟调仓，可恢复、可选自动调度）
+- QMT 实盘通道（只读对账、一次性令牌、固定风险确认，默认关闭）
 - WebSocket 实时推送（行情 + 信号）
 
 ## 技术栈
@@ -96,19 +102,37 @@ cd backend
 
 | 变量                        | 说明                  | 默认值                      |
 | ------------------------- | ------------------- | ------------------------ |
+| `HOST` / `PORT`           | 服务监听地址与端口           | `127.0.0.1` / `8000`     |
+| `DEBUG` / `LOG_LEVEL`     | 调试开关与日志级别           | `false` / `INFO`         |
 | `DATABASE_URL`            | 数据库连接串              | `sqlite:///./a_stock.db` |
 | `AUTO_CREATE_TABLES`      | 启动时自动建表（仅测试/演示）     | `false`                  |
+| `CORS_ORIGINS`            | 允许跨域的来源（逗号分隔）       | `http://localhost:3000,http://127.0.0.1:3000` |
+| `E2E_USE_MOCK`            | 测试/CI/managed E2E 强制改用 mock 数据源 | `false` |
 | `MARKET_PROVIDERS`        | 数据源优先级（eastmoney/tencent/akshare/qmt/mock） | `eastmoney,tencent,akshare` |
 | `UNIVERSE_PROVIDERS`      | 股票池主数据源优先级（eastmoney/baostock/akshare） | `eastmoney,baostock,akshare` |
 | `EASTMONEY_UNIVERSE_TIMEOUT_SECONDS` | 东方财富股票池整轮超时（秒） | `90` |
 | `BAOSTOCK_UNIVERSE_TIMEOUT_SECONDS` | BaoStock 股票池超时（秒） | `300` |
 | `BAOSTOCK_BJ_SUPPLEMENT_TIMEOUT_SECONDS` | AKShare BJ 子源超时（秒） | `60` |
+| `AKSHARE_UNIVERSE_TIMEOUT_SECONDS` | AKShare 股票池超时（秒） | `30` |
+| `UNIVERSE_MAX_RETRIES`    | 股票池同步每个 provider 的重试次数 | `2` |
+| `UNIVERSE_BACKOFF_BASE_MS` | 股票池重试退避基数（毫秒）     | `50`                     |
 | `QUOTE_POLL_INTERVAL`     | 轮询间隔（秒）             | `3`                      |
 | `ROLLING_WINDOW_SIZE`     | 滚动窗口大小              | `300`                    |
 | `SIGNAL_COOLDOWN_SECONDS` | 信号冷却时间              | `60`                     |
 | `MAX_QUOTE_AGE_SECONDS`   | 行情时效阈值（超过则拒绝成交）     | `15`                     |
+| `HISTORY_INGEST_MAX_CONCURRENCY` | 全市场历史入库后台并发 | `4` |
+| `TENCENT_API_KEY`         | 腾讯行情密钥（免费接口一般无需）   | `YOUR_API_KEY`           |
+| `AKSHARE_API_KEY`         | AKShare 密钥（免费，一般无需）  | `YOUR_API_KEY`           |
+| `REAL_TRADING_ENABLED`    | 是否启用 QMT 实盘通道       | `false`                  |
+| `QMT_ACCOUNT_TYPE`        | QMT 账户类型             | `STOCK`                  |
+| `QMT_CALL_TIMEOUT_SECONDS` | QMT SDK 调用超时（秒）     | `10`                     |
+| `DAILY_PIPELINE_AUTO_LOOKBACK_DAYS` | 每日流水线历史入库回看天数 | `365` |
 | `RATE_LIMIT_PER_MINUTE`   | 单 IP 每分钟最大请求数（0 关闭） | `300`                    |
 | `WS_MAX_SUBSCRIPTIONS`    | 单 WebSocket 最大订阅数   | `200`                    |
+
+上表为常用配置；完整变量（含 `QMT_USERDATA_PATH`、`QMT_ACCOUNT_ID`、`LIVE_TRADING_API_TOKEN`、
+`LIVE_RECONCILE_INTERVAL_SECONDS`、`DAILY_PIPELINE_AUTO_*`、`RISK_*` 等）见
+`backend/.env.example`，其中每一项都带有用途说明。
 
 ## 数据库迁移
 
@@ -177,6 +201,10 @@ cd backend
 | GET      | `/api/backtests`                        | 回测任务列表                         |
 | GET      | `/api/backtests/{id}`                   | 回测任务详情（进度/结果/错误摘要）            |
 | POST     | `/api/backtests/{id}/cancel`            | 取消回测任务                         |
+| POST     | `/api/portfolio-backtests`              | 创建组合回测任务（异步队列，支持幂等键）         |
+| GET      | `/api/portfolio-backtests`              | 组合回测任务列表                        |
+| GET      | `/api/portfolio-backtests/{id}`         | 组合回测任务详情（进度/结果/错误摘要）          |
+| POST     | `/api/portfolio-backtests/{id}/cancel`  | 取消组合回测任务                        |
 | GET/POST | `/api/paper/accounts`                   | 模拟账户                           |
 | POST     | `/api/paper/orders`                     | 模拟下单                           |
 | GET      | `/api/paper/orders`                     | 委托单列表（含状态/拒绝原因）               |
@@ -186,9 +214,18 @@ cd backend
 | POST     | `/api/paper/accounts/{id}/settle`       | 日终结算（T+1 解冻 + 资产快照）            |
 | GET      | `/api/paper/accounts/{id}/assets`       | 账户资产与盈亏                        |
 | POST     | `/api/universe/sync`                    | 同步全市场股票池并原子生成交易日快照           |
+| GET      | `/api/universe/status`                  | 股票池数据源健康与最近一次同步信息            |
+| GET      | `/api/universe/snapshots`               | 历史股票池快照列表                        |
 | GET      | `/api/universe/snapshots/{day}/members` | 查询不可变的历史交易日成员                  |
 | POST     | `/api/universe/filter`                  | 按交易日筛选可交易成员                    |
 | GET/POST | `/api/daily-pipeline/runs`              | 创建/查询可恢复的每日股票池→历史入库→选股→模拟调仓流水线 |
+| GET      | `/api/daily-pipeline/runs/{id}`         | 单条每日流水线任务详情（进度/阶段/错误摘要）      |
+| GET      | `/api/daily-pipeline/schedule`          | 自动调度配置与下次触发时间（只读）              |
+| POST     | `/api/history-ingest`                   | 创建指定交易日股票池的全市场历史入库任务          |
+| GET      | `/api/history-ingest`                   | 历史入库任务列表                         |
+| GET      | `/api/history-ingest/{id}`              | 历史入库任务详情（进度/覆盖率/失败明细）          |
+| POST     | `/api/history-ingest/{id}/cancel`       | 取消排队中或运行中的历史入库任务               |
+| GET      | `/api/selections`                       | 历史选股运行列表                         |
 | POST     | `/api/selections/rank`                  | 基于历史快照生成并保存多因子候选排名           |
 | GET      | `/api/selections/{run_id}`              | 读取可复现的选股运行及因子值                 |
 | POST     | `/api/selections/{run_id}/evaluate`     | 按 T+1 开盘和未来 N 日收盘验证候选收益         |
@@ -330,11 +367,11 @@ python scripts/db_restore.py backups/a_stock_YYYYmmdd_HHMMSS.db
 python scripts/e2e_smoke.py
 ```
 
-## 验收标准（12 项真实命令）
+## 验收标准（11 项真实命令）
 
 提交前必须逐项通过：
 
-1. `python -m compileall app tests` — 无语法错误
+1. `python -m compileall app tests migrations` — 无语法错误
 2. `python -m pytest -q` — 全部测试通过
 3. `python -m pytest --cov=app` — 覆盖率报告
 4. `alembic upgrade head`（空库 + 从 0002 升级）— 迁移可用
