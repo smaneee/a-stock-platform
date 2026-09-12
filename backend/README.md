@@ -209,7 +209,7 @@ cd backend
 | 数据源           | 用途     | 说明                                                         |
 | ------------- | ------ | ---------------------------------------------------------- |
 | QMT/xtdata    | 正式实时行情 | 可选，推送模式，延迟 <1s                                             |
-| 东方财富（Eastmoney） | 免费轮询 + 股票池 | 默认首选：实时行情 `ulist.np`、日/周/月 K 线 `kline`、分时 `trends2`；股票池 `clist/get` |
+| 东方财富（Eastmoney） | 免费轮询 + 股票池 | 默认首选：实时行情 `ulist.np`、分时 `trends2`、日/周/月 K 线 `kline`（K 线受本机路径限流，见「已知限制」8）；股票池 `clist/get` |
 | 东方财富数据中心   | 横截面研究数据 | 龙虎榜与席位、大宗交易、融资融券、沪深港通、机构调研、股东户数、限售解禁、业绩预告、分红送配 |
 | 腾讯行情          | 免费轮询   | 备援实时行情；东财被限流熔断时接管                                          |
 | AKShare       | 历史数据   | 东财 / 新浪双通道（东财通道与 EastmoneyProvider 同源）                     |
@@ -303,11 +303,15 @@ ProviderManager 在一次请求内不会对同一上游重复请求。
    新浪通道可拉到完整历史；已停用的旧 `43xxxx` / `83xxxx` 号段没有可用的历史接口。
 7. **交易日历兜底依赖 exchange_calendars 4.x**：该版本只有 `sessions_in_range`（无
    `valid_days`），且 XSHG 日历边界为 2006-09-11 ~ 2026-12-31，超出边界的区间会被裁剪。
-8. **东财限流按「主机 + 路径」生效**：实测 `push2his.eastmoney.com` 的
-   `/api/qt/stock/kline/get`、`/api/qt/stock/trends2/get` 会在本机被直接断连（curl 返回
-   `000`），而同一主机的 `/api/qt/ulist.np/get` 正常。因此东财**日/周/月 K 线暂时可能取不到**，
-   历史入库会自动走 AKShare/新浪与 BaoStock；`HISTORY_HOSTS` 已配好故障转移与 120 秒冷却，
-   路径恢复后无需改配置即可自动命中。行情批量、板块/资金流与数据中心不受影响。
+8. **东财限流按「主机 + 路径」生效**：实测本机 `push2his.eastmoney.com` 的
+   `/api/qt/stock/kline/get`、`/api/qt/stock/trends2/get` 会被直接断连（curl 返回 `000`），
+   而同一主机的 `/api/qt/ulist.np/get` 正常。分时不受影响：故障转移后由
+   `push2delay.eastmoney.com` 提供，实测 600519 当日 241 根 1 分钟线（09:30–15:00）。
+   但 `push2delay` **没有历史 K 线库**（`rc=0` 且 `dktotal=0`、`klines=[]`），因此东财
+   **日/周/月/5m 及以上周期的 K 线暂时取不到**：`kline_available()` 会判定该主机没有这份
+   数据并继续换主机，两台都拿不到时熔断 300 秒，由 ProviderManager 回退腾讯、历史入库回退
+   AKShare/新浪与 BaoStock。路径恢复后无需改配置即可自动命中。行情批量、分时、板块/资金流
+   与数据中心不受影响。
 
 ## 运维脚本
 
