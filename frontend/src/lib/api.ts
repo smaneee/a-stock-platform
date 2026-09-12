@@ -39,6 +39,9 @@ import type {
   StockFundFlowHistoryResponse,
   LimitUpCatalogResponse,
   LimitUpPoolResponse,
+  LimitUpSentimentResponse,
+  LimitUpCaptureRequest,
+  LimitUpCaptureResponse,
 } from "./types";
 
 const BASE = "/api";
@@ -473,4 +476,17 @@ export const fetchLimitUpPool = (
 ) =>
   request<LimitUpPoolResponse>(`/market/limit-up/${pool}`, {
     params: order ? { limit, page, order } : { limit, page },
+  });
+
+/** 涨停板情绪曲线（封板率 / 连板高度），只返回已落库的交易日。 */
+export const fetchLimitUpSentiment = (limit = 120) =>
+  request<LimitUpSentimentResponse>("/market/limit-up/sentiment", {
+    params: { limit },
+  });
+
+/** 手动抓取情绪池落库；backfill_days > 0 时回补最近 N 个自然日。 */
+export const captureLimitUpSentiment = (body: LimitUpCaptureRequest) =>
+  request<LimitUpCaptureResponse>("/market/limit-up/capture", {
+    method: "POST",
+    body: JSON.stringify(body),
   });

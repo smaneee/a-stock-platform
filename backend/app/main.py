@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
@@ -18,6 +19,7 @@ from app.api.backtests import router as backtests_router
 from app.api.daily_pipeline import router as daily_pipeline_router
 from app.api.health import router as health_router
 from app.api.history_ingest import router as history_ingest_router
+from app.api.indicators import router as indicators_router
 from app.api.live_trading import router as live_trading_router
 from app.api.market import router as market_router
 from app.api.metrics import router as metrics_router
@@ -32,6 +34,7 @@ from app.api.universe import router as universe_router
 from app.api.watchlists import router as watchlists_router
 from app.config import get_settings
 from app.database import models  # noqa: F401 - 注册模型
+from app.database.models import Security
 from app.database.session import Base, SessionLocal, engine
 from app.logging_config import setup_logging
 from app.market_data.akshare_provider import AkshareProvider
@@ -42,6 +45,7 @@ from app.market_data.eastmoney_provider import EastmoneyProvider
 from app.market_data.mock_provider import MockProvider
 from app.market_data.provider_manager import ProviderManager
 from app.market_data.qmt_provider import QmtProvider
+from app.market_data.tdx_provider import TdxProvider
 from app.market_data.tencent_provider import TencentProvider
 from app.live_trading.reconcile_worker import LiveReconcileWorker
 from app.observability.metrics import metrics
@@ -55,6 +59,7 @@ from app.tasks.portfolio_worker import PortfolioBacktestWorker
 from app.tasks.history_ingest_worker import HistoryIngestWorker
 from app.tasks.daily_pipeline import DailyPipelineWorker
 from app.tasks.daily_pipeline_scheduler import DailyPipelineScheduler
+from app.tasks.limit_up_sentiment_scheduler import LimitUpSentimentScheduler
 from app.tasks.worker import BacktestWorker
 from app.validation import sanitize_symbols
 
@@ -87,9 +92,35 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+def _resolve_security_names(symbols: list[str]) -> dict[str, str]:
+    """批量读取本地股票主数据中的名称，供通达信行情补齐。
+
+    tdxpy 的行情接口不返回股票名称；只靠代码展示会让前端表格退化。股票主数据
+    表由股票池同步维护，这里按主键批量查一次，开销很小；查不到就返回空名，
+    绝不能因为名称缺失影响行情可用性。
+    """
+    if not symbols:
+        return {}
+    db = SessionLocal()
+    try:
+        rows = db.execute(
+            select(Security.symbol, Security.name).where(
+                Security.symbol.in_(list(symbols))
+            )
+        ).all()
+        return {symbol: name for symbol, name in rows if name}
+    except Exception as exc:  # noqa: BLE001 - 名称只是锦上添花
+        logger.warning("批量读取股票名称失败：%s", exc)
+        return {}
+    finally:
+        db.close()
+
+
 def _build_providers() -> list:
     """根据配置优先级构建数据源列表。"""
     factory = {
+        # 通达信行情不带股票名称，注入本地主数据表解析器补齐
+        "tdx": lambda: TdxProvider(name_resolver=_resolve_security_names),
         "eastmoney": EastmoneyProvider,
         "tencent": TencentProvider,
         "akshare": AkshareProvider,
@@ -207,10 +238,17 @@ async def lifespan(app: FastAPI):
     daily_pipeline_scheduler: DailyPipelineScheduler = app.state.daily_pipeline_scheduler
     daily_pipeline_scheduler.start()
 
+    # 涨停板情绪池每日落库：东财只保留最近若干交易日，必须每天累积
+    limit_up_sentiment_scheduler: LimitUpSentimentScheduler = (
+        app.state.limit_up_sentiment_scheduler
+    )
+    limit_up_sentiment_scheduler.start()
+
     logger.info("A 股实时分析平台后端已启动")
     try:
         yield
     finally:
+        await limit_up_sentiment_scheduler.stop()
         await daily_pipeline_scheduler.stop()
         await daily_pipeline_worker.stop()
         await live_reconcile_worker.stop()
@@ -283,6 +321,7 @@ def create_app() -> FastAPI:
     live_reconcile_worker = LiveReconcileWorker()
     daily_pipeline_worker = DailyPipelineWorker(provider_manager=provider_manager)
     daily_pipeline_scheduler = DailyPipelineScheduler(provider_manager=provider_manager)
+    limit_up_sentiment_scheduler = LimitUpSentimentScheduler(service=limit_up_service)
 
     app.state.provider_manager = provider_manager
     app.state.market_service = market_service
@@ -300,6 +339,7 @@ def create_app() -> FastAPI:
     app.state.live_reconcile_worker = live_reconcile_worker
     app.state.daily_pipeline_worker = daily_pipeline_worker
     app.state.daily_pipeline_scheduler = daily_pipeline_scheduler
+    app.state.limit_up_sentiment_scheduler = limit_up_sentiment_scheduler
     app.state.settlement_scheduler = settlement_scheduler
 
     # 注册路由
@@ -308,6 +348,7 @@ def create_app() -> FastAPI:
     app.include_router(market_router)
     app.include_router(daily_pipeline_router)
     app.include_router(history_ingest_router)
+    app.include_router(indicators_router)
     app.include_router(live_trading_router)
     app.include_router(universe_router)
     app.include_router(quotes_router)

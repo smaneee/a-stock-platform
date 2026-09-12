@@ -647,3 +647,85 @@ class DailySettlementRecord(Base):
     total_asset: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
     positions_settled: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+
+class LimitUpSentiment(Base):
+    """涨停板情绪日度因子（每个交易日一行）。
+
+    由东财涨停板行情（push2ex）的 5 个情绪池快照汇总而成，作为回测的
+    「市场情绪」因子：
+
+    - 封板率 ``seal_rate`` 衡量资金承接强度（涨停被封住 vs 被砸开）
+    - 连板高度 ``max_streak`` 与梯队分布衡量赚钱效应与情绪周期位置
+
+    上游只保留最近若干个交易日，历史靠每日定时任务累积，无法任意回补。
+    """
+
+    __tablename__ = "limit_up_sentiment"
+
+    trade_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    limit_up_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    limit_down_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    broken_board_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    strong_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sub_new_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 封板率 = 涨停家数 / (涨停家数 + 炸板家数)；分母为 0 时为 NULL
+    seal_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # 炸板率 = 炸板家数 / (涨停家数 + 炸板家数)
+    broken_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_streak: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    first_board_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    streak_2_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    streak_3_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    streak_4_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    streak_5plus_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 涨停池封板资金合计与成交额合计（元）
+    total_seal_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    total_limit_up_amount: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="eastmoney")
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utc_now
+    )
+
+
+class LimitUpPoolMember(Base):
+    """涨停板情绪池个股快照（按 交易日 + 池 + 代码 唯一）。
+
+    是 :class:`LimitUpSentiment` 的明细层：汇总行判断市场温度，明细行用于回测
+    「打板 / 连板接力」等个股策略（次日溢价、晋级率）。
+
+    各池字段并不一致（涨停池有连板数、跌停池有连续跌停天数），因此除公共列外
+    完整原始行保存在 ``payload`` 里，避免上游加字段时丢数据。
+    """
+
+    __tablename__ = "limit_up_pool_members"
+    __table_args__ = (
+        UniqueConstraint(
+            "trade_date", "pool", "symbol", name="uq_limit_up_pool_member"
+        ),
+        Index("ix_limit_up_member_date_pool", "trade_date", "pool"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    pool: Mapped[str] = mapped_column(String(24), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    limit_up_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    seal_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    turnover_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    boards: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    first_seal_time: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    last_seal_time: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    limit_up_stat: Mapped[str] = mapped_column(String(24), nullable=False, default="")
+    industry: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    is_new_high: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utc_now
+    )

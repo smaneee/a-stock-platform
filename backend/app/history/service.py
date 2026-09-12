@@ -327,13 +327,7 @@ class HistoricalDataService:
         kline 接口（stock_zh_a_hist / push2his），回退链不必再打一次——该通道实测经常
         RemoteDisconnected，重复调用会让全市场入库白白翻倍耗时。
         """
-        if self._provider_manager is None:
-            return ()
-        names = {
-            getattr(provider, "name", "")
-            for provider in getattr(self._provider_manager, "providers", [])
-        }
-        return ("akshare",) if {"akshare", "eastmoney"} & names else ()
+        return provider_covered_sources(self._provider_manager)
 
     async def _fetch_with_retry(
         self, symbol: str, adjust: str, start: date, end: date
@@ -683,6 +677,40 @@ def _fetch_from_sources(
     if errors and not saw_empty:
         raise RuntimeError("; ".join(errors))
     return []
+
+
+def provider_covered_sources(provider_manager) -> tuple[str, ...]:
+    """返回 ProviderManager 已覆盖的回退链源名，避免重复请求同一上游。
+
+    MARKET_PROVIDERS 含 akshare 或 eastmoney 时，manager 内部已经打过东方财富
+    kline 接口（stock_zh_a_hist / push2his），回退链不必再打一次——该通道实测经常
+    RemoteDisconnected，重复调用会让全市场入库白白翻倍耗时。
+    """
+    if provider_manager is None:
+        return ()
+    names = {
+        getattr(provider, "name", "")
+        for provider in getattr(provider_manager, "providers", [])
+    }
+    return ("akshare",) if {"akshare", "eastmoney"} & names else ()
+
+
+async def fetch_history_from_sources(
+    symbol: str,
+    start: date,
+    end: date,
+    adjust: str = ADJUST_NONE,
+    skip: tuple[str, ...] = (),
+) -> list[QuoteData]:
+    """只读地走多源回退链取**日线**，不写数据库。
+
+    供只读接口（如指标计算）在 ProviderManager 拿不到数据时兜底，覆盖沪 / 深 /
+    北交所全部标的；与入库路径共用同一套源，口径一致。
+    全部源都报错时抛异常，由调用方决定如何降级。
+    """
+    return await asyncio.to_thread(
+        _fetch_from_sources, symbol, adjust, start, end, skip
+    )
 
 
 def _parse_date(raw: str) -> date:

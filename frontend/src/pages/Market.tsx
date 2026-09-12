@@ -21,6 +21,7 @@ import {
 } from "../lib/api";
 import DatacenterPanel from "../components/DatacenterPanel";
 import LimitUpPanel from "../components/LimitUpPanel";
+import LimitUpSentimentPanel from "../components/LimitUpSentimentPanel";
 import type { BoardKind, FundFlowPoint, FundFlowRow } from "../lib/types";
 
 const BOARD_KINDS: Array<{ value: BoardKind; label: string }> = [
@@ -29,11 +30,16 @@ const BOARD_KINDS: Array<{ value: BoardKind; label: string }> = [
   { value: "region", label: "地域板块" },
 ];
 
+// 板块与成分股的条数选项（后端单次上限 1000，东财单页 100 会由后端自动翻页）
+const BOARD_LIMIT_OPTIONS = [50, 100, 200, 500, 1000];
+const MEMBER_LIMIT_OPTIONS = [30, 50, 100, 200, 500, 1000];
+
 const TABS = [
   { value: "boards", label: "板块行情" },
   { value: "board-flow", label: "板块资金流" },
   { value: "stock-flow", label: "个股资金流" },
   { value: "limit-up", label: "涨停板" },
+  { value: "sentiment", label: "情绪曲线" },
   { value: "datacenter", label: "数据中心" },
 ] as const;
 
@@ -177,15 +183,19 @@ export default function MarketPage() {
   const [board, setBoard] = useState<{ code: string; name: string } | null>(null);
   const [symbolInput, setSymbolInput] = useState("600519");
   const [symbol, setSymbol] = useState("600519");
+  // 东财板块与成分股都是分页返回，默认条数太小会让人误以为「只有这么多」，
+  // 这里给用户一个显式的条数选择（后端单次上限 500）。
+  const [boardLimit, setBoardLimit] = useState(100);
+  const [memberLimit, setMemberLimit] = useState(50);
 
   const boards = useQuery({
-    queryKey: ["market", "boards", kind],
-    queryFn: () => listBoards(kind, 50),
+    queryKey: ["market", "boards", kind, boardLimit],
+    queryFn: () => listBoards(kind, boardLimit),
     enabled: tab === "boards",
   });
   const constituents = useQuery({
-    queryKey: ["market", "constituents", board?.code],
-    queryFn: () => listBoardConstituents(board!.code, 30),
+    queryKey: ["market", "constituents", board?.code, memberLimit],
+    queryFn: () => listBoardConstituents(board!.code, memberLimit),
     enabled: tab === "boards" && board !== null,
   });
   const boardFlow = useQuery({
@@ -257,6 +267,22 @@ export default function MarketPage() {
               {item.label}
             </button>
           ))}
+          {tab === "boards" && (
+            <label className="ml-auto flex items-center gap-2 text-xs text-slate-400">
+              板块条数
+              <select
+                value={boardLimit}
+                onChange={(event) => setBoardLimit(Number(event.target.value))}
+                className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-300"
+              >
+                {BOARD_LIMIT_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
       )}
 
@@ -265,6 +291,12 @@ export default function MarketPage() {
       {tab === "boards" && (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
           <div className={`${panel} xl:col-span-2`}>
+            <div className="px-4 py-3 border-b border-slate-800 text-sm text-slate-300">
+              板块行情
+              <span className="text-xs text-slate-500 ml-2">
+                已加载 {boards.data?.items.length ?? 0} 个（东财按涨跌幅降序返回，可切换上方条数）
+              </span>
+            </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-800">
                 <thead className="bg-slate-950/60">
@@ -321,8 +353,31 @@ export default function MarketPage() {
           </div>
 
           <div className={panel}>
-            <div className="px-4 py-3 border-b border-slate-800 text-sm text-slate-300">
-              {board ? `${board.name} · 成分股` : "点击左侧板块查看成分股"}
+            <div className="px-4 py-3 border-b border-slate-800 text-sm text-slate-300 flex items-center gap-2">
+              <span>
+                {board ? `${board.name} · 成分股` : "点击左侧板块查看成分股"}
+              </span>
+              {board && (
+                <span className="text-xs text-slate-500">
+                  已加载 {constituents.data?.items.length ?? 0} 只
+                </span>
+              )}
+              {board && (
+                <label className="ml-auto flex items-center gap-2 text-xs text-slate-400">
+                  显示
+                  <select
+                    value={memberLimit}
+                    onChange={(event) => setMemberLimit(Number(event.target.value))}
+                    className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-300"
+                  >
+                    {MEMBER_LIMIT_OPTIONS.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-800">
@@ -371,6 +426,8 @@ export default function MarketPage() {
       {tab === "datacenter" && <DatacenterPanel />}
 
       {tab === "limit-up" && <LimitUpPanel />}
+
+      {tab === "sentiment" && <LimitUpSentimentPanel />}
 
       {tab === "stock-flow" && (
         <div className="space-y-4">

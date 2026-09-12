@@ -460,7 +460,11 @@ def test_limit_up_pool_returns_items():
     assert body["count"] == 1
     assert body["items"][0]["symbol"] == "000993"
     assert service.calls == [
-        ("query", "limit-up", {"limit": 3, "page": 2, "order": None})
+        (
+            "query",
+            "limit-up",
+            {"limit": 3, "page": 2, "order": None, "trade_date": None},
+        )
     ]
 
 

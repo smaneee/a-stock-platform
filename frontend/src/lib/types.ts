@@ -616,3 +616,44 @@ export interface LimitUpPoolResponse {
   count: number;
   items: LimitUpRow[];
 }
+
+/** 涨停板情绪因子：一个交易日的市场情绪读数。 */
+export interface LimitUpSentimentRow {
+  trade_date: string;
+  limit_up_count: number;
+  limit_down_count: number;
+  broken_board_count: number;
+  strong_count: number;
+  sub_new_count: number;
+  /** 封板率 = 涨停 / (涨停 + 炸板)，取值 0~1；无样本时为 null */
+  seal_rate: number | null;
+  broken_rate: number | null;
+  max_streak: number;
+  first_board_count: number;
+  streak_2_count: number;
+  streak_3_count: number;
+  streak_4_count: number;
+  streak_5plus_count: number;
+  total_seal_amount: number;
+  total_limit_up_amount: number;
+  source: string;
+  captured_at: string;
+}
+
+export interface LimitUpSentimentResponse {
+  count: number;
+  start: string | null;
+  end: string | null;
+  latest: LimitUpSentimentRow | null;
+  items: LimitUpSentimentRow[];
+}
+
+export interface LimitUpCaptureRequest {
+  trade_date?: string;
+  backfill_days?: number;
+}
+
+export interface LimitUpCaptureResponse {
+  count: number;
+  items: LimitUpSentimentRow[];
+}

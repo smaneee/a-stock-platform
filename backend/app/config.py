@@ -28,9 +28,11 @@ class Settings(BaseSettings):
 
     # 行情数据源优先级
     # Mock 只能由测试或演示环境显式启用，禁止真实行情失败时返回随机价格。
-    # 东方财富（eastmoney）为实时行情首选，腾讯为备援；akshare 的历史接口与东财
-    # 同源，管理器在一次请求内不会对同一上游重复请求（见 ProviderManager.upstream）。
-    market_providers: str = "eastmoney,tencent,akshare"
+    # 通达信（tdx）走二进制 TCP 协议，实测一次批量行情约 50ms，比东财 HTTP 快
+    # 一个数量级且不会被单 IP 突发限流，作为实时行情首选；东财为备援，腾讯兜底。
+    # akshare 的历史接口与东财同源，管理器在一次请求内不会对同一上游重复请求
+    # （见 ProviderManager.upstream）。tdx 不支持北交所代码，这类请求会自动回退。
+    market_providers: str = "tdx,eastmoney,tencent,akshare"
     # e2e_smoke 启用：用 mock 作为最高优先级（无需 AKShare 网络）
     e2e_use_mock: bool = False
     quote_poll_interval: float = 3.0
@@ -92,6 +94,16 @@ class Settings(BaseSettings):
     daily_pipeline_auto_paper_account_id: int = Field(default=0, ge=0)
     daily_pipeline_auto_execute_paper: bool = False
     daily_pipeline_auto_lookback_days: int = Field(default=365, ge=90, le=2000)
+
+    # ───────────── 涨停板情绪池落库（LIMIT_UP_SENTIMENT_*） ─────────────
+    # 东财涨停板行情只保留最近若干个交易日，情绪曲线（封板率 / 连板高度）
+    # 必须每个交易日收盘后累积一次，否则历史会永久缺失。
+    # 只读行情 + 写本地数据库，不涉及任何交易动作，因此默认开启。
+    limit_up_sentiment_auto_enabled: bool = True
+    limit_up_sentiment_auto_hour: int = Field(default=16, ge=0, le=23)
+    limit_up_sentiment_auto_minute: int = Field(default=10, ge=0, le=59)
+    # 手动回补时默认回溯的自然日数（上游只保留最近若干个交易日）
+    limit_up_sentiment_backfill_days: int = Field(default=20, ge=1, le=90)
 
     # 其余数据源密钥（仅通过环境变量提供）
     tencent_api_key: str = "YOUR_API_KEY"

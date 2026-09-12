@@ -109,7 +109,7 @@ cd backend
 | `AUTO_CREATE_TABLES`      | 启动时自动建表（仅测试/演示）     | `false`                  |
 | `CORS_ORIGINS`            | 允许跨域的来源（逗号分隔）       | `http://localhost:3000,http://127.0.0.1:3000` |
 | `E2E_USE_MOCK`            | 测试/CI/managed E2E 强制改用 mock 数据源 | `false` |
-| `MARKET_PROVIDERS`        | 数据源优先级（eastmoney/tencent/akshare/qmt/mock） | `eastmoney,tencent,akshare` |
+| `MARKET_PROVIDERS`        | 数据源优先级（tdx/eastmoney/tencent/akshare/qmt/mock） | `tdx,eastmoney,tencent,akshare` |
 | `UNIVERSE_PROVIDERS`      | 股票池主数据源优先级（eastmoney/baostock/akshare） | `eastmoney,baostock,akshare` |
 | `EASTMONEY_UNIVERSE_TIMEOUT_SECONDS` | 东方财富股票池整轮超时（秒） | `90` |
 | `BAOSTOCK_UNIVERSE_TIMEOUT_SECONDS` | BaoStock 股票池超时（秒） | `300` |
@@ -128,6 +128,9 @@ cd backend
 | `QMT_ACCOUNT_TYPE`        | QMT 账户类型             | `STOCK`                  |
 | `QMT_CALL_TIMEOUT_SECONDS` | QMT SDK 调用超时（秒）     | `10`                     |
 | `DAILY_PIPELINE_AUTO_LOOKBACK_DAYS` | 每日流水线历史入库回看天数 | `365` |
+| `LIMIT_UP_SENTIMENT_AUTO_ENABLED` | 收盘后自动抓取涨停板情绪池 | `true` |
+| `LIMIT_UP_SENTIMENT_AUTO_HOUR` / `LIMIT_UP_SENTIMENT_AUTO_MINUTE` | 自动抓取时刻（北京时间） | `16` / `10` |
+| `LIMIT_UP_SENTIMENT_BACKFILL_DAYS` | 手动回补默认回溯自然日数 | `20` |
 | `RATE_LIMIT_PER_MINUTE`   | 单 IP 每分钟最大请求数（0 关闭） | `300`                    |
 | `WS_MAX_SUBSCRIPTIONS`    | 单 WebSocket 最大订阅数   | `200`                    |
 
@@ -190,7 +193,11 @@ cd backend
 | GET      | `/api/market/datacenter/{dataset}`      | 数据中心数据集查询（支持日期区间与股票代码）        |
 | GET      | `/api/market/datacenter/dragon-tiger/{symbol}/seats` | 龙虎榜买入/卖出席位明细          |
 | GET      | `/api/market/limit-up`                  | 涨停板情绪池目录（涨停/跌停/炸板/强势/次新）    |
-| GET      | `/api/market/limit-up/{pool}`           | 单个情绪池的最近交易日快照（支持分页与排序）      |
+| GET      | `/api/market/limit-up/{pool}`           | 单个情绪池快照（支持 `trade_date` / `limit` / `page` / `order`） |
+| GET      | `/api/market/limit-up/sentiment`        | 涨停板情绪因子历史曲线（封板率 / 连板高度 / 连板梯队） |
+| POST     | `/api/market/limit-up/capture`          | 抓取并落库情绪池（幂等；`backfill_days` 一键回补） |
+| GET      | `/api/indicators`                       | 技术指标目录（22 个序列的中文名与 key）       |
+| GET      | `/api/indicators/{symbol}`              | 单标的技术指标序列（MA/EMA/MACD/BOLL/KDJ/ATR/OBV/CCI/WR…） |
 | GET      | `/api/quotes/{symbol}`                  | 单只行情                           |
 | POST     | `/api/quotes/batch`                     | 批量行情                           |
 | GET/POST | `/api/watchlists`                       | 自选股列表                          |
@@ -249,6 +256,7 @@ cd backend
 | 数据源           | 用途     | 说明                                                         |
 | ------------- | ------ | ---------------------------------------------------------- |
 | QMT/xtdata    | 正式实时行情 | 可选，推送模式，延迟 <1s                                             |
+| 通达信（TDX）     | 低延迟实时行情 | 默认首选轮询源：`tdxpy` 直连通达信行情服务器，覆盖沪 / 深 / 北交所，实测单批 31–39ms、日线 266 根 43ms |
 | 东方财富（Eastmoney） | 免费轮询 + 股票池 | 默认首选：实时行情 `ulist.np`、分时 `trends2`、日/周/月 K 线 `kline`（K 线受本机路径限流，见「已知限制」8）；股票池 `clist/get` |
 | 东方财富数据中心   | 横截面研究数据 | 龙虎榜与席位、大宗交易、融资融券、沪深港通、机构调研、股东户数、限售解禁、业绩预告、分红送配、高管持股变动、股权质押比例、可转债 |
 | 东方财富涨停板行情 | 情绪与打板数据 | `push2ex.eastmoney.com`：涨停/跌停/炸板/强势/次新 5 个池，含封板资金、连板数、封板时间 |
@@ -263,6 +271,33 @@ cd backend
 `EastmoneyProvider` 只做 2 次尝试，并在连续 3 次失败后熔断 5 分钟（期间行情/历史请求立即返回空，
 由管理器回退到腾讯），到期自动恢复。`akshare` 与 `eastmoney` 的 `upstream` 同为 `eastmoney`，
 ProviderManager 在一次请求内不会对同一上游重复请求。
+
+### 通达信 TDX（`MARKET_PROVIDERS` 默认首选）
+
+`TdxProvider`（`app/market_data/tdx_provider.py`）用 [tdxpy](https://github.com/mootdx/tdxpy)
+直接连通达信行情服务器（TCP 7709），比走 HTTP 的东财/腾讯快一个量级，实测：
+
+| 场景                | 耗时            |
+| ----------------- | ------------- |
+| 单批行情（含首次探活）       | 246ms         |
+| 稳态单批行情（80 只/批）    | **31–39ms**   |
+| 日线 266 根           | 43ms          |
+| 5 分钟线 240 根        | 50ms          |
+
+设计要点：
+
+- tdxpy 是同步库，统一用 `asyncio.to_thread` 调用，并用 `asyncio.Lock` 串行化，
+  避免多协程并发穿过同一个连接。
+- 维护主机池 + 探活 + 冷却：每台主机 300 秒 TTL 内复用，失败进入 120 秒冷却；
+  **全部主机失败时返回 `{}` 而不是抛异常**，交给 ProviderManager 正常回退。
+- 市场号映射：沪 = 1、深 = 0、**北交所 = 3**（`4` / `8` / `920` 号段都在内）。
+  北交所的请求市场号是 3，而服务端回包里的 `market` 字段是 2，这一处不对称是
+  实测出来的（传 2 会返回空）。沪深京混批可以在同一次 `get_security_quotes`
+  里拿全，不会被拆成两次请求。
+- 单位已核对：`vol` 单位是手（×100 转股）、`amount` 已是元、`servertime` 补当天日期。
+- 单次请求按 80 只分块；K 线按 800 根/页分页，最多 40 页。
+
+不需要 TDX 时把 `MARKET_PROVIDERS` 里的 `tdx` 去掉即可，其余逻辑无感知。
 
 ### 历史日线回退链
 
@@ -338,7 +373,8 @@ ProviderManager 在一次请求内不会对同一上游重复请求。
 跌停股池 `getTopicDTPool`、炸板股池 `getTopicZBPool`、强势股池 `getTopicQSPool`、
 次新股池 `getTopicCXPool`。`GET /api/market/limit-up` 返回池目录与字段声明（前端表头据此渲染），
 `GET /api/market/limit-up/{pool}` 返回某池的最近交易日快照，支持 `limit`（≤200）、`page`
-与 `order`（排序字段由各池声明，如涨停池按首次封板时间升序、跌停池按封单资金降序）。
+、`order`（排序字段由各池声明，如涨停池按首次封板时间升序、跌停池按封单资金降序）
+与 `trade_date`（显式指定交易日，见下）。
 
 口径与局限：
 
@@ -347,9 +383,56 @@ ProviderManager 在一次请求内不会对同一上游重复请求。
   超出合理价格区间时返回 `null`，不会显示成 1000000.00 元。
 - `fbt` / `lbt` 是 HHMMSS 整数（`92500` → `09:25:00`）；`zttj` 是 `{days, ct}` 对象，
   统一输出为「3天3板」。
-- **`date` 参数被上游忽略**（实测传 20260909 / 20260910 / 20260912 都返回同一交易日），
-  因此只提供「最近交易日」快照，并把上游回传的 `qdate` 作为 `trade_date` 返回，
-  **不提供历史查询**；需要历史情绪数据请另行入库。
+- **`date` 参数对明细生效，但上游回传的 `qdate` 不可信**：实测传 20260908 返回 73 只、
+  20260909 返回 48 只、20260911 返回 40 只涨停，股票列表完全不同，而 `qdate` 始终是
+  最新交易日。因此传入 `trade_date` 时以**传入值**为准，不传才回落到北京时间当天。
+- **上游只保留最近约 15 个交易日**：实测 20260824 起有数据、20260601 起返回空。
+  过期数据无法再回补，历史情绪曲线必须靠每日累积。
+
+### 涨停板情绪因子落库（`/api/market/limit-up/sentiment*`）
+
+把上述情绪池每天落一次库，形成可直接用于回测的**市场情绪因子**：
+
+- 汇总表 `limit_up_sentiment`：每个交易日一行，含 `seal_rate`（封板率 = 涨停 /
+  (涨停 + 炸板)）、`broken_rate`、`max_streak`（最高连板）、`first_board_count` 与
+  `streak_2_count` … `streak_5plus_count`（连板梯队）、`total_seal_amount`（封板资金）。
+- 明细表 `limit_up_pool_member`：当日各池成员，供「打板 / 连板接力」类个股策略回测。
+
+抓取按 `(交易日, 池)` 幂等覆盖，重复抓取不产生重复行；当天全部池无数据（非交易日或
+超出上游保留窗口）时跳过，不写空行以免污染曲线。接口：
+
+- `GET /api/market/limit-up/sentiment`：按 `start` / `end` / `limit` 返回升序曲线，
+  `start` / `end` 为**实际返回数据的首尾交易日**；`latest` 恒为库内最新一行。
+- `POST /api/market/limit-up/capture`：`{"trade_date": "2026-09-11"}` 抓指定日；
+  `{"backfill_days": 20}` 一键回补最近 N 个自然日（自动跳过周末与无数据日期）。
+- 前端「市场行情 → 情绪曲线」页签直接消费这两个接口，含封板率/涨停炸板家数与
+  连板高度/连板梯队两张图。
+
+自动累积：`LIMIT_UP_SENTIMENT_AUTO_ENABLED`（默认 `true`）开启后，后端在北京时间
+每个交易日 `LIMIT_UP_SENTIMENT_AUTO_HOUR`:`LIMIT_UP_SENTIMENT_AUTO_MINUTE`（默认 16:10）
+抓取当日情绪池。该任务只读行情并写本地库，不涉及任何交易动作。
+
+## 技术指标（`/api/indicators*`）
+
+指标计算在 `app/indicators/` 下按「一个指标一个文件」组织，全部只依赖标准库
+（不引入 numpy / pandas），口径对齐通达信：
+
+| 指标   | 文件                | 口径要点                                    |
+| ---- | ----------------- | --------------------------------------- |
+| BOLL | `boll.py`         | 中轨 MA(period)，上下轨 ± `num_std` 倍总体标准差；用 `ddof=1` |
+| KDJ  | `kdj.py`          | RSV 后按 `SMA(X, N, 1)` 递推 K/D，J = 3K − 2D；无振幅时取 50 |
+| ATR  | `atr.py`          | `true_range` 取三者最大，再按 Wilder 平滑          |
+| OBV  | `obv.py`          | 首根记 0，收涨累加成交量、收跌累减                    |
+| CCI  | `cci.py`          | AVEDEV 平均绝对偏差口径，MD 为 0 时返回 0            |
+| WR   | `wr.py`           | 默认 0~100（通达信），`signed=True` 输出 −100~0     |
+
+`GET /api/indicators` 返回目录（22 个序列的 key + 中文名 + 可用周期 + limit 边界），
+`GET /api/indicators/{symbol}?period=daily&limit=250` 返回日期轴与各指标序列
+（NaN 统一转 `null`，保留 4 位小数），以及 `latest_values` 便于前端做单值徽标。
+
+数据源优先读本地 `historical_bars`（`adjust=none`），不足时经 ProviderManager
+向上游补齐，返回体里的 `source` 标明本次实际来源（如 `tdx` / `local`）。
+**该接口只做计算与展示，不改变任何既有信号逻辑。**
 
 ## 智能选股
 
@@ -368,16 +451,21 @@ ProviderManager 在一次请求内不会对同一上游重复请求。
 6. **北交所日线依赖 AKShare 新浪通道**：BaoStock 只认 `sh.` / `sz.` 前缀（`bj.` 返回
    10004011），东财通道又经常不可达。当前北交所代码统一为 `920xxx`（交易所清单 343 只），
    新浪通道可拉到完整历史；已停用的旧 `43xxxx` / `83xxxx` 号段没有可用的历史接口。
-7. **交易日历兜底依赖 exchange_calendars 4.x**：该版本只有 `sessions_in_range`（无
+7. **通达信数据源的边界**：只映射沪深京 A 股（沪 1 / 深 0 / 北交所 3），B 股、
+   基金、债券等代码段不会命中，会由 ProviderManager 回退到东财。`tdxpy` 不返回
+   证券名称，已由 `main.py` 从本地 `securities` 表批量补齐。北交所的请求市场号
+   与服务端回包 `market` 不一致（**3 进 2 出**），这是实测结论，改错会拿不到数据。
+8. **交易日历兜底依赖 exchange_calendars 4.x**：该版本只有 `sessions_in_range`（无
    `valid_days`），且 XSHG 日历边界为 2006-09-11 ~ 2026-12-31，超出边界的区间会被裁剪。
-8. **东财限流按「主机 + 路径」生效**：实测本机 `push2his.eastmoney.com` 的
+9. **东财限流按「主机 + 路径」生效**：实测本机 `push2his.eastmoney.com` 的
    `/api/qt/stock/kline/get`、`/api/qt/stock/trends2/get` 会被直接断连（curl 返回 `000`），
    而同一主机的 `/api/qt/ulist.np/get` 正常。分时不受影响：故障转移后由
    `push2delay.eastmoney.com` 提供，实测 600519 当日 241 根 1 分钟线（09:30–15:00）。
    但 `push2delay` **没有历史 K 线库**（`rc=0` 且 `dktotal=0`、`klines=[]`），因此东财
    **日/周/月/5m 及以上周期的 K 线暂时取不到**：`kline_available()` 会判定该主机没有这份
-   数据并继续换主机，两台都拿不到时熔断 300 秒，由 ProviderManager 回退腾讯、历史入库回退
-   AKShare/新浪与 BaoStock。路径恢复后无需改配置即可自动命中。行情批量、分时、板块/资金流
+   数据并继续换主机，两台都拿不到时熔断 300 秒，由 ProviderManager 回退到 `MARKET_PROVIDERS`
+   里的下一顺位（默认 tdx → 腾讯），历史入库回退 AKShare/新浪与 BaoStock。加上第 7 条，
+   这类 K 线请求实际上多由通达信兜住。路径恢复后无需改配置即可自动命中。行情批量、分时、板块/资金流
    与数据中心不受影响。
 
 ## 运维脚本
@@ -424,6 +512,7 @@ python scripts/e2e_smoke.py
 | [InStock](https://github.com/myhhub/stock)        | Apache-2.0  |
 | [AKShare](https://github.com/akfamily/akshare)    | MIT（作为可选依赖） |
 | [BaoStock](https://github.com/baostock/baostock) | BSD（作为直接依赖）  |
+| [tdxpy](https://github.com/mootdx/tdxpy)          | MIT（作为直接依赖，通达信行情协议） |
 | [Qlib](https://github.com/microsoft/qlib)        | MIT（参考滚动评估与 RankIC） |
 | [RQAlpha](https://github.com/ricequant/rqalpha) | Apache-2.0（参考撮合与交易前风控） |
 | [vn.py](https://github.com/vnpy/vnpy)           | MIT（参考组合与风险模块边界） |

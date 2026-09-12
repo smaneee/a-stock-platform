@@ -9,11 +9,12 @@
 
 ## 功能概览
 
-- 实时行情与自选股监控（东方财富 / 腾讯 / AKShare / QMT 数据源，WebSocket 推送行情与信号）
+- 实时行情与自选股监控（通达信 TDX / 东方财富 / 腾讯 / AKShare / QMT 数据源，WebSocket 推送行情与信号）
 - 市场行情页（东方财富：行业/概念/地域板块行情与成分股、板块与个股资金流、数据中心）
 - 东方财富数据中心（龙虎榜与席位、大宗交易、融资融券、沪深港通、机构调研、股东户数、限售解禁、业绩预告、分红送配、高管持股变动、股权质押比例、可转债）
 - 东方财富涨停板情绪池（涨停 / 跌停 / 炸板 / 强势 / 次新，含封板资金、连板数、封板时间与所属行业）
-- 技术指标（MA / EMA / MACD / RSI / 量比 / 振幅）与策略信号（金叉死叉、放量突破、RSI 反转）
+- 涨停板情绪因子落库（封板率 / 连板高度历史曲线，支持一键回补与收盘后自动累积，供回测做市场温度因子）
+- 技术指标（MA / EMA / MACD / RSI / 量比 / 振幅 / BOLL / KDJ / ATR / OBV / CCI / WR）与策略信号（金叉死叉、放量突破、RSI 反转）
 - 单标的与组合回测（T+1、涨跌停、停牌、手续费、滑点、无未来数据）
 - 全市场股票池（东方财富 + BaoStock + AKShare 三源，point-in-time 不可变快照，含 ST/新股/退市/停牌排除）
 - 全市场历史入库后台队列（限并发、可取消、可恢复、逐股票覆盖证据）
@@ -132,7 +133,7 @@ $env:E2E_MODE = "managed"
 backend\.venv-311\Scripts\python.exe scripts\e2e_smoke.py
 ```
 
-回归基线：后端 686 项测试全绿、前端类型检查与生产构建零错误、managed E2E 19/19。
+回归基线：后端 735 项测试全绿、前端类型检查与生产构建零错误、managed E2E 19/19。
 
 ## 第三方参考与许可证
 
@@ -142,6 +143,7 @@ backend\.venv-311\Scripts\python.exe scripts\e2e_smoke.py
 | 项目 | 许可证 | 参考点 |
 | --- | --- | --- |
 | [AKShare](https://github.com/akfamily/akshare) | MIT | 当前全市场与北交所数据源 |
+| [tdxpy](https://github.com/mootdx/tdxpy) | MIT | 通达信行情协议解析（作为直接依赖，低延迟实时行情） |
 | [BaoStock](https://github.com/baostock/baostock) | BSD | point-in-time 股票池与交易日历 |
 | [Qlib](https://github.com/microsoft/qlib) | MIT | 滚动评估、样本外与 RankIC |
 | [RQAlpha](https://github.com/ricequant/rqalpha) | Apache-2.0 | next-bar 撮合与交易前风控 |

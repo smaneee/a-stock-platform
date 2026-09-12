@@ -21,14 +21,16 @@
 - **涨停统计**：``zttj`` 是 ``{"days": 3, "ct": 3}`` 对象，输出为「3天3板」。
 - **主机故障转移**：复用 :class:`EastmoneyHostPool`，与行情 / 数据中心口径一致。
 
-已知局限：``date`` 参数经实测被上游忽略（传 20260909 / 20260910 / 20260912 均返回
-同一交易日），因此本模块只提供「最近交易日」快照，并把上游回传的 ``qdate`` 作为
-``LimitUpResult.trade_date`` 返回，不声称支持历史查询。
+历史回补：``date`` 参数**对明细生效**（实测 20260908 返回 73 只、20260909 返回
+48 只、20260911 返回 40 只涨停，股票列表完全不同），但上游回传的 ``qdate`` 始终
+是最新交易日 —— 也就是说 ``qdate`` 不可信，要查哪一天必须由调用方显式传入
+``trade_date``。上游只保留最近若干个交易日（实测 20260828 仍有数据、20260601
+已返回空），因此更早的历史需要靠每日任务累积。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
 
 import httpx
@@ -391,8 +393,13 @@ class EastmoneyLimitUpService:
         limit: int = 50,
         page: int = 1,
         order: str | None = None,
+        trade_date: date | None = None,
     ) -> LimitUpResult:
-        """查询一个情绪池的「最近交易日」快照（按该池推荐字段排序）。"""
+        """查询一个情绪池的快照（按该池推荐字段排序）。
+
+        ``trade_date`` 为空时取北京时间当天；上游会把最近一个交易日的数据
+        返回回来。上游的 ``qdate`` 不可信，传入 ``trade_date`` 时以传入值为准。
+        """
         spec = self.pool(pool)
         page = max(1, int(page))
         limit = max(1, min(int(limit), POOL_PAGE_SIZE_MAX))
@@ -404,7 +411,7 @@ class EastmoneyLimitUpService:
             "Pageindex": str(page - 1),
             "pagesize": str(limit),
             "sort": f"{spec.sort_field}:{direction}",
-            "date": _beijing_today(),
+            "date": (trade_date or datetime.now(BEIJING).date()).strftime("%Y%m%d"),
         }
         payload = await eastmoney_request_json(
             self._client,
@@ -424,10 +431,48 @@ class EastmoneyLimitUpService:
         total = data.get("tc")
         return LimitUpResult(
             pool=spec,
-            trade_date=_ymd(data.get("qdate")),
+            trade_date=(
+                trade_date.strftime("%Y-%m-%d")
+                if trade_date is not None
+                else _ymd(data.get("qdate"))
+            ),
             total=total if isinstance(total, int) else len(rows),
             page=page,
             items=_parse_pool(spec, rows),
+        )
+
+    async def query_all(
+        self,
+        pool: str,
+        *,
+        trade_date: date | None = None,
+        max_pages: int = 20,
+    ) -> LimitUpResult:
+        """翻页取完整情绪池（上游单页上限 200），供落库使用。"""
+        spec = self.pool(pool)
+        items: list[dict[str, Any]] = []
+        total = 0
+        resolved = ""
+        page = 1
+        while page <= max_pages:
+            result = await self.query(
+                pool, limit=POOL_PAGE_SIZE_MAX, page=page, trade_date=trade_date
+            )
+            if page == 1:
+                total = result.total
+                resolved = result.trade_date
+            if not result.items:
+                break
+            items.extend(result.items)
+            if len(items) >= total or len(result.items) < POOL_PAGE_SIZE_MAX:
+                break
+            page += 1
+        return LimitUpResult(
+            pool=spec,
+            trade_date=resolved,
+            total=total or len(items),
+            page=1,
+            items=items,
         )
 
     async def close(self) -> None:

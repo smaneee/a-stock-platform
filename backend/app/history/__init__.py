@@ -6,6 +6,7 @@ from app.history.service import (
     ADJUST_QFQ,
     HistoricalDataService,
     HistoryResult,
+    fetch_history_from_sources,
 )
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "DataQualityChecker",
     "HistoricalDataService",
     "HistoryResult",
+    "fetch_history_from_sources",
     "QualityIssue",
     "QualityReport",
 ]
