@@ -5,8 +5,8 @@
 - 输入是高/低/收/量四个等长序列（价格单位元，成交量单位股）。
 - 输出是「指标名 -> 与输入等长的序列」，不足处为 NaN。
 - 参数取国内行情软件默认值（MA 5/10/20/60、MACD 12/26/9、RSI 6/14/24、
-  BOLL 20/2、KDJ 9/3/3、ATR 14、CCI 14、WR 14），不选用非默认参数以免与
-  用户看到的行情软件对不上。
+  BOLL 20/2、KDJ 9/3/3、ATR 14、CCI 14、WR 14、量比 5 日），不选用非默认
+  参数以免与用户看到的行情软件对不上。
 
 本模块只做计算，不做任何网络或数据库访问。
 """
@@ -20,6 +20,7 @@ from app.indicators.macd import macd
 from app.indicators.moving_average import ema, latest_valid, ma
 from app.indicators.obv import obv
 from app.indicators.rsi import rsi
+from app.indicators.volume import amplitude_series, volume_ratio_series
 from app.indicators.wr import wr
 
 # 默认参数：与通达信 / 同花顺默认值一致
@@ -32,6 +33,7 @@ KDJ_PARAMS = (9, 3, 3)
 ATR_PERIOD = 14
 CCI_PERIOD = 14
 WR_PERIOD = 14
+VOLUME_RATIO_PERIOD = 5
 
 # 指标名 -> 中文标题，供前端渲染表头与图例
 SERIES_TITLES: dict[str, str] = {
@@ -57,6 +59,8 @@ SERIES_TITLES: dict[str, str] = {
     "obv": "OBV",
     "cci14": "CCI14",
     "wr14": "WR14",
+    "amplitude": "振幅(%)",
+    "volume_ratio": "量比(5日)",
 }
 
 
@@ -98,6 +102,8 @@ def compute_indicators(
     result["obv"] = obv(closes, volumes)
     result["cci14"] = cci(highs, lows, closes, CCI_PERIOD)
     result["wr14"] = wr(highs, lows, closes, WR_PERIOD)
+    result["amplitude"] = amplitude_series(highs, lows, closes)
+    result["volume_ratio"] = volume_ratio_series(volumes, VOLUME_RATIO_PERIOD)
     return result
 
 

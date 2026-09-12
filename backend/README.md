@@ -196,7 +196,7 @@ cd backend
 | GET      | `/api/market/limit-up/{pool}`           | 单个情绪池快照（支持 `trade_date` / `limit` / `page` / `order`） |
 | GET      | `/api/market/limit-up/sentiment`        | 涨停板情绪因子历史曲线（封板率 / 连板高度 / 连板梯队） |
 | POST     | `/api/market/limit-up/capture`          | 抓取并落库情绪池（幂等；`backfill_days` 一键回补） |
-| GET      | `/api/indicators`                       | 技术指标目录（22 个序列的中文名与 key）       |
+| GET      | `/api/indicators`                       | 技术指标目录（24 个序列的中文名与 key）       |
 | GET      | `/api/indicators/{symbol}`              | 单标的技术指标序列（MA/EMA/MACD/BOLL/KDJ/ATR/OBV/CCI/WR…） |
 | GET      | `/api/quotes/{symbol}`                  | 单只行情                           |
 | POST     | `/api/quotes/batch`                     | 批量行情                           |
@@ -226,7 +226,7 @@ cd backend
 | POST     | `/api/universe/sync`                    | 同步全市场股票池并原子生成交易日快照           |
 | GET      | `/api/universe/status`                  | 股票池数据源健康与最近一次同步信息            |
 | GET      | `/api/universe/snapshots`               | 历史股票池快照列表                        |
-| GET      | `/api/universe/snapshots/{day}/members` | 查询不可变的历史交易日成员                  |
+| GET      | `/api/universe/snapshots/{day}/members` | 查询不可变的历史交易日成员（`status=included/excluded/all`，默认仅可交易） |
 | POST     | `/api/universe/filter`                  | 按交易日筛选可交易成员                    |
 | GET/POST | `/api/daily-pipeline/runs`              | 创建/查询可恢复的每日股票池→历史入库→选股→模拟调仓流水线 |
 | GET      | `/api/daily-pipeline/runs/{id}`         | 单条每日流水线任务详情（进度/阶段/错误摘要）      |
@@ -296,6 +296,8 @@ ProviderManager 在一次请求内不会对同一上游重复请求。
   里拿全，不会被拆成两次请求。
 - 单位已核对：`vol` 单位是手（×100 转股）、`amount` 已是元、`servertime` 补当天日期。
 - 单次请求按 80 只分块；K 线按 800 根/页分页，最多 40 页。
+- 服务端掐断连接（`WinError 10038` / 接收数据异常）是常态：此时换一条新连接重试一次，
+  仍然失败才返回空，避免把「连接被掐」误判成「这只标的没有数据」而掉进慢速回退链。
 
 不需要 TDX 时把 `MARKET_PROVIDERS` 里的 `tdx` 去掉即可，其余逻辑无感知。
 
@@ -317,6 +319,20 @@ ProviderManager 在一次请求内不会对同一上游重复请求。
 
 实机验收（9 只样本：沪 / 深 / 创业板 / 科创板 / 北交所各覆盖）：东财通道每次失败，新浪通道
 全部命中，批次 `succeeded`、`coverage_ratio=1.0`、沪深京各 52 根日线。
+
+#### 全市场入库吞吐（2026-09 实测）
+
+回补近一年日线（全市场 5849 只）时有两处决定性开销，都已修掉：
+
+- **确定性空结果不再退避重试**：所有源都明确返回空（停牌 / 退市 / 未上市）只打一轮。
+  这类标的不是瞬时故障，但旧策略仍按 2s + 4s 退避重试 3 次，每只白等约 16 秒；
+  只有「源抛异常」才继续重试。
+- **假期缺口合并**：按交易日历定位缺口时，相邻缺失交易日跨度 ≤ 30 天即并入同一段。
+  整年回补会被国庆（9 天）与春节（11 天）拆成 4 段，合并后单只标的网络调用降到 1 次。
+
+两项合计把实测吞吐从 6 只/分提升到 171 只/分（约 28×），5849 只约 30 分钟跑完。
+取不到数据的标的（退市 / 长期停牌）会进入 `failed_symbols` 并计入 `failed_count`，
+不会静默跳过，也不会拖慢整批。
 
 ### 东方财富股票池（`universe` 首选源）
 
@@ -414,8 +430,8 @@ ProviderManager 在一次请求内不会对同一上游重复请求。
 
 ## 技术指标（`/api/indicators*`）
 
-指标计算在 `app/indicators/` 下按「一个指标一个文件」组织，全部只依赖标准库
-（不引入 numpy / pandas），口径对齐通达信：
+指标计算在 `app/indicators/` 下按「一个指标一个文件」组织，与新老模块一致基于
+pandas 实现（项目已有的硬依赖），口径对齐通达信：
 
 | 指标   | 文件                | 口径要点                                    |
 | ---- | ----------------- | --------------------------------------- |
@@ -425,8 +441,10 @@ ProviderManager 在一次请求内不会对同一上游重复请求。
 | OBV  | `obv.py`          | 首根记 0，收涨累加成交量、收跌累减                    |
 | CCI  | `cci.py`          | AVEDEV 平均绝对偏差口径，MD 为 0 时返回 0            |
 | WR   | `wr.py`           | 默认 0~100（通达信），`signed=True` 输出 −100~0     |
+| 振幅   | `volume.py`       | (最高 − 最低) / 昨收 × 100；首根无昨收记 NaN            |
+| 量比   | `volume.py`       | 成交量 / 过去 5 根平均成交量；窗口未满记 NaN              |
 
-`GET /api/indicators` 返回目录（22 个序列的 key + 中文名 + 可用周期 + limit 边界），
+`GET /api/indicators` 返回目录（24 个序列的 key + 中文名 + 可用周期 + limit 边界），
 `GET /api/indicators/{symbol}?period=daily&limit=250` 返回日期轴与各指标序列
 （NaN 统一转 `null`，保留 4 位小数），以及 `latest_values` 便于前端做单值徽标。
 

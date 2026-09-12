@@ -24,6 +24,7 @@ from app.indicators.suite import (
     to_json_series,
 )
 from app.indicators.wr import wr
+from app.indicators.volume import amplitude_series, volume_ratio_series
 from app.main import app
 from app.market_data.base import QuoteData
 
@@ -181,6 +182,37 @@ def test_to_json_series_replaces_nan_with_none():
     payload = to_json_series(compute_indicators(highs, lows, closes, volumes))
     assert payload["ma60"][0] is None
     assert payload["ma5"][-1] is not None
+
+
+def test_amplitude_series_matches_manual_calculation():
+    highs = [10.0, 11.0, 12.0]
+    lows = [9.0, 10.0, 11.5]
+    closes = [9.5, 10.5, 11.8]
+    values = amplitude_series(highs, lows, closes)
+    assert _is_nan(values[0])  # 首根没有昨收
+    assert values[1] == pytest.approx((11.0 - 10.0) / 9.5 * 100)
+    assert values[2] == pytest.approx((12.0 - 11.5) / 10.5 * 100)
+
+
+def test_amplitude_series_rejects_mismatched_lengths():
+    with pytest.raises(ValueError):
+        amplitude_series([1.0], [], [1.0])
+
+
+def test_volume_ratio_series_uses_rolling_average():
+    volumes = [100.0, 100.0, 100.0, 100.0, 100.0, 200.0]
+    values = volume_ratio_series(volumes, period=5)
+    # 分母是「过去 5 根」，所以前 5 根都凑不齐
+    assert [_is_nan(value) for value in values[:5]] == [True] * 5
+    # 第 6 根 200 除以过去 5 根均量 100
+    assert values[5] == pytest.approx(2.0)
+
+
+def test_volume_ratio_series_handles_zero_average():
+    values = volume_ratio_series([0.0, 0.0, 0.0, 0.0, 0.0, 5.0], period=5)
+    # 均量为 0 时不能返回 inf，一律记 NaN
+    assert _is_nan(values[5])
+    assert all(_is_nan(value) for value in values)
 
 
 class _StubProviderManager:
@@ -479,3 +511,65 @@ def test_indicators_endpoint_survives_fallback_failure(monkeypatch):
     finally:
         client.__exit__(None, None, None)
     assert resp.status_code == 503
+
+
+def _intraday_bars(days: int = 10, bars_per_day: int = 4) -> list[QuoteData]:
+    """同一交易日内多根 K 线，时刻不同；用于验证分钟线标签。"""
+    bars: list[QuoteData] = []
+    for day in range(days):
+        for slot in range(bars_per_day):
+            when = datetime(2026, 8, 3, 10, 30) + timedelta(
+                days=day, minutes=slot * 60
+            )
+            price = 10.0 + day * 0.1 + slot * 0.01
+            bars.append(
+                QuoteData(
+                    symbol="600519",
+                    name="测试股",
+                    price=price,
+                    open=price,
+                    high=price * 1.01,
+                    low=price * 0.99,
+                    previous_close=price,
+                    volume=1_000.0,
+                    amount=price * 1_000.0,
+                    source="stub",
+                    market_time=when,
+                )
+            )
+    return bars
+
+
+def test_rows_from_quotes_keeps_time_for_intraday():
+    """分钟线的时间戳必须带时刻，否则同一天的多根会重名。"""
+    rows, source = indicators_api._rows_from_quotes(
+        _intraday_bars(days=1, bars_per_day=4), "60m"
+    )
+    assert source == "stub"
+    assert [row[0] for row in rows] == [
+        "2026-08-03 10:30",
+        "2026-08-03 11:30",
+        "2026-08-03 12:30",
+        "2026-08-03 13:30",
+    ]
+    daily_rows, _ = indicators_api._rows_from_quotes(_intraday_bars(days=1), "daily")
+    assert [row[0] for row in daily_rows] == ["2026-08-03"] * 4
+
+
+def test_indicators_endpoint_minute_labels_are_unique():
+    manager = _StubProviderManager(_intraday_bars(days=12, bars_per_day=4))
+    client = _client(manager)
+    try:
+        resp = client.get(
+            "/api/indicators/600519", params={"period": "60m", "limit": 30}
+        )
+    finally:
+        client.__exit__(None, None, None)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 30
+    labels = body["dates"]
+    assert len(set(labels)) == len(labels)
+    assert labels == sorted(labels)
+    assert all(len(label) == 16 and ":" in label for label in labels)

@@ -657,3 +657,106 @@ export interface LimitUpCaptureResponse {
   count: number;
   items: LimitUpSentimentRow[];
 }
+
+/** 技术指标目录：可用序列与周期（GET /api/indicators）。 */
+export interface IndicatorSeriesInfo {
+  key: string;
+  title: string;
+}
+
+export interface IndicatorCatalogResponse {
+  periods: string[];
+  default_period: string;
+  default_limit: number;
+  min_limit: number;
+  max_limit: number;
+  count: number;
+  series: IndicatorSeriesInfo[];
+}
+
+/** 单标的技术指标序列；NaN 已由后端转成 null，与 dates 等长。 */
+export interface IndicatorResponse {
+  symbol: string;
+  period: string;
+  /** 本次实际数据来源：cache / tdx / akshare_sina … */
+  source: string;
+  count: number;
+  dates: string[];
+  close: number[];
+  titles: Record<string, string>;
+  series: Record<string, Array<number | null>>;
+  /** 每条序列最后一个有效值 */
+  latest: Record<string, number | null>;
+}
+
+// ---------- 股票池（universe） ----------
+
+/** GET /api/universe/snapshots 的单条快照摘要。 */
+export interface UniverseSnapshotSummary {
+  id: number;
+  trading_day: string;
+  total_count: number;
+  included_count: number;
+  excluded_count: number;
+  source_provider: string;
+  source_synced_at: string | null;
+  created_at: string | null;
+}
+
+/** GET /api/universe/status 里的数据源健康项。 */
+export interface UniverseProviderHealth {
+  source_id: string;
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  last_status: string;
+  last_error: string | null;
+  consecutive_failures: number;
+}
+
+export interface UniverseStatusResponse {
+  provider_health: UniverseProviderHealth[];
+  latest_snapshot_date: string | null;
+}
+
+/** POST /api/universe/sync 的结果。 */
+export interface UniverseSyncResponse {
+  source_provider: string;
+  synced_at: string;
+  total_fetched: number;
+  new_securities: number;
+  updated_securities: number;
+  attempted_providers: string[];
+  provider_health: Record<string, unknown>;
+  snapshot_id: number | null;
+  snapshot_trading_day: string | null;
+}
+
+/** 快照成员（股票池里的单只标的）。 */
+export interface UniverseMember {
+  symbol: string;
+  name: string;
+  exchange: string;
+  board: string;
+  is_st: boolean;
+  is_included: boolean;
+  exclude_reason: string | null;
+  audit_reason: string | null;
+  sort_rank: number;
+  listing_date: string | null;
+  trading_status: string;
+}
+
+export interface UniverseMembersResponse {
+  trading_day: string;
+  include_only: boolean;
+  exchange: string | null;
+  exclude_reasons: string[] | null;
+  count: number;
+  members: UniverseMember[];
+}
+
+/** GET /api/market/providers：已注册的数据源与当前可用性。 */
+export interface MarketProvidersResponse {
+  providers: string[];
+  status: Record<string, boolean>;
+}

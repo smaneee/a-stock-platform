@@ -11,6 +11,8 @@ import PortfolioBacktestPage from "./pages/PortfolioBacktest";
 import PaperTradingPage from "./pages/PaperTrading";
 import SelectionPage from "./pages/Selection";
 import MarketPage from "./pages/Market";
+import IndicatorsPage from "./pages/Indicators";
+import UniversePage from "./pages/Universe";
 
 export default function App() {
   return (
@@ -23,6 +25,8 @@ export default function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/watchlist" element={<WatchlistPage />} />
             <Route path="/market" element={<MarketPage />} />
+            <Route path="/indicators" element={<IndicatorsPage />} />
+            <Route path="/universe" element={<UniversePage />} />
             <Route path="/signals" element={<SignalsPage />} />
             <Route path="/selection" element={<SelectionPage />} />
             <Route path="/strategies" element={<StrategiesPage />} />

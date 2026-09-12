@@ -108,10 +108,21 @@ def _lookback_start(period: str, limit: int, end: datetime) -> datetime:
     return end - timedelta(days=math.ceil(limit * factor) + 30)
 
 
+def _bar_label(when: datetime, period: str) -> str:
+    """K 线时间戳标签：分钟线必须带时刻，否则同一天的多根会重名。"""
+    if period in _MINUTES_BY_PERIOD:
+        return when.strftime("%Y-%m-%d %H:%M")
+    return when.date().isoformat()
+
+
 def _cached_bars(
     db: Session, symbol: str, period: str, limit: int
 ) -> list[tuple[str, float, float, float, float]]:
-    """从本地缓存读取最近 limit 根 K 线，按时间升序返回。"""
+    """从本地缓存读取最近 limit 根 K 线，按时间升序返回。
+
+    ``historical_bars.trade_date`` 是 DATE 列，存不下分钟级时刻，因此只用于
+    日线及以上的周期；分钟线一律走数据源，避免同一天的多根 K 线挤在同一个日期上。
+    """
     stmt = (
         select(HistoricalBar)
         .where(
@@ -137,9 +148,9 @@ def _cached_bars(
 
 
 def _rows_from_quotes(
-    quotes: list,
+    quotes: list, period: str = "daily"
 ) -> tuple[list[tuple[str, float, float, float, float]], str]:
-    """把数据源返回的 K 线转成 (日期, 高, 低, 收, 量) 并按时间升序。"""
+    """把数据源返回的 K 线转成 (时间, 高, 低, 收, 量) 并按时间升序。"""
     rows: list[tuple[str, float, float, float, float]] = []
     for quote in sorted(quotes, key=lambda item: item.market_time or datetime.min):
         when = quote.market_time
@@ -147,7 +158,7 @@ def _rows_from_quotes(
             continue
         rows.append(
             (
-                when.date().isoformat(),
+                _bar_label(when, period),
                 float(quote.high or 0),
                 float(quote.low or 0),
                 float(quote.price or 0),
@@ -218,7 +229,7 @@ async def _daily_fallback(
     except Exception as exc:  # noqa: BLE001 - 回退链失败不能变成 500
         logger.warning("指标接口回退链拉取 %s 失败: %s", symbol, exc)
         return [], ""
-    rows, source = _rows_from_quotes(quotes)
+    rows, source = _rows_from_quotes(quotes, "daily")
     return _aggregate_daily(rows, period), source or "akshare"
 
 
@@ -262,8 +273,9 @@ async def get_indicators(
             detail=f"不支持的周期 {period!r}，可选 {', '.join(SUPPORTED_PERIODS)}",
         )
 
-    rows = _cached_bars(db, symbol, period, limit)
-    source = "cache"
+    # 本地缓存是 DATE 列，只能代表日线及以上周期
+    rows = _cached_bars(db, symbol, period, limit) if period in _DAILY_LIKE else []
+    source = "cache" if rows else ""
 
     if len(rows) < limit:
         now = datetime.now()
@@ -280,13 +292,13 @@ async def get_indicators(
         except Exception as exc:  # noqa: BLE001 - 数据源异常不能变成 500
             logger.warning("指标接口获取 %s(%s) 历史行情失败: %s", symbol, period, exc)
             quotes = []
-        live_rows, live_source = _rows_from_quotes(quotes)
+        live_rows, live_source = _rows_from_quotes(quotes, period)
         if len(live_rows) > len(rows):
             rows, source = live_rows, live_source
 
     if len(rows) < MIN_BARS and period in _DAILY_LIKE:
-        # TDX 不覆盖北交所、东财 K 线在本机被限流，这里用入库路径的同一套
-        # 只读回退链兜底，保证沪深京所有标的都能算指标。
+        # 通达信未收录的代码段、以及东财 K 线在本机被限流时，用入库路径的
+        # 同一套只读回退链兜底，保证沪深京所有标的都能算指标。
         fallback_rows, fallback_source = await _daily_fallback(
             provider_manager, symbol, period, limit
         )

@@ -1,7 +1,7 @@
 """历史数据本地化服务测试。"""
 import sys
 import types
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -9,6 +9,7 @@ import pytest
 from app.database.models import HistoricalBar
 from app.history.service import (
     _BAOSTOCK_ADJUSTFLAG,
+    _GAP_MERGE_MAX_DAYS,
     ADJUST_HFQ,
     ADJUST_NONE,
     ADJUST_QFQ,
@@ -18,6 +19,7 @@ from app.history.service import (
     _coerce_day,
     _exchange_prefix,
     _fetch_from_sources,
+    merge_gap_ranges,
 )
 from app.market_data.base import QuoteData
 from app.time_utils import utc_now
@@ -562,3 +564,102 @@ async def test_sync_still_uses_eastmoney_without_akshare_provider(
     added = await svc.sync("600000", datetime(2026, 1, 1), datetime(2026, 1, 10))
     assert added == 1
     assert counter["akshare"] == 1
+
+
+# ──────── 整批回补性能：确定性空结果不退避重试 / 假期缺口合并 ────────
+
+
+def test_merge_gap_ranges_holiday_tolerance():
+    """国庆 9 天缺口：默认容差拆两段，入库容差合并为一段。"""
+    dates = [
+        date(2025, 9, 29),
+        date(2025, 9, 30),
+        date(2025, 10, 9),
+        date(2025, 10, 10),
+    ]
+    assert len(merge_gap_ranges(dates)) == 2
+    assert len(merge_gap_ranges(dates, _GAP_MERGE_MAX_DAYS)) == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_with_calendar_merges_holiday_gaps(db_session, monkeypatch):
+    """整年回补跨国庆 / 春节时只发一次网络请求，而不是按假期拆成多段。"""
+    from app.database.models import TradingDate
+    from app.market_rules.calendar import TradingCalendar
+
+    # 造一份「除国庆 / 春节休市外每天都是交易日」的日历，贴近真实分布
+    closed = set()
+    for lo, hi in ((date(2025, 10, 1), date(2025, 10, 8)),
+                   (date(2026, 2, 14), date(2026, 2, 23))):
+        cursor = lo
+        while cursor <= hi:
+            closed.add(cursor)
+            cursor += timedelta(days=1)
+    cursor = date(2025, 9, 29)
+    while cursor <= date(2026, 2, 25):
+        if cursor not in closed:
+            db_session.add(TradingDate(trade_date=cursor))
+        cursor += timedelta(days=1)
+    db_session.commit()
+
+    calls = {"n": 0}
+
+    async def _fake_fetch(symbol, adjust, start, end):
+        calls["n"] += 1
+        return [_mk_bar(symbol, start.isoformat())]
+
+    svc = HistoricalDataService(db_session)
+    monkeypatch.setattr(svc, "_fetch_with_retry", _fake_fetch)
+    added = await svc._sync_with_calendar(
+        "600000",
+        "daily",
+        ADJUST_NONE,
+        TradingCalendar(db_session),
+        date(2025, 9, 29),
+        date(2026, 2, 25),
+    )
+    assert calls["n"] == 1
+    assert added == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_with_retry_does_not_retry_definitive_empty(
+    db_session, monkeypatch
+):
+    """所有源都明确返回空（无异常）时只打一轮：停牌 / 退市不是瞬时故障。"""
+    manager = _FakeProviderManager(names=("tencent",))
+    counter = {"sina": 0}
+
+    def _counted_sina(symbol, adjust, start, end):
+        counter["sina"] += 1
+        return []
+
+    _patch_sources(monkeypatch, sina=_counted_sina)
+    svc = HistoricalDataService(db_session, provider_manager=manager)
+    bars = await svc._fetch_with_retry(
+        "600000", ADJUST_NONE, date(2026, 1, 1), date(2026, 1, 10)
+    )
+    assert bars == []
+    assert manager.calls == 1
+    assert counter["sina"] == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_with_retry_still_retries_transient_errors(
+    db_session, monkeypatch
+):
+    """源抛异常（瞬时故障）时仍退避重试到上限，不做「一轮就放弃」的处理。"""
+    monkeypatch.setattr("app.history.service._RETRY_BASE_SECONDS", 0.0)
+    manager = _FakeProviderManager(names=("tencent",))
+    _patch_sources(
+        monkeypatch,
+        akshare=_stub(exc=ConnectionError("a")),
+        sina=_stub(exc=ConnectionError("b")),
+        baostock=_stub(exc=ConnectionError("c")),
+    )
+    svc = HistoricalDataService(db_session, provider_manager=manager)
+    bars = await svc._fetch_with_retry(
+        "600000", ADJUST_NONE, date(2026, 1, 1), date(2026, 1, 10)
+    )
+    assert bars == []
+    assert manager.calls == 3

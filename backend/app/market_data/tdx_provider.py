@@ -301,6 +301,17 @@ class TdxProvider(MarketDataProvider):
                 return await asyncio.to_thread(operation, api)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("通达信请求失败(%s)：%s", self._host, exc)
+            # 服务端掐断连接是常态（WinError 10038 / 接收数据异常）。此时若直接
+            # 返回 default，上层会把它当成「这只标的没有数据」，掉进慢速回退链；
+            # 换一条新连接重试一次通常就能拿到数据。
+            await asyncio.to_thread(self._drop_connection_blocking)
+            try:
+                api = await asyncio.to_thread(self._ensure_api_blocking)
+                if api is None:
+                    return default
+                return await asyncio.to_thread(operation, api)
+            except Exception as retry_exc:  # noqa: BLE001
+                logger.warning("通达信重试仍失败(%s)：%s", self._host, retry_exc)
                 await asyncio.to_thread(self._drop_connection_blocking)
                 return default
 

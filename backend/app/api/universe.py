@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date as date_cls
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from sqlalchemy.orm import Session
@@ -124,6 +124,14 @@ def get_members(
     request: Request,
     trading_day: Annotated[str, Path(description="交易日 YYYY-MM-DD")],
     include_only: Annotated[bool | None, Query()] = True,
+    status: Annotated[
+        Literal["included", "excluded", "all"] | None,
+        Query(
+            description="included=仅可交易 / excluded=仅已剔除 / all=全部；"
+            "给出时覆盖 include_only（include_only=False 只返回被剔除的标的，"
+            "想同时看到两边必须用 status=all）"
+        ),
+    ] = None,
     exchange: Annotated[
         str | None, Query(description="SH / SZ / BJ")
     ] = None,
@@ -140,6 +148,8 @@ def get_members(
             status_code=400,
             detail={"error": "invalid_date", "message": f"{trading_day} 不是合法 YYYY-MM-DD"},
         )
+    if status is not None:
+        include_only = {"included": True, "excluded": False, "all": None}[status]
     snap_svc = UniverseSnapshotService(db)
     members = snap_svc.get_membership(
         td,
@@ -151,6 +161,7 @@ def get_members(
     return {
         "trading_day": td.isoformat(),
         "include_only": include_only,
+        "status": status,
         "exchange": exchange,
         "exclude_reasons": list(exclude_reason) if exclude_reason else None,
         "count": len(members),

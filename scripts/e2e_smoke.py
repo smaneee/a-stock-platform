@@ -771,6 +771,13 @@ async def main_managed() -> int:
 # 兼容旧调用方式（外部已启动服务）
 async def main_external() -> int:
     print(f"=== A 股平台端到端冒烟测试 (run={RUN_ID}) ===")
+    print(
+        "⚠️  external 模式：直接打已经启动的 :8000 / :5173，冒烟数据会写进"
+        "那个实例自己的数据库（默认就是 backend/a_stock.db）。\n"
+        f"   本次会留下：自选股 e2e-{RUN_ID}、模拟账户 {RUN_ID}-account 及其委托/成交。\n"
+        "   想在隔离库里跑不留下任何数据，请改用 managed 模式：\n"
+        "     $env:E2E_MODE='managed'; backend\\.venv-311\\Scripts\\python.exe scripts\\e2e_smoke.py"
+    )
     res = SmokeResult()
     await run_checks(res)
     passed, total = res.summary()

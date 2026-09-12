@@ -483,6 +483,39 @@ class TestUniverseAPI:
         assert r.status_code == 400
         assert "invalid_date" in str(r.json())
 
+    def test_members_status_tristate(self):
+        """status=included/excluded/all 覆盖 include_only 的三态语义。
+
+        include_only=False 只返回「被剔除」的标的，调用方无法同时看到两边，
+        因此新增 status=all 给出全量。
+        """
+        client = self._client()
+        r = client.post("/api/universe/sync")
+        assert r.status_code == 200, r.text
+        td = r.json()["snapshot_trading_day"]
+        snap = client.get("/api/universe/snapshots").json()["snapshots"][0]
+        assert snap["excluded_count"] > 0, "mock 种子里应含 ST / 退市标的"
+
+        base = f"/api/universe/snapshots/{td}/members"
+        default = client.get(base).json()
+        all_rows = client.get(f"{base}?status=all").json()
+        only_incl = client.get(f"{base}?status=included").json()
+        only_excl = client.get(f"{base}?status=excluded").json()
+
+        assert default["include_only"] is True
+        assert all_rows["include_only"] is None
+        assert default["count"] == only_incl["count"]
+        assert all_rows["count"] == snap["total_count"]
+        assert all_rows["count"] == only_incl["count"] + only_excl["count"]
+        assert only_excl["count"] == snap["excluded_count"]
+        assert all(m["is_included"] for m in only_incl["members"])
+        assert not any(m["is_included"] for m in only_excl["members"])
+
+    def test_members_status_rejects_unknown_value(self):
+        client = self._client()
+        r = client.get("/api/universe/snapshots/2024-01-01/members?status=bogus")
+        assert r.status_code == 422
+
     def test_sync_runs_with_default_mock_provider(self):
         """POST /api/universe/sync 默认走 mock → 200。"""
         client = self._client()

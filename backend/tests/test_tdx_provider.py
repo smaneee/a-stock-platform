@@ -71,6 +71,7 @@ class _FakeCluster:
         bars=None,
         probe=True,
         probe_blocked_hosts=(),
+        bar_failures=0,
     ):
         self.serving_hosts = set(serving_hosts)
         # 连得上但探活返回空的主机（模拟「只服务特定客户」的服务器）
@@ -83,6 +84,8 @@ class _FakeCluster:
         self.quote_calls = 0
         self.bar_calls = 0
         self.disconnects = 0
+        # 前 N 次 K 线请求模拟「服务端掐断连接」，用于验证重连重试
+        self.bar_failures = bar_failures
 
     def factory(self):
         return _FakeApi(self)
@@ -134,6 +137,10 @@ class _FakeApi:
         if not self._connected:
             raise RuntimeError("not connected")
         self._cluster.bar_calls += 1
+        if self._cluster.bar_failures > 0:
+            self._cluster.bar_failures -= 1
+            self._connected = False  # 服务端掐断，连接随即不可用
+            raise RuntimeError("接收数据异常，请稍后再试。")
         return self._cluster.chunk(start, min(count, MAX_KLINE_COUNT))
 
 
@@ -327,3 +334,41 @@ async def test_health_check_reflects_availability():
     down = _provider(_FakeCluster(()))
     assert await down.health_check() is False
     await down.close()
+
+
+async def test_call_reconnects_and_retries_after_dropped_connection():
+    """服务端掐断连接时换一条新连接重试一次，而不是直接当成「没有数据」。"""
+    cluster = _FakeCluster(
+        (HOST_A,),
+        bars=[_bar_row(datetime(2026, 9, 11), 10.0)],
+        bar_failures=1,
+    )
+    provider = _provider(cluster)
+    # 日线区间用当天 00:00:00 ~ 23:59:59.999999，否则 15:00 的 K 线会被过滤掉
+    end = datetime.combine(datetime(2026, 9, 11).date(), datetime.max.time())
+    hist = await provider.get_history(
+        "600519", "daily", datetime(2026, 9, 1), end
+    )
+    await provider.close()
+
+    assert len(hist) == 1
+    assert cluster.bar_calls == 2  # 首次失败 + 重连后成功
+    assert cluster.connect_attempts.count(HOST_A) >= 2
+
+
+async def test_call_returns_default_when_retry_also_fails():
+    """重试用尽后仍失败，返回 default（不抛异常），由上层回退其它数据源。"""
+    cluster = _FakeCluster(
+        (HOST_A,),
+        bars=[_bar_row(datetime(2026, 9, 11), 10.0)],
+        bar_failures=99,
+    )
+    provider = _provider(cluster)
+    end = datetime.combine(datetime(2026, 9, 11).date(), datetime.max.time())
+    hist = await provider.get_history(
+        "600519", "daily", datetime(2026, 9, 1), end
+    )
+    await provider.close()
+
+    assert hist == []
+    assert cluster.bar_calls == 2  # 首次 + 一次重试，不会无限重试

@@ -39,6 +39,12 @@ _FETCH_TIMEOUT_SECONDS = 30.0  # 单次请求超时
 _MAX_RETRIES = 3  # 重试上限
 _RETRY_BASE_SECONDS = 2.0  # 退避基数（2^attempt 秒）
 
+# 缺口合并容差：相邻缺失交易日跨度 ≤ 该天数即视为同一段。
+# A 股最长连续休市（春节 / 国庆）在交易日之间约 11 天，取 30 天可把
+# 「一次回补整年」拆成的 4 段合并为 1 段，单只标的网络调用从 4 次降到 1 次；
+# 真正零散的长跨度缺口（> 30 天）仍会拆分，保持增量回补的粒度。
+_GAP_MERGE_MAX_DAYS = 30
+
 # BaoStock 内部 socket 没有超时，必须显式设置，否则 next() 可能无限阻塞
 _BAOSTOCK_SOCKET_TIMEOUT_SECONDS = 20.0
 
@@ -272,7 +278,7 @@ class HistoricalDataService:
         if not missing:
             return 0
 
-        gap_ranges = merge_gap_ranges(missing)
+        gap_ranges = merge_gap_ranges(missing, _GAP_MERGE_MAX_DAYS)
         total_added = 0
         for gap_start, gap_end in gap_ranges:
             bars = await self._fetch_with_retry(symbol, adjust, gap_start, gap_end)
@@ -344,6 +350,7 @@ class HistoricalDataService:
         saw_empty = False
 
         for attempt in range(_MAX_RETRIES):
+            attempt_raised = False
             if self._provider_manager is not None:
                 try:
                     bars = await asyncio.wait_for(
@@ -356,6 +363,7 @@ class HistoricalDataService:
                         return bars
                     saw_empty = True
                 except Exception as exc:  # noqa: BLE001
+                    attempt_raised = True
                     last_exc = exc
                     logger.warning(
                         "ProviderManager 拉取 %s 第 %d 次失败: %s",
@@ -377,11 +385,16 @@ class HistoricalDataService:
                     return bars
                 saw_empty = True
             except Exception as exc:  # noqa: BLE001
+                attempt_raised = True
                 last_exc = exc
                 logger.warning(
                     "多源历史回退拉取 %s 第 %d 次失败: %s",
                     symbol, attempt + 1, exc,
                 )
+            # 所有源都明确返回空 = 该标的确实没有数据（停牌 / 退市 / 未上市），
+            # 这不是瞬时故障；继续退避重试只会白白拖慢整批入库。
+            if saw_empty and not attempt_raised:
+                break
             if attempt < _MAX_RETRIES - 1:
                 await asyncio.sleep(_RETRY_BASE_SECONDS * (2 ** attempt))
 

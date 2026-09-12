@@ -42,6 +42,13 @@ import type {
   LimitUpSentimentResponse,
   LimitUpCaptureRequest,
   LimitUpCaptureResponse,
+  IndicatorCatalogResponse,
+  IndicatorResponse,
+  MarketProvidersResponse,
+  UniverseMembersResponse,
+  UniverseSnapshotSummary,
+  UniverseStatusResponse,
+  UniverseSyncResponse,
 } from "./types";
 
 const BASE = "/api";
@@ -55,7 +62,7 @@ class ApiError extends Error {
 
 async function request<T>(
   path: string,
-  init?: RequestInit & { params?: Record<string, string | number> },
+  init?: RequestInit & { params?: Record<string, string | number | boolean> },
 ): Promise<T> {
   let url = `${BASE}${path}`;
   if (init?.params) {
@@ -95,7 +102,7 @@ export const fetchMetrics = () => request<MetricsResponse>("/metrics");
 // ---------- 股票筛选 ----------
 
 export const listUniverseSnapshots = () =>
-  request<{ snapshots: Array<{ trading_day: string }> }>("/universe/snapshots", {
+  request<{ snapshots: UniverseSnapshotSummary[] }>("/universe/snapshots", {
     params: { limit: 20 },
   });
 
@@ -490,3 +497,53 @@ export const captureLimitUpSentiment = (body: LimitUpCaptureRequest) =>
     method: "POST",
     body: JSON.stringify(body),
   });
+
+// ---------- 技术指标 ----------
+
+/** 指标目录：可用序列（key + 中文名）、支持的周期与 limit 边界。 */
+export const fetchIndicatorCatalog = () =>
+  request<IndicatorCatalogResponse>("/indicators");
+
+/** 单标的技术指标序列（MA/EMA/MACD/RSI/BOLL/KDJ/ATR/OBV/CCI/WR）。 */
+export const fetchIndicators = (
+  symbol: string,
+  period = "daily",
+  limit = 250,
+) =>
+  request<IndicatorResponse>(`/indicators/${encodeURIComponent(symbol)}`, {
+    params: { period, limit },
+  });
+
+// ---------- 股票池（universe） ----------
+
+/** 股票池同步状态：数据源健康 + 最近快照日期。 */
+export const fetchUniverseStatus = () =>
+  request<UniverseStatusResponse>("/universe/status");
+
+/** 触发一次股票池同步（成功后会落库当日快照）。 */
+export const syncUniverse = () =>
+  request<UniverseSyncResponse>("/universe/sync", { method: "POST" });
+
+/** 某快照的成员。
+ *
+ * status=included 仅可交易（默认）/ excluded 仅已剔除 / all 全部。
+ * 后端 include_only=False 是「只要被剔除的」，想同时看到两边必须用 all。
+ */
+export const listUniverseMembers = (
+  tradingDay: string,
+  options: { exchange?: string; status?: "included" | "excluded" | "all" } = {},
+) =>
+  request<UniverseMembersResponse>(
+    `/universe/snapshots/${encodeURIComponent(tradingDay)}/members`,
+    {
+      params: {
+        status: options.status ?? "included",
+        limit: 10000,
+        ...(options.exchange ? { exchange: options.exchange } : {}),
+      },
+    },
+  );
+
+/** 已注册的数据源（按优先级）及其实时可用性。 */
+export const fetchMarketProviders = () =>
+  request<MarketProvidersResponse>("/market/providers");
