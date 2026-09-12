@@ -106,7 +106,9 @@ class PaperRebalanceService:
                     orders.append(self._order("SELL", symbol, sell_quantity, quotes[symbol]))
         for candidate in candidates:
             quote = quotes[candidate.symbol]
-            desired = floor(target_value / quote.ask_price / 100) * 100 if quote.ask_price > 0 else 0
+            # 盘口缺失（东财/AKShare 无五档）时按最新价估算可买数量
+            reference = quote.execution_price("BUY")
+            desired = floor(target_value / reference / 100) * 100 if reference > 0 else 0
             difference = desired - current_quantity.get(candidate.symbol, 0)
             if difference >= 100:
                 orders.append(self._order("BUY", candidate.symbol, floor(difference / 100) * 100, quote))
@@ -218,7 +220,7 @@ class PaperRebalanceService:
 
     @staticmethod
     def _order(side: str, symbol: str, quantity: int, quote: QuoteData) -> dict:
-        price = quote.bid_price if side == "SELL" else quote.ask_price
+        price = quote.execution_price(side)
         return {
             "side": side,
             "symbol": symbol,

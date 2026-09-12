@@ -3,6 +3,7 @@ import { NavLink } from "react-router-dom";
 const NAV_ITEMS = [
   { to: "/", label: "看板", icon: "📊" },
   { to: "/watchlist", label: "自选股", icon: "⭐" },
+  { to: "/market", label: "市场行情", icon: "🧭" },
   { to: "/signals", label: "信号", icon: "🔔" },
   { to: "/selection", label: "智能选股", icon: "🎯" },
   { to: "/strategies", label: "策略", icon: "⚙️" },

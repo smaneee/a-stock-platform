@@ -28,7 +28,9 @@ class Settings(BaseSettings):
 
     # 行情数据源优先级
     # Mock 只能由测试或演示环境显式启用，禁止真实行情失败时返回随机价格。
-    market_providers: str = "tencent,akshare"
+    # 东方财富（eastmoney）为实时行情首选，腾讯为备援；akshare 的历史接口与东财
+    # 同源，管理器在一次请求内不会对同一上游重复请求（见 ProviderManager.upstream）。
+    market_providers: str = "eastmoney,tencent,akshare"
     # e2e_smoke 启用：用 mock 作为最高优先级（无需 AKShare 网络）
     e2e_use_mock: bool = False
     quote_poll_interval: float = 3.0
@@ -37,12 +39,15 @@ class Settings(BaseSettings):
     max_quote_age_seconds: float = 15.0
 
     # ───────────── Universe（股票池）Provider 配置 ─────────────
-    # 生产环境默认值：BaoStock 历史时点主源，AKShare 当前全市场备援。
+    # 生产环境默认值：东方财富当前全市场主源（含所属行业），BaoStock 历史时点备援，
+    # AKShare 当前全市场兜底。
     # 测试/CI/managed E2E 模式：通过 E2E_USE_MOCK=true 强制改为 mock；
     # 也可以显式设 universe_providers=mock 走测试样本（26 条）。
     # 多 provider 用逗号分隔，按顺序尝试，任一成功即止；全部失败 → 503。
     # 严禁在生产默认列表里包含 mock — 否则真实源失败会静默退回假数据。
-    universe_providers: str = "baostock,akshare"
+    universe_providers: str = "eastmoney,baostock,akshare"
+    # 东方财富股票池超时（秒）：60 页并发拉取，实测 3~10 秒
+    eastmoney_universe_timeout_seconds: float = 90.0
     # AKShare 超时（秒）：超过这个时间就算失败，让 SyncService 切下一个 provider。
     akshare_universe_timeout_seconds: float = 30.0
     # BaoStock 超时（秒）：point-in-time 主数据源，含 query_all_stock + query_stock_basic

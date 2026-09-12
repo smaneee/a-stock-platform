@@ -7,6 +7,8 @@ from __future__ import annotations
 from fastapi import Request
 
 from app.market_data.provider_manager import ProviderManager
+from app.market_data.eastmoney_datacenter import EastmoneyDatacenterService
+from app.market_data.eastmoney_market import EastmoneyMarketService
 from app.realtime.quote_cache import QuoteCache
 from app.realtime.signal_engine import SignalEngine
 from app.realtime.websocket_manager import ConnectionManager
@@ -14,6 +16,14 @@ from app.realtime.websocket_manager import ConnectionManager
 
 def get_provider_manager(request: Request) -> ProviderManager:
     return request.app.state.provider_manager
+
+
+def get_market_service(request: Request) -> EastmoneyMarketService:
+    return request.app.state.market_service
+
+
+def get_datacenter_service(request: Request) -> EastmoneyDatacenterService:
+    return request.app.state.datacenter_service
 
 
 def get_quote_cache(request: Request) -> QuoteCache:

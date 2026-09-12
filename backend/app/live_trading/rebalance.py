@@ -307,8 +307,9 @@ class LiveRebalanceService:
             for symbol in symbols
             if symbol not in quotes
             or quotes[symbol].is_stale
-            or quotes[symbol].bid_price <= 0
-            or quotes[symbol].ask_price <= 0
+            # 买卖两侧都要有可用参考价：优先盘口，缺失时退化为最新价
+            or quotes[symbol].execution_price("BUY") <= 0
+            or quotes[symbol].execution_price("SELL") <= 0
         ]
         if invalid:
             raise LiveRebalanceError(f"缺少有效实时盘口: {', '.join(invalid[:5])}")
@@ -329,7 +330,7 @@ class LiveRebalanceService:
 
     @staticmethod
     def _order(side: str, symbol: str, quantity: int, quote: QuoteData) -> dict:
-        price = quote.bid_price if side == "SELL" else quote.ask_price
+        price = quote.execution_price(side)
         return {
             "side": side,
             "symbol": symbol,

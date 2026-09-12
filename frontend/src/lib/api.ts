@@ -7,6 +7,13 @@ import type {
   BacktestRequest,
   BacktestResponse,
   BacktestSummary,
+  BoardKind,
+  BoardListResponse,
+  BoardMemberResponse,
+  DatacenterCatalogResponse,
+  DatacenterQueryResponse,
+  DragonTigerSeatsResponse,
+  FundFlowResponse,
   HealthDetail,
   MetricsResponse,
   PaperAccount,
@@ -29,6 +36,7 @@ import type {
   DailyPipelineSchedule,
   LiveRebalancePlan,
   LiveTradingStatus,
+  StockFundFlowHistoryResponse,
 } from "./types";
 
 const BASE = "/api";
@@ -372,3 +380,80 @@ export const fetchAssetCurve = (accountId: number) =>
     frozen_cash: number;
     asset_curve: AssetPoint[];
   }>(`/paper/accounts/${accountId}/assets`);
+
+// ---------- 东方财富：板块 / 资金流 ----------
+
+export const listBoards = (kind: BoardKind, limit = 50, order: "desc" | "asc" = "desc") =>
+  request<BoardListResponse>("/market/boards", {
+    params: { kind, limit, order },
+  });
+
+export const listBoardConstituents = (boardCode: string, limit = 50) =>
+  request<BoardMemberResponse>(`/market/boards/${boardCode}/constituents`, {
+    params: { limit },
+  });
+
+export const listBoardFundFlow = (
+  kind: BoardKind,
+  limit = 50,
+  order: "desc" | "asc" = "desc",
+) =>
+  request<FundFlowResponse>("/market/fund-flow/boards", {
+    params: { kind, limit, order },
+  });
+
+export const listStockFundFlowRank = (limit = 50, order: "desc" | "asc" = "desc") =>
+  request<FundFlowResponse>("/market/fund-flow/stocks", {
+    params: { limit, order },
+  });
+
+export const fetchStockFundFlowHistory = (symbol: string, days = 60) =>
+  request<StockFundFlowHistoryResponse>(
+    `/market/fund-flow/stocks/${symbol}`,
+    { params: { days } },
+  );
+
+export const fetchDatacenterCatalog = () =>
+  request<DatacenterCatalogResponse>("/market/datacenter");
+
+export interface DatacenterQueryParams {
+  date?: string;
+  date_from?: string;
+  date_to?: string;
+  trade_date?: string;
+  symbol?: string;
+  limit?: number;
+  page?: number;
+  order?: "desc" | "asc";
+}
+
+/** 去掉空值，避免把 undefined 拼进查询串。 */
+const compactParams = (
+  params: DatacenterQueryParams,
+): Record<string, string | number> => {
+  const query: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") {
+      query[key] = value as string | number;
+    }
+  }
+  return query;
+};
+
+export const queryDatacenter = (
+  dataset: string,
+  params: DatacenterQueryParams = {},
+) =>
+  request<DatacenterQueryResponse>(`/market/datacenter/${dataset}`, {
+    params: compactParams(params),
+  });
+
+export const fetchDragonTigerSeats = (
+  symbol: string,
+  tradeDate?: string,
+  limit = 20,
+) =>
+  request<DragonTigerSeatsResponse>(
+    `/market/datacenter/dragon-tiger/${symbol}/seats`,
+    { params: compactParams({ trade_date: tradeDate, limit }) },
+  );

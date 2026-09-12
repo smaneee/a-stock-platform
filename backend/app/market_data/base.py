@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import math
 from datetime import datetime
 from typing import Callable
 
@@ -43,11 +44,28 @@ class QuoteData(BaseModel):
             return 0.0
         return (self.price - self.previous_close) / self.previous_close * 100
 
+    def execution_price(self, side: str) -> float:
+        """成交参考价：优先对手盘盘口，盘口缺失时按最新价兜底。
+
+        卖 → 买一价，买 → 卖一价；两者为空（东方财富批量行情接口没有五档、
+        AKShare 也不提供盘口）时退化为最新价，避免调仓把可买数量算成 0。
+        没有任何可用价格时返回 0.0，由调用方按无效行情处理。
+        """
+        price = self.bid_price if (side or "").upper() == "SELL" else self.ask_price
+        if not math.isfinite(price) or price <= 0:
+            price = self.price
+        if not math.isfinite(price) or price <= 0:
+            return 0.0
+        return price
+
 
 class MarketDataProvider(ABC):
     """行情数据源抽象接口。"""
 
     name: str = "base"
+    # 同一上游标识：akshare 的历史接口实际打的就是东财，与 EastmoneyProvider 同源。
+    # ProviderManager 用它避免在一次请求里重复打同一个上游；留空按 name 区分。
+    upstream: str = ""
 
     @abstractmethod
     async def get_quote(self, symbol: str) -> QuoteData | None:

@@ -21,6 +21,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/watchlist" element={<WatchlistPage />} />
+            <Route path="/market" element={<MarketPage />} />
             <Route path="/signals" element={<SignalsPage />} />
             <Route path="/selection" element={<SelectionPage />} />
             <Route path="/strategies" element={<StrategiesPage />} />
@@ -50,3 +51,4 @@ export default function App() {
     </div>
   );
 }
+import MarketPage from "./pages/Market";

@@ -98,8 +98,9 @@ cd backend
 | ------------------------- | ------------------- | ------------------------ |
 | `DATABASE_URL`            | 数据库连接串              | `sqlite:///./a_stock.db` |
 | `AUTO_CREATE_TABLES`      | 启动时自动建表（仅测试/演示）     | `false`                  |
-| `MARKET_PROVIDERS`        | 数据源优先级              | `tencent,akshare`        |
-| `UNIVERSE_PROVIDERS`      | 股票池主数据源优先级          | `baostock,akshare`       |
+| `MARKET_PROVIDERS`        | 数据源优先级（eastmoney/tencent/akshare/qmt/mock） | `eastmoney,tencent,akshare` |
+| `UNIVERSE_PROVIDERS`      | 股票池主数据源优先级（eastmoney/baostock/akshare） | `eastmoney,baostock,akshare` |
+| `EASTMONEY_UNIVERSE_TIMEOUT_SECONDS` | 东方财富股票池整轮超时（秒） | `90` |
 | `BAOSTOCK_UNIVERSE_TIMEOUT_SECONDS` | BaoStock 股票池超时（秒） | `300` |
 | `BAOSTOCK_BJ_SUPPLEMENT_TIMEOUT_SECONDS` | AKShare BJ 子源超时（秒） | `60` |
 | `QUOTE_POLL_INTERVAL`     | 轮询间隔（秒）             | `3`                      |
@@ -155,6 +156,14 @@ cd backend
 | GET      | `/api/health/ready`                     | 就绪探针（K8s readiness，503 表示不接流量） |
 | GET      | `/api/metrics`                          | 可观测性指标（数据源/WebSocket/任务）        |
 | GET      | `/api/market/providers`                 | 数据源状态                          |
+| GET      | `/api/market/boards`                    | 东方财富板块行情（行业/概念/地域）             |
+| GET      | `/api/market/boards/{code}/constituents` | 板块成分股                          |
+| GET      | `/api/market/fund-flow/boards`          | 板块资金流排行                        |
+| GET      | `/api/market/fund-flow/stocks`          | 个股资金流排行                        |
+| GET      | `/api/market/fund-flow/stocks/{symbol}` | 个股资金流历史                        |
+| GET      | `/api/market/datacenter`                | 数据中心数据集目录与字段说明                 |
+| GET      | `/api/market/datacenter/{dataset}`      | 数据中心数据集查询（支持日期区间与股票代码）        |
+| GET      | `/api/market/datacenter/dragon-tiger/{symbol}/seats` | 龙虎榜买入/卖出席位明细          |
 | GET      | `/api/quotes/{symbol}`                  | 单只行情                           |
 | POST     | `/api/quotes/batch`                     | 批量行情                           |
 | GET/POST | `/api/watchlists`                       | 自选股列表                          |
@@ -197,15 +206,22 @@ cd backend
 
 ## 行情数据源
 
-| 数据源        | 用途     | 说明                               |
-| ---------- | ------ | -------------------------------- |
-| QMT/xtdata | 正式实时行情 | 可选，推送模式，延迟 <1s                   |
-| 腾讯行情       | 免费轮询   | 默认主数据源                           |
-| AKShare    | 历史数据   | 东财 / 新浪双通道，历史回退链主力              |
-| BaoStock   | 股票池主数据 | 按交易日成员、上市日期与当日停牌状态                |
-| Mock       | 演示/测试  | 仅在 `MARKET_PROVIDERS=mock` 时显式启用 |
+| 数据源           | 用途     | 说明                                                         |
+| ------------- | ------ | ---------------------------------------------------------- |
+| QMT/xtdata    | 正式实时行情 | 可选，推送模式，延迟 <1s                                             |
+| 东方财富（Eastmoney） | 免费轮询 + 股票池 | 默认首选：实时行情 `ulist.np`、日/周/月 K 线 `kline`、分时 `trends2`；股票池 `clist/get` |
+| 东方财富数据中心   | 横截面研究数据 | 龙虎榜与席位、大宗交易、融资融券、沪深港通、机构调研、股东户数、限售解禁、业绩预告、分红送配 |
+| 腾讯行情          | 免费轮询   | 备援实时行情；东财被限流熔断时接管                                          |
+| AKShare       | 历史数据   | 东财 / 新浪双通道（东财通道与 EastmoneyProvider 同源）                     |
+| BaoStock      | 股票池备援  | 按交易日成员、上市日期与当日停牌状态；支持历史交易日快照，东财股票池的回退目标              |
+| Mock          | 演示/测试  | 仅在 `MARKET_PROVIDERS=mock` 时显式启用                           |
 
 数据源按 `MARKET_PROVIDERS` 优先级故障转移，严禁静默混合来源。全部失败时返回缓存数据并标记 `is_stale=true`。Mock 不参与真实数据源的默认兜底，避免把随机价格误认为真实行情。
+
+东财接口对同一 IP 有突发限流：短时间请求过多会直接断连（`RemoteDisconnected`）。因此
+`EastmoneyProvider` 只做 2 次尝试，并在连续 3 次失败后熔断 5 分钟（期间行情/历史请求立即返回空，
+由管理器回退到腾讯），到期自动恢复。`akshare` 与 `eastmoney` 的 `upstream` 同为 `eastmoney`，
+ProviderManager 在一次请求内不会对同一上游重复请求。
 
 ### 历史日线回退链
 
@@ -220,11 +236,53 @@ cd backend
 **全部源返回空**视为该标的无数据（停牌 / 退市），不报错。
 
 实测东财通道（`push2his.eastmoney.com`）经常 `RemoteDisconnected`，回退链是历史入库能跑通的关键。
-若 `MARKET_PROVIDERS` 已包含 `akshare`，回退链会跳过第一个东财源，避免对同一上游重复请求
+若 `MARKET_PROVIDERS` 已包含 `akshare` 或 `eastmoney`，回退链会跳过第一个东财源，避免对同一上游重复请求
 （全市场入库时这只重复调用会让耗时翻倍）。
 
 实机验收（9 只样本：沪 / 深 / 创业板 / 科创板 / 北交所各覆盖）：东财通道每次失败，新浪通道
 全部命中，批次 `succeeded`、`coverage_ratio=1.0`、沪深京各 52 根日线。
+
+### 东方财富股票池（`universe` 首选源）
+
+`EastmoneyUniverseProvider` 走 `clist/get`（`fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048`），
+单页上限 100 条，60 页并发（信号量 4）实测约 3 秒拉完；一次同步约 5900 只（沪深 2467 / 深市 3091 /
+北交所 351），并带出所属行业（`f100` → `SecurityRecord.sector`）、上市日期与名称。
+
+两点约束：
+
+- 只提供**当日**全市场快照；请求历史日期会显式抛错（`不支持历史快照`），由调用方回退 BaoStock，
+  避免把当前成分名单回填成历史快照而产生幸存者偏差。
+- 北交所旧号段（`43xxxx` / `83xxxx`）在 `clist` 中会混入可转债，已按代码段与名称（含「债」「转」）过滤。
+
+### 东方财富数据中心（`/api/market/datacenter*`）
+
+数据中心走 `datacenter-web.eastmoney.com/api/data/v1/get`，以 `reportName` 选报表。9 个数据集共用
+一套声明式字段映射（输出名 / 东财列名 / 解析方式 / 中文表头），前端表头直接由
+`GET /api/market/datacenter` 的返回驱动，新增数据集无需改前端。
+
+| dataset             | 报表                                   | 说明                       |
+| ------------------- | ------------------------------------ | ------------------------ |
+| `dragon-tiger`      | `RPT_DAILYBILLBOARD_DETAILSNEW`      | 龙虎榜每日详情（含上榜后 1/5/10/20 日涨跌幅） |
+| `dragon-tiger-seats` | `RPT_BILLBOARD_DAILYDETAILSBUY/SELL` | 龙虎榜买卖席位（专用下钻接口）          |
+| `block-trade`       | `RPT_DATA_BLOCKTRADE`                | 大宗交易明细                   |
+| `margin`            | `RPTA_WEB_RZRQ_GGMX`                 | 融资融券个股明细                 |
+| `northbound`        | `RPT_MUTUAL_DEAL_HISTORY`            | 沪深港通各通道成交与资金             |
+| `org-survey`        | `RPT_ORG_SURVEYNEW`                  | 机构调研记录                   |
+| `holder-number`     | `RPT_HOLDERNUMLATEST`                | 股东户数（最新一期）               |
+| `restricted-release` | `RPT_LIFT_STAGE`                    | 限售解禁（含未来日期，建议配合 `date_from`） |
+| `earnings-forecast` | `RPT_PUBLIC_OP_NEWPREDICT`           | 业绩预告                     |
+| `dividend`          | `RPT_SHAREBONUS_DET`                 | 分红送配                     |
+
+实现细节：
+
+- `date` / `date_from` / `date_to` / `symbol` 先经严格正则校验再拼进东财 `filter` 表达式，
+  不会把用户输入原样送进远端查询串。
+- 东财用 `code=9201` 表示「查询成功但数据为空」，按空列表返回；其余失败码（9501 参数错误、
+  9701 数据繁忙）触发主机切换。
+- `datacenter-web` 与 `datacenter` 两台主机互为备份，复用行情侧的 `EastmoneyHostPool`。
+- 金额统一换算为元：沪深港通报表的金额列东财以**百万元**计（沪股通 `142256.09` ≈ 1422.6 亿元，
+  与十大成交股合计约 171 亿元一致），服务端乘 `1e6` 后返回；`HOLD_MARKET_CAP` 本身是元。
+- 上游若改名或删列，解析时会立即抛错（`EastmoneyDataError`），不会静默返回一堆 0。
 
 ## 智能选股
 
@@ -245,6 +303,11 @@ cd backend
    新浪通道可拉到完整历史；已停用的旧 `43xxxx` / `83xxxx` 号段没有可用的历史接口。
 7. **交易日历兜底依赖 exchange_calendars 4.x**：该版本只有 `sessions_in_range`（无
    `valid_days`），且 XSHG 日历边界为 2006-09-11 ~ 2026-12-31，超出边界的区间会被裁剪。
+8. **东财限流按「主机 + 路径」生效**：实测 `push2his.eastmoney.com` 的
+   `/api/qt/stock/kline/get`、`/api/qt/stock/trends2/get` 会在本机被直接断连（curl 返回
+   `000`），而同一主机的 `/api/qt/ulist.np/get` 正常。因此东财**日/周/月 K 线暂时可能取不到**，
+   历史入库会自动走 AKShare/新浪与 BaoStock；`HISTORY_HOSTS` 已配好故障转移与 120 秒冷却，
+   路径恢复后无需改配置即可自动命中。行情批量、板块/资金流与数据中心不受影响。
 
 ## 运维脚本
 

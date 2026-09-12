@@ -323,8 +323,8 @@ class HistoricalDataService:
     def _provider_covered_sources(self) -> tuple[str, ...]:
         """返回 ProviderManager 已覆盖的回退链源名，避免重复请求同一上游。
 
-        MARKET_PROVIDERS 含 akshare 时，manager 内部已经打过 EastMoney 接口
-        （stock_zh_a_hist），回退链不必再打一次——该通道实测经常
+        MARKET_PROVIDERS 含 akshare 或 eastmoney 时，manager 内部已经打过东方财富
+        kline 接口（stock_zh_a_hist / push2his），回退链不必再打一次——该通道实测经常
         RemoteDisconnected，重复调用会让全市场入库白白翻倍耗时。
         """
         if self._provider_manager is None:
@@ -333,7 +333,7 @@ class HistoricalDataService:
             getattr(provider, "name", "")
             for provider in getattr(self._provider_manager, "providers", [])
         }
-        return ("akshare",) if "akshare" in names else ()
+        return ("akshare",) if {"akshare", "eastmoney"} & names else ()
 
     async def _fetch_with_retry(
         self, symbol: str, adjust: str, start: date, end: date

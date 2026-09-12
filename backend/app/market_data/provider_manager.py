@@ -18,6 +18,11 @@ from app.observability.metrics import metrics
 logger = logging.getLogger(__name__)
 
 
+def _upstream_of(provider: MarketDataProvider) -> str:
+    """数据源的同一上游标识；未声明时按 name 区分。"""
+    return getattr(provider, "upstream", "") or provider.name
+
+
 class ProviderManager:
     """数据源管理器。"""
 
@@ -46,7 +51,15 @@ class ProviderManager:
         if not symbols:
             return {}
 
+        # 同一次请求内同一上游只打一次（akshare 的历史接口与 eastmoney 同源）
+        failed_upstreams: set[str] = set()
         for provider in self._providers:
+            upstream = _upstream_of(provider)
+            if upstream in failed_upstreams:
+                logger.info(
+                    "跳过数据源 %s：同一上游 %s 本次已失败", provider.name, upstream
+                )
+                continue
             try:
                 start = time.perf_counter()
                 result = await provider.get_quotes(symbols)
@@ -59,9 +72,11 @@ class ProviderManager:
                         return result
                     logger.warning("数据源 %s 返回不完整结果", provider.name)
                     metrics.record_provider_failure(provider.name)
+                    failed_upstreams.add(upstream)
             except Exception as exc:  # noqa: BLE001 - 数据源异常需兜底
                 logger.warning("数据源 %s 获取行情失败: %s", provider.name, exc)
                 metrics.record_provider_failure(provider.name)
+                failed_upstreams.add(upstream)
                 continue
 
         # 全部失败，返回缓存
@@ -78,7 +93,14 @@ class ProviderManager:
         end_time: datetime,
     ) -> list[QuoteData]:
         """获取历史行情，按优先级尝试数据源。"""
+        failed_upstreams: set[str] = set()
         for provider in self._providers:
+            upstream = _upstream_of(provider)
+            if upstream in failed_upstreams:
+                logger.info(
+                    "跳过数据源 %s：同一上游 %s 本次已失败", provider.name, upstream
+                )
+                continue
             try:
                 start = time.perf_counter()
                 data = await provider.get_history(symbol, period, start_time, end_time)
@@ -89,6 +111,7 @@ class ProviderManager:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("数据源 %s 获取历史行情失败: %s", provider.name, exc)
                 metrics.record_provider_failure(provider.name)
+                failed_upstreams.add(upstream)
                 continue
         return []
 

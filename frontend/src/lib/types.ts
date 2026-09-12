@@ -447,3 +447,139 @@ export interface DailyPipelineSchedule {
 export interface ApiError {
   detail: string;
 }
+
+// ---------- 东方财富市场数据 ----------
+
+export type BoardKind = "industry" | "concept" | "region";
+
+/** 板块行情（东方财富行业/概念/地域板块）。 */
+export interface BoardQuote {
+  code: string;
+  name: string;
+  kind: string;
+  index_value: number;
+  change_pct: number;
+  change_amount: number;
+  volume: number;
+  amount: number;
+  amplitude: number;
+  turnover_rate: number;
+  main_net_inflow: number;
+  main_net_inflow_pct: number;
+  up_count: number;
+  down_count: number;
+  flat_count: number;
+  leader_symbol: string | null;
+  leader_name: string | null;
+  leader_change_pct: number | null;
+}
+
+/** 板块成分股。 */
+export interface BoardMember {
+  symbol: string;
+  name: string;
+  price: number;
+  change_pct: number;
+  volume: number;
+  amount: number;
+  turnover_rate: number;
+  main_net_inflow: number;
+  main_net_inflow_pct: number;
+}
+
+/** 资金流排行行（板块或个股）。 */
+export interface FundFlowRow {
+  code: string;
+  name: string;
+  kind: string;
+  price: number;
+  change_pct: number;
+  main_net_inflow: number;
+  main_net_inflow_pct: number;
+  super_large_net_inflow: number;
+  super_large_net_inflow_pct: number;
+  large_net_inflow: number;
+  large_net_inflow_pct: number;
+  medium_net_inflow: number;
+  medium_net_inflow_pct: number;
+  small_net_inflow: number;
+  small_net_inflow_pct: number;
+}
+
+/** 个股资金流历史中的一个交易日。 */
+export interface FundFlowPoint {
+  trade_date: string;
+  main_net_inflow: number;
+  small_net_inflow: number;
+  medium_net_inflow: number;
+  large_net_inflow: number;
+  super_large_net_inflow: number;
+  main_net_inflow_pct: number;
+  close_price: number;
+  change_pct: number;
+}
+
+export interface BoardListResponse {
+  kind: string;
+  count: number;
+  items: BoardQuote[];
+}
+
+export interface BoardMemberResponse {
+  board_code: string;
+  count: number;
+  items: BoardMember[];
+}
+
+export interface FundFlowResponse {
+  kind: string;
+  count: number;
+  items: FundFlowRow[];
+}
+
+export interface StockFundFlowHistoryResponse {
+  symbol: string;
+  count: number;
+  items: FundFlowPoint[];
+}
+
+/** 东方财富数据中心：字段说明（kind 决定前端格式化方式）。 */
+export interface DatacenterFieldInfo {
+  key: string;
+  title: string;
+  kind: string;
+}
+
+/** 东方财富数据中心：一个数据集的自描述信息。 */
+export interface DatacenterDatasetInfo {
+  key: string;
+  label: string;
+  description: string;
+  supports_date: boolean;
+  supports_symbol: boolean;
+  fields: DatacenterFieldInfo[];
+}
+
+export interface DatacenterCatalogResponse {
+  count: number;
+  datasets: DatacenterDatasetInfo[];
+}
+
+/** 数据中心一行（列名由数据集声明决定）。 */
+export type DatacenterRow = Record<string, string | number | null>;
+
+export interface DatacenterQueryResponse {
+  dataset: string;
+  label: string;
+  total: number;
+  page: number;
+  count: number;
+  rows: DatacenterRow[];
+}
+
+export interface DragonTigerSeatsResponse {
+  symbol: string;
+  trade_date: string | null;
+  buy: DatacenterRow[];
+  sell: DatacenterRow[];
+}

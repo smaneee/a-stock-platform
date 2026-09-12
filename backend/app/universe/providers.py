@@ -322,7 +322,9 @@ def _normalize_exchange(symbol: str) -> str:
     """根据 6 位股票代码推断交易所前缀。
 
     AKShare 返回的 code 列不带交易所，但根据行业惯例：
-      - 6xxxxx / 9xxxxx → SH（含 605/688 科创板、900 B 股）
+      - 6xxxxx → SH（含 605/688 科创板）
+      - 900xxx → SH（沪 B 股）
+      - 920xxx / 43xxxx / 83xxxx / 87xxxx / 88xxxx → BJ（北交所，含 920 新号段）
       - 0xxxxx / 2xxxxx / 30xxxx → SZ（含 000/002 主板、300 创业板）
       - 4xxxxx / 8xxxxx → BJ（北证，代码一般 6 位但 83/87/43 开头）
 
@@ -331,6 +333,9 @@ def _normalize_exchange(symbol: str) -> str:
     s = str(symbol).strip()
     if not s:
         return ""
+    # 920xxx 是北交所新号段：不能因为「9 开头」被当成沪市
+    if s.startswith("920"):
+        return "BJ"
     head = s[0]
     if head in ("6", "9"):
         return "SH"
@@ -1141,16 +1146,22 @@ def build_provider_by_name(name: str, **kwargs) -> UniverseProvider:
 
     这是 SyncService 启动时校验的入口，防止拼错 provider 名字后静默退回 mock。
 
-    支持：mock / akshare / baostock（+ ak_bj_supplement 注入 BJ 子源）
+    支持：mock / eastmoney / akshare / baostock（+ ak_bj_supplement 注入 BJ 子源）
     """
     n = (name or "").strip().lower()
     if n == "mock":
         return MockUniverseProvider()
+    if n == "eastmoney":
+        # 延迟 import：eastmoney_universe 依赖本模块的 SecurityRecord / 校验函数
+        from app.universe.eastmoney_universe import EastmoneyUniverseProvider
+
+        return EastmoneyUniverseProvider(**kwargs)
     if n == "akshare":
         return AkshareUniverseProvider(**kwargs)
     if n == "baostock":
         return BaoStockUniverseProvider(**kwargs)
     raise ProviderError(
         "factory",
-        f"未知的 UNIVERSE_PROVIDER: {name!r}（仅支持 mock / akshare / baostock）",
+        f"未知的 UNIVERSE_PROVIDER: {name!r}"
+        "（仅支持 mock / eastmoney / akshare / baostock）",
     )

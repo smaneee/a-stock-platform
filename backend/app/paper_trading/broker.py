@@ -14,7 +14,6 @@ T+1 严格按批次日期 enforcement：买入创建新 PaperPosition 批次
 from __future__ import annotations
 
 import logging
-import math
 from datetime import UTC, datetime, date
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -483,12 +482,8 @@ class PaperBroker:
 
     @staticmethod
     def _market_price(side: str, quote: QuoteData) -> float:
-        market_price = quote.ask_price if side == "BUY" else quote.bid_price
-        if not math.isfinite(market_price) or market_price <= 0:
-            market_price = quote.price
-        if not math.isfinite(market_price) or market_price <= 0:
-            return 0.0
-        return market_price
+        # 与调仓共用同一套「盘口缺失按最新价兜底」规则
+        return quote.execution_price(side)
 
     def _commission(self, value: Decimal) -> Decimal:
         rate = Decimal(str(self._risk.limits.commission_rate))

@@ -28,6 +28,8 @@ class AkshareProvider(MarketDataProvider):
     """AKShare 数据源（历史数据为主）。"""
 
     name = "akshare"
+    # 历史接口 stock_zh_a_hist 打的就是东财 kline，与 EastmoneyProvider 同源
+    upstream = "eastmoney"
 
     async def get_quote(self, symbol: str) -> QuoteData | None:
         result = await self.get_quotes([symbol])

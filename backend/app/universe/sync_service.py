@@ -88,7 +88,16 @@ def _resolve_providers_from_settings() -> list[UniverseProvider]:
     names = settings.universe_provider_list
     providers: list[UniverseProvider] = []
     for name in names:
-        if name == "akshare":
+        if name == "eastmoney":
+            # 延迟 import：eastmoney_universe 依赖 providers 模块的基类与校验函数
+            from app.universe.eastmoney_universe import EastmoneyUniverseProvider
+
+            providers.append(
+                EastmoneyUniverseProvider(
+                    timeout_seconds=settings.eastmoney_universe_timeout_seconds
+                )
+            )
+        elif name == "akshare":
             providers.append(
                 AkshareUniverseProvider(
                     timeout_seconds=settings.akshare_universe_timeout_seconds
@@ -109,7 +118,8 @@ def _resolve_providers_from_settings() -> list[UniverseProvider]:
             # 拼错名字直接抛错（不许静默 fallback）
             raise ProviderError(
                 "factory",
-                f"未知的 UNIVERSE_PROVIDER: {name!r}（仅支持 mock / akshare / baostock）",
+                f"未知的 UNIVERSE_PROVIDER: {name!r}"
+                "（仅支持 mock / eastmoney / akshare / baostock）",
             )
     return providers
 
