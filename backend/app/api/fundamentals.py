@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -56,6 +57,7 @@ from app.fundamentals.repository import (
 from app.fundamentals.valuation import (
     ValuationAssumptions,
     ValuationError,
+    implied_revenue_growth,
     intrinsic_value,
     margin_of_safety,
     scenario_band,
@@ -339,6 +341,73 @@ def post_valuation(
     return result
 
 
+class ReverseValuationRequest(BaseModel):
+    """反向估值输入：固定其余假设，只反解现价隐含的收入增长率。"""
+
+    revenue: float = Field(gt=0, description="基期营业总收入（元）")
+    fcf_margin: float = Field(gt=0, description="自由现金流 / 营业总收入（小数）")
+    discount_rate: float = Field(gt=0, lt=0.5, description="折现率（小数）")
+    terminal_growth: float = Field(description="永续增长率（小数）")
+    shares: float = Field(gt=0, description="总股本（股）")
+    net_debt: float = Field(default=0.0, description="有息负债 − 现金（元）")
+    years: int = Field(default=5, ge=1, le=15)
+    basis: str = Field(min_length=1, description="固定假设来源说明")
+    revenue_basis: Literal["report_period", "annualized"] = "report_period"
+    lower_growth: float = Field(default=-0.30, gt=-0.5, lt=1.0)
+    upper_growth: float = Field(default=0.60, gt=-0.5, lt=1.0)
+
+    def to_assumptions(self, *, annualization: float) -> ValuationAssumptions:
+        revenue = self.revenue
+        basis = self.basis
+        if self.revenue_basis == "report_period" and annualization != 1.0:
+            revenue *= annualization
+            basis = f"{basis}；营收口径：报告期值 ×{annualization:g} 年化（模型推断，未计季节性）"
+        return ValuationAssumptions(
+            revenue=revenue,
+            revenue_growth=0.0,
+            fcf_margin=self.fcf_margin,
+            discount_rate=self.discount_rate,
+            terminal_growth=self.terminal_growth,
+            shares=self.shares,
+            net_debt=self.net_debt,
+            years=self.years,
+            basis=basis,
+        )
+
+
+@router.post("/{symbol}/reverse-valuation")
+def post_reverse_valuation(
+    symbol: str, payload: ReverseValuationRequest, db: Session = Depends(get_db)
+) -> dict:
+    """回答“当前价格隐含了什么增长”，而不是再给一个目标价。"""
+    row = _require_snapshot(db, symbol)
+    try:
+        factor = annualization_factor(row.report_date) or 1.0
+        base = payload.to_assumptions(annualization=factor)
+        result = implied_revenue_growth(
+            base,
+            target_price=float(row.price),
+            lower_bound=payload.lower_growth,
+            upper_bound=payload.upper_growth,
+        )
+    except ValuationError as exc:
+        raise HTTPException(status_code=422, detail=f"假设不成立：{exc}") from exc
+    return {
+        **result,
+        "symbol": row.symbol,
+        "name": row.name,
+        "price_source": row.source,
+        "report_date": row.report_date.isoformat() if row.report_date else None,
+        "revenue_caliber": {
+            "declared": payload.revenue_basis,
+            "annualization_factor_applied": factor,
+            "revenue_used": base.revenue,
+        },
+        "applicability": model_applicability(profile_for(row.industry)[0].key),
+        "disclaimer": DISCLAIMER,
+    }
+
+
 class PortfolioContextRequest(BaseModel):
     max_loss_per_trade: float | None = None
     max_symbol_weight: float | None = None
@@ -429,10 +498,30 @@ class ExplainRequest(AnalysisRequest):
     question: str = Field(default="", max_length=500)
 
 
-def _explainer() -> DeepSeekExplainer:
+def _local_harness_config() -> ExplainerConfig | None:
+    """读取 DeepSeek Harness 本机回环桥配置，不回显或复制令牌。"""
+    path = Path.home() / ".dsh-tools" / "dsh-api" / "config.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        token = str(payload.get("apiToken") or "")
+        port = int(payload.get("port") or 0)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not token or not 1 <= port <= 65535:
+        return None
+    return ExplainerConfig(
+        enabled=True,
+        api_key=token,
+        model="deepseek-flash",
+        base_url=f"http://127.0.0.1:{port}/v1",
+        timeout_seconds=60.0,
+        max_output_tokens=1200,
+    )
+
+
+def _resolve_explainer() -> tuple[DeepSeekExplainer, str]:
     settings = get_settings()
-    return DeepSeekExplainer(
-        ExplainerConfig(
+    explicit = ExplainerConfig(
             enabled=settings.explain_enabled,
             api_key=settings.deepseek_api_key,
             model=settings.deepseek_model,
@@ -440,17 +529,29 @@ def _explainer() -> DeepSeekExplainer:
             timeout_seconds=settings.deepseek_timeout_seconds,
             max_output_tokens=settings.deepseek_max_output_tokens,
         )
-    )
+    if explicit.enabled and explicit.api_key and explicit.model:
+        return DeepSeekExplainer(explicit), "explicit_api"
+    if settings.explain_local_harness_enabled:
+        local = _local_harness_config()
+        if local is not None:
+            return DeepSeekExplainer(local), "local_deepseek_harness"
+    return DeepSeekExplainer(explicit), "not_configured"
+
+
+def _explainer() -> DeepSeekExplainer:
+    return _resolve_explainer()[0]
 
 
 @router.get("/explain/status", tags=["fundamentals"])
 def explain_status() -> dict:
     """解释层是否就绪（不回显完整密钥；未配置时说明缺哪一项）。"""
+    explainer, source = _resolve_explainer()
     return {
-        **_explainer().status(),
+        **explainer.status(),
+        "connection_source": source,
         "note": (
-            "模型名不设默认值：2026-09-14 核对官方文档时本机 web 工具不可用（firecrawl 403），"
-            "为避免写死未经确认的型号与费率，必须由使用者自行在 backend/.env 填 DEEPSEEK_MODEL"
+            "优先使用显式 API 配置；启用 EXPLAIN_LOCAL_HARNESS_ENABLED 后可复用本机"
+            " DeepSeek Harness 回环接口，令牌仅在运行时读取，不写入项目或数据库"
         ),
     }
 

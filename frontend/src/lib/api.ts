@@ -58,6 +58,11 @@ import type {
   UniverseSnapshotSummary,
   UniverseStatusResponse,
   UniverseSyncResponse,
+  FundamentalDetailResponse,
+  InvestmentAnalysisResponse,
+  InvestmentExplainResponse,
+  ReverseValuationResponse,
+  ValuationInput,
 } from "./types";
 import { authHeaders, getToken, setToken } from "./auth";
 
@@ -123,6 +128,56 @@ function notifyUnauthorized(): void {
 export const fetchHealth = () => request<HealthDetail>("/health");
 
 export const fetchMetrics = () => request<MetricsResponse>("/metrics");
+
+// ---------- 投资研究工作台 ----------
+
+export const fetchFundamentalDetail = (symbol: string) =>
+  request<FundamentalDetailResponse>(`/fundamentals/${encodeURIComponent(symbol)}`);
+
+export const analyzeInvestment = (
+  symbol: string,
+  valuation: ValuationInput,
+  horizon: string,
+) =>
+  request<InvestmentAnalysisResponse>(
+    `/fundamentals/${encodeURIComponent(symbol)}/analysis`,
+    {
+      method: "POST",
+      body: JSON.stringify({ valuation, portfolio: { horizon } }),
+    },
+  );
+
+export const reverseValuation = (symbol: string, valuation: ValuationInput) => {
+  const fixed = {
+    revenue: valuation.revenue,
+    fcf_margin: valuation.fcf_margin,
+    discount_rate: valuation.discount_rate,
+    terminal_growth: valuation.terminal_growth,
+    shares: valuation.shares,
+    net_debt: valuation.net_debt,
+    years: valuation.years,
+    basis: valuation.basis,
+    revenue_basis: valuation.revenue_basis,
+  };
+  return request<ReverseValuationResponse>(
+    `/fundamentals/${encodeURIComponent(symbol)}/reverse-valuation`,
+    { method: "POST", body: JSON.stringify(fixed) },
+  );
+};
+
+export const explainInvestment = (
+  symbol: string,
+  valuation: ValuationInput,
+  horizon: string,
+  question: string,
+) =>
+  request<InvestmentExplainResponse>(
+    `/fundamentals/${encodeURIComponent(symbol)}/explain`,
+    {
+      method: "POST",
+      body: JSON.stringify({ valuation, portfolio: { horizon }, question }),
+    },
+  );
 
 // ---------- 股票筛选 ----------
 

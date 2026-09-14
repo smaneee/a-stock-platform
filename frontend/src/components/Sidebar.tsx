@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { to: "/market", label: "市场行情", icon: "🧭" },
   { to: "/indicators", label: "技术指标", icon: "📐" },
   { to: "/realtime-picks", label: "买点雷达", icon: "📡" },
+  { to: "/investment-research", label: "投资研究", icon: "🧠" },
   { to: "/universe", label: "股票池", icon: "🗂️" },
   { to: "/signals", label: "信号", icon: "🔔" },
   { to: "/selection", label: "智能选股", icon: "🎯" },

@@ -138,6 +138,22 @@ def test_valuation_endpoint_computes_band_upside_and_sensitivity(client, seeded)
     assert "不代为假设" in body["basis_note"]
 
 
+def test_reverse_valuation_returns_price_implied_growth(client, seeded):
+    body = {
+        key: value
+        for key, value in VALUATION_BODY.items()
+        if key not in {"revenue_growth", "bear_overrides", "bull_overrides"}
+    }
+    resp = client.post("/api/fundamentals/000333/reverse-valuation", json=body)
+    assert resp.status_code == 200
+    result = resp.json()
+    assert result["status"] == "solved"
+    assert result["target_price"] == 87.02
+    assert result["implied_growth"] is not None
+    assert result["revenue_caliber"]["annualization_factor_applied"] == 2.0
+    assert "不是增长预测" in result["note"]
+
+
 def test_refresh_stores_rows_and_reports_completeness(client, db_session, monkeypatch):
     rows, stats = parse_fundamentals([MEIDE]), FetchStats()
     stats.pages_fetched = 1

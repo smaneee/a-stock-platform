@@ -132,6 +132,9 @@ class Settings(BaseSettings):
     # （firecrawl 403），无法确认当前型号与费率，所以按「不写死未经确认的信息」处理 ——
     # 必须由使用者自己填 DEEPSEEK_MODEL，否则解释层返回 not_configured。
     explain_enabled: bool = False
+    # 显式开启后，可复用本机 DeepSeek Harness 的回环 API；令牌只在运行时读取，
+    # 不复制到项目配置或数据库。找不到本地服务时仍按未配置处理。
+    explain_local_harness_enabled: bool = False
     deepseek_api_key: str = ""
     deepseek_model: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"

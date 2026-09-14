@@ -17,6 +17,7 @@ import IndicatorsPage from "./pages/Indicators";
 import RealtimePicksPage from "./pages/RealtimePicks";
 import IntradayPage from "./pages/Intraday";
 import UniversePage from "./pages/Universe";
+import InvestmentResearchPage from "./pages/InvestmentResearch";
 
 export default function App() {
   const [navOpen, setNavOpen] = useState(false);
@@ -40,6 +41,7 @@ export default function App() {
             <Route path="/intraday" element={<IntradayPage />} />
             <Route path="/indicators" element={<IndicatorsPage />} />
             <Route path="/realtime-picks" element={<RealtimePicksPage />} />
+            <Route path="/investment-research" element={<InvestmentResearchPage />} />
             <Route path="/universe" element={<UniversePage />} />
             <Route path="/signals" element={<SignalsPage />} />
             <Route path="/selection" element={<SelectionPage />} />

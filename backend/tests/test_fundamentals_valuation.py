@@ -4,6 +4,7 @@ from __future__ import annotations
 from app.fundamentals.valuation import (
     ValuationAssumptions,
     ValuationError,
+    implied_revenue_growth,
     intrinsic_value,
     margin_of_safety,
     scenario_band,
@@ -138,3 +139,34 @@ def test_weighted_value_requires_matching_explicit_weights():
     assert weighted_value(scenarios, [0.5, 0.5]) is None       # 权重个数不匹配
     assert weighted_value(scenarios, [0.0, 0.0, 0.0]) is None   # 权重全零
     assert weighted_value([], []) is None
+
+
+def test_reverse_valuation_recovers_known_growth():
+    target = intrinsic_value(
+        ValuationAssumptions(**{**BASE.__dict__, "revenue_growth": 0.12})
+    ).per_share
+    result = implied_revenue_growth(BASE, target_price=target)
+    assert result["status"] == "solved"
+    assert abs(result["implied_growth"] - 0.12) < 0.00001
+    assert abs(result["pricing_error"]) < 0.001
+    assert "不是增长预测" in result["note"]
+
+
+def test_reverse_valuation_reports_outside_range_without_extrapolation():
+    result = implied_revenue_growth(
+        BASE, target_price=1000.0, lower_bound=-0.10, upper_bound=0.10
+    )
+    assert result["status"] == "above_range"
+    assert result["implied_growth"] is None
+
+
+def test_reverse_valuation_rejects_invalid_inputs():
+    for kwargs in (
+        {"target_price": 0.0},
+        {"target_price": 10.0, "lower_bound": 0.2, "upper_bound": 0.1},
+    ):
+        try:
+            implied_revenue_growth(BASE, **kwargs)
+        except ValuationError:
+            continue
+        raise AssertionError("无效反向估值输入应抛 ValuationError")

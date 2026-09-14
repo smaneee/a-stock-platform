@@ -263,6 +263,76 @@ def sensitivity_table(
     }
 
 
+def implied_revenue_growth(
+    base: ValuationAssumptions,
+    *,
+    target_price: float,
+    lower_bound: float = -0.30,
+    upper_bound: float = 0.60,
+    tolerance: float = 0.000001,
+    max_iterations: int = 100,
+) -> dict:
+    """反解当前价格隐含的收入增长率。
+
+    固定自由现金流率、折现率、永续增长率、股本和净负债，仅改变显式预测期
+    的收入增长率。该简化 DCF 在有效区间内对增长率单调，因此二分法只有一个解；
+    价格落在区间外时返回边界状态，不外推一个伪精确数字。
+    """
+    if target_price <= 0:
+        raise ValuationError("目标价格必须为正")
+    if not -0.5 < lower_bound < upper_bound < 1.0:
+        raise ValuationError("反向估值增长率边界必须满足 -50% < 下界 < 上界 < 100%")
+    if tolerance <= 0 or max_iterations < 1:
+        raise ValuationError("反向估值精度与迭代次数必须为正")
+
+    low_value = intrinsic_value(replace(base, revenue_growth=lower_bound)).per_share
+    high_value = intrinsic_value(replace(base, revenue_growth=upper_bound)).per_share
+    common = {
+        "target_price": round(target_price, 4),
+        "growth_bounds": [lower_bound, upper_bound],
+        "value_at_bounds": [low_value, high_value],
+        "fixed_assumptions": {
+            "revenue": base.revenue,
+            "fcf_margin": base.fcf_margin,
+            "discount_rate": base.discount_rate,
+            "terminal_growth": base.terminal_growth,
+            "shares": base.shares,
+            "net_debt": base.net_debt,
+            "years": base.years,
+            "basis": base.basis,
+        },
+        "note": (
+            "只反解显式预测期收入增长率；结果不是增长预测，而是当前价格在其余假设固定时"
+            "要求企业达到的增长水平"
+        ),
+    }
+    if target_price < low_value:
+        return {**common, "status": "below_range", "implied_growth": None, "iterations": 0}
+    if target_price > high_value:
+        return {**common, "status": "above_range", "implied_growth": None, "iterations": 0}
+
+    low, high = lower_bound, upper_bound
+    iterations = 0
+    while iterations < max_iterations and high - low > tolerance:
+        mid = (low + high) / 2.0
+        value = intrinsic_value(replace(base, revenue_growth=mid)).per_share
+        if value < target_price:
+            low = mid
+        else:
+            high = mid
+        iterations += 1
+    implied = (low + high) / 2.0
+    matched = intrinsic_value(replace(base, revenue_growth=implied)).per_share
+    return {
+        **common,
+        "status": "solved",
+        "implied_growth": round(implied, 6),
+        "matched_price": matched,
+        "pricing_error": round(matched - target_price, 4),
+        "iterations": iterations,
+    }
+
+
 def upside_ratio(per_share: float | None, price: float | None) -> float | None:
     """相对现价的偏离度（小数）。任一缺失返回 ``None``（不做缺省猜测）。"""
     if per_share is None or price is None or price <= 0:

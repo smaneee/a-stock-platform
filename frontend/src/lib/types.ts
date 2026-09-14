@@ -18,6 +18,136 @@ export interface QuoteData {
   is_stale: boolean;
 }
 
+/* ---------- 投资研究工作台 ---------- */
+
+export interface ValuationInput {
+  revenue: number;
+  revenue_growth: number;
+  fcf_margin: number;
+  discount_rate: number;
+  terminal_growth: number;
+  shares: number;
+  net_debt: number;
+  years: number;
+  basis: string;
+  revenue_basis: "report_period" | "annualized";
+  bear_overrides: Record<string, number>;
+  bull_overrides: Record<string, number>;
+}
+
+export interface FundamentalDetailResponse {
+  snapshot: {
+    symbol: string;
+    name: string;
+    price: number | null;
+    industry: string | null;
+    revenue: number | null;
+    revenue_yoy: number | null;
+    net_profit_yoy: number | null;
+    pe_dynamic: number | null;
+    pb: number | null;
+    roe: number | null;
+    report_date: string | null;
+    snapshot_date: string;
+    source: string;
+    derived: {
+      shares_outstanding: number | null;
+      annualized_revenue: number | null;
+      annualization_factor: number | null;
+    };
+  };
+  quality: {
+    score: number | null;
+    grade: string;
+    profile_label: string;
+    profile_reason: string;
+    coverage: number;
+    missing: string[];
+    insufficient_evidence: boolean;
+  };
+  evidence_confidence: {
+    score: number;
+    label: string;
+    expired: boolean;
+    reasons: string[];
+    note: string;
+  };
+  notes: string[];
+}
+
+export interface InvestmentEvidenceItem {
+  evidence: string;
+  origin: string;
+  source: string;
+}
+
+export interface InvestmentAnalysisResponse {
+  symbol: string;
+  name: string;
+  "1_conclusion": {
+    conclusion: string;
+    conclusion_key: string;
+    horizon: string;
+    attractiveness_quality_score: number | null;
+    evidence_confidence_score: number;
+    separation_note: string;
+  };
+  "2_data_asof": {
+    report_date: string | null;
+    fetched_at: string | null;
+    price: number | null;
+    source: string;
+    expired: boolean;
+    completeness: { metric_coverage: number; missing_metrics: string[]; missing_inputs: string[] };
+  };
+  "3_dimensions": {
+    valuation: {
+      available: boolean;
+      basis: string;
+      upside_vs_price: Record<string, number | null>;
+      applicability: { applicable: boolean; model: string; caveat: string };
+    };
+    portfolio_risk: { position_ceiling: { ceiling_pct: number | null; reason: string } };
+  };
+  "4_evidence": { support: InvestmentEvidenceItem[]; oppose: InvestmentEvidenceItem[] };
+  "5_scenarios": {
+    scenarios: Array<{
+      label: string;
+      overrides: Record<string, number>;
+      result: { per_share: number; terminal_value_share: number; formula: string };
+    }>;
+  };
+  "6_open_items": {
+    unverified: string[];
+    invalidation_conditions: string[];
+    review_triggers: string[];
+  };
+  disclaimer: string;
+}
+
+export interface ReverseValuationResponse {
+  status: "solved" | "below_range" | "above_range";
+  implied_growth: number | null;
+  target_price: number;
+  matched_price?: number;
+  growth_bounds: [number, number];
+  value_at_bounds: [number, number];
+  note: string;
+  applicability: { applicable: boolean; model: string; caveat: string };
+}
+
+export interface InvestmentExplainResponse {
+  analysis: InvestmentAnalysisResponse;
+  explanation: {
+    status: string;
+    text?: string;
+    missing?: string[];
+    validation?: { passed: boolean; unverified_numbers?: string[] };
+    message?: string;
+  };
+  boundary: string;
+}
+
 export interface Watchlist {
   id: number;
   name: string;

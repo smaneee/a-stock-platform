@@ -256,7 +256,8 @@ def test_status_endpoint_reports_missing_configuration(client):
     body = client.get("/api/fundamentals/explain/status").json()
     assert body["ready"] is False
     assert body["api_key"] == ""
-    assert "不设默认值" in body["note"]
+    assert body["connection_source"] == "not_configured"
+    assert "回环接口" in body["note"]
 
 
 def test_explain_endpoint_returns_analysis_even_when_not_configured(client):
