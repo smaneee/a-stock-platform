@@ -55,6 +55,22 @@ export interface FundamentalDetailResponse {
       annualized_revenue: number | null;
       annualization_factor: number | null;
     };
+    statement_detail: {
+      report_date: string | null;
+      operating_cash_flow: number | null;
+      capital_expenditure: number | null;
+      free_cash_flow: number | null;
+      fcf_margin: number | null;
+      ocf_to_profit: number | null;
+      monetary_funds: number | null;
+      identified_debt: number | null;
+      identified_net_debt: number | null;
+      goodwill: number | null;
+      goodwill_to_equity: number | null;
+      source: string;
+      net_debt_note: string;
+      fetched_at: string | null;
+    } | null;
   };
   quality: {
     score: number | null;
@@ -73,6 +89,12 @@ export interface FundamentalDetailResponse {
     note: string;
   };
   notes: string[];
+}
+
+export interface StatementDetailRefreshResponse {
+  symbol: string;
+  name: string;
+  statement_detail: NonNullable<FundamentalDetailResponse["snapshot"]["statement_detail"]>;
 }
 
 export interface InvestmentEvidenceItem {

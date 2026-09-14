@@ -5,6 +5,7 @@ import {
   analyzeInvestment,
   explainInvestment,
   fetchFundamentalDetail,
+  refreshStatementDetail,
   reverseValuation,
 } from "../lib/api";
 import type { InvestmentEvidenceItem, ValuationInput } from "../lib/types";
@@ -67,6 +68,11 @@ export default function InvestmentResearchPage() {
       ...current,
       revenue: snapshot.revenue ?? 0,
       shares: snapshot.derived.shares_outstanding ?? 0,
+      fcf_margin: snapshot.statement_detail?.fcf_margin ?? current.fcf_margin,
+      net_debt: snapshot.statement_detail?.identified_net_debt ?? current.net_debt,
+      basis: snapshot.statement_detail
+        ? "营收、股本、自由现金流率和已识别净负债取自同报告期快照；增长率、折现率与永续增长率为使用者假设"
+        : current.basis,
       revenue_growth: observedGrowth,
       bear_overrides: { revenue_growth: Math.min(0, observedGrowth - 0.06), fcf_margin: 0.06 },
       bull_overrides: { revenue_growth: Math.min(0.40, observedGrowth + 0.06), fcf_margin: 0.12 },
@@ -81,6 +87,10 @@ export default function InvestmentResearchPage() {
       ]);
       return { report, reverse };
     },
+  });
+  const statements = useMutation({
+    mutationFn: () => refreshStatementDetail(symbol),
+    onSuccess: () => detail.refetch(),
   });
   const explanation = useMutation({
     mutationFn: () => explainInvestment(symbol, valuation, horizon, question),
@@ -100,7 +110,7 @@ export default function InvestmentResearchPage() {
   const snapshot = detail.data?.snapshot;
   const report = analysis.data?.report;
   const reverse = analysis.data?.reverse;
-  const error = detail.error ?? analysis.error ?? explanation.error;
+  const error = detail.error ?? statements.error ?? analysis.error ?? explanation.error;
   const errorText = error instanceof Error ? error.message : null;
   const fields: Array<[keyof ValuationInput, string, string]> = [
     ["revenue_growth", "基准增长率", "小数，例如 0.06 = 6%"],
@@ -143,8 +153,10 @@ export default function InvestmentResearchPage() {
             <div className={panel}><div className="text-xs text-slate-500">数据时点</div><div className="mt-1 text-lg">{snapshot.report_date ?? "—"}</div><div className="text-xs text-slate-500">快照 {snapshot.snapshot_date} · 覆盖 {pctText(detail.data.quality.coverage)}</div></div>
           </section>
 
+          {snapshot.statement_detail ? <section className={`${panel} border-emerald-900/70`}><div className="flex flex-wrap items-start justify-between gap-2"><div><h2 className="font-medium text-emerald-300">财务三表已接入</h2><p className="mt-1 text-xs text-slate-500">报告期 {snapshot.statement_detail.report_date} · {snapshot.statement_detail.source}</p></div><button type="button" disabled={statements.isPending} onClick={() => statements.mutate()} className="rounded border border-slate-700 px-3 py-1.5 text-xs hover:bg-slate-800">重新刷新</button></div><div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5"><div><span className="text-xs text-slate-500">经营现金流</span><div>{num((snapshot.statement_detail.operating_cash_flow ?? 0) / 1e8, 1)} 亿</div></div><div><span className="text-xs text-slate-500">资本开支</span><div>{num((snapshot.statement_detail.capital_expenditure ?? 0) / 1e8, 1)} 亿</div></div><div><span className="text-xs text-slate-500">自由现金流率</span><div>{pctText(snapshot.statement_detail.fcf_margin, 2)}</div></div><div><span className="text-xs text-slate-500">已识别净负债</span><div>{num((snapshot.statement_detail.identified_net_debt ?? 0) / 1e8, 1)} 亿</div></div><div><span className="text-xs text-slate-500">商誉/净资产</span><div>{snapshot.statement_detail.goodwill_to_equity === null ? "—" : `${num(snapshot.statement_detail.goodwill_to_equity, 2)}%`}</div></div></div><p className="mt-3 text-[11px] text-slate-600">{snapshot.statement_detail.net_debt_note}</p></section> : <section className={`${panel} border-amber-900/70`}><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-medium text-amber-300">财务三表尚未加载</h2><p className="mt-1 text-xs text-slate-500">加载后会自动填入自由现金流率与已识别净负债，并提高证据覆盖率。</p></div><button type="button" disabled={statements.isPending} onClick={() => statements.mutate()} className="rounded bg-amber-600 px-4 py-2 text-sm hover:bg-amber-500 disabled:opacity-40">{statements.isPending ? "正在读取…" : "读取最新三表"}</button></div></section>}
+
           <section className={panel}>
-            <div className="flex flex-wrap items-start justify-between gap-2"><div><h2 className="font-medium">估值假设</h2><p className="mt-1 text-xs text-amber-300">现金流率与净负债尚未自动接入三表，当前数值是研究假设，请按财报修改。</p></div><div className="text-xs text-slate-500">营收 {num(valuation.revenue / 1e8, 1)} 亿元 · 股本 {num(valuation.shares / 1e8, 2)} 亿股</div></div>
+            <div className="flex flex-wrap items-start justify-between gap-2"><div><h2 className="font-medium">估值假设</h2><p className="mt-1 text-xs text-amber-300">三表数值会自动带入，但增长率、折现率和永续增长率仍是研究假设，必须由你复核。</p></div><div className="text-xs text-slate-500">营收 {num(valuation.revenue / 1e8, 1)} 亿元 · 股本 {num(valuation.shares / 1e8, 2)} 亿股</div></div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {fields.map(([key, label, hint]) => (
                 <label key={key} className="text-sm text-slate-400">{label}

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.database.models import FundamentalSnapshot
 from app.fundamentals.eastmoney_fundamentals import FundamentalSnapshotData
+from app.fundamentals.statement_details import StatementDetail
 from app.market_rules.session_state import now_cst
 from app.time_utils import utc_now
 
@@ -108,6 +109,32 @@ def latest_snapshot(db: Session, symbol: str) -> FundamentalSnapshot | None:
         .order_by(FundamentalSnapshot.snapshot_date.desc())
         .limit(1)
     ).scalar_one_or_none()
+
+
+def apply_statement_detail(
+    db: Session, row: FundamentalSnapshot, detail: StatementDetail
+) -> FundamentalSnapshot:
+    """把同报告期的已核实三表字段写入指定快照。"""
+    fields = (
+        "operating_cash_flow",
+        "capital_expenditure",
+        "monetary_funds",
+        "short_loan",
+        "long_loan",
+        "bonds_payable",
+        "noncurrent_liab_due_year",
+        "lease_liabilities",
+        "goodwill",
+        "statement_equity",
+    )
+    for field in fields:
+        setattr(row, field, getattr(detail, field))
+    row.statement_report_date = detail.report_date
+    row.statement_source = detail.source
+    row.statement_fetched_at = utc_now()
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 def snapshot_history(db: Session, symbol: str, limit: int = 60) -> list[FundamentalSnapshot]:

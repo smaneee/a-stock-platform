@@ -10,6 +10,7 @@ from app.database.session import get_db
 from app.fundamentals import eastmoney_fundamentals as ef
 from app.fundamentals.eastmoney_fundamentals import FetchStats, parse_fundamentals
 from app.fundamentals.repository import upsert_snapshots
+from app.fundamentals.statement_details import StatementDetail
 
 #: 000333 的真实接口返回值（已用 akshare 财务摘要交叉核对）
 MEIDE = {
@@ -81,6 +82,43 @@ def test_symbol_endpoint_returns_snapshot_quality_and_confidence(client, seeded)
     assert body["evidence_confidence"]["score"] > 0
     assert "不是上涨概率" in body["evidence_confidence"]["note"]
     assert any("显式假设" in note for note in body["notes"])
+
+
+def test_statement_refresh_enriches_quality_and_confidence(client, seeded, monkeypatch):
+    async def fake_statement(_symbol):
+        return StatementDetail(
+            symbol="000333",
+            report_date=date(2026, 6, 30),
+            operating_cash_flow=37_552_090_000.0,
+            capital_expenditure=2_634_210_000.0,
+            monetary_funds=90_642_783_000.0,
+            short_loan=47_305_038_000.0,
+            long_loan=15_417_300_000.0,
+            bonds_payable=6_665_757_000.0,
+            noncurrent_liab_due_year=5_063_161_000.0,
+            lease_liabilities=1_919_149_000.0,
+            goodwill=31_576_620_000.0,
+            statement_equity=225_792_941_000.0,
+        )
+
+    monkeypatch.setattr("app.api.fundamentals.fetch_statement_detail", fake_statement)
+    response = client.post("/api/fundamentals/000333/statement-detail/refresh")
+    assert response.status_code == 200
+    body = response.json()
+    detail = body["statement_detail"]
+    assert detail["free_cash_flow"] == 34_917_880_000.0
+    assert detail["identified_net_debt"] < 0
+    assert detail["goodwill_to_equity"] > 0
+    assert body["quality"]["coverage"] == 1.0
+    assert body["evidence_confidence"]["score"] > 85.0
+
+    loaded = client.get("/api/fundamentals/000333").json()
+    assert loaded["snapshot"]["statement_detail"]["ocf_to_profit"] > 1.0
+    analysis = client.post(
+        "/api/fundamentals/000333/analysis", json={"valuation": VALUATION_BODY}
+    ).json()
+    assert not any("三表明细" in item for item in analysis["6_open_items"]["unverified"])
+    assert "已识别净负债" in analysis["3_dimensions"]["portfolio_risk"]["leverage"]
 
 
 def test_analysis_without_assumptions_refuses_value_judgement(client, seeded):

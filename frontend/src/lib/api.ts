@@ -63,6 +63,7 @@ import type {
   InvestmentExplainResponse,
   ReverseValuationResponse,
   ValuationInput,
+  StatementDetailRefreshResponse,
 } from "./types";
 import { authHeaders, getToken, setToken } from "./auth";
 
@@ -133,6 +134,12 @@ export const fetchMetrics = () => request<MetricsResponse>("/metrics");
 
 export const fetchFundamentalDetail = (symbol: string) =>
   request<FundamentalDetailResponse>(`/fundamentals/${encodeURIComponent(symbol)}`);
+
+export const refreshStatementDetail = (symbol: string) =>
+  request<StatementDetailRefreshResponse>(
+    `/fundamentals/${encodeURIComponent(symbol)}/statement-detail/refresh`,
+    { method: "POST" },
+  );
 
 export const analyzeInvestment = (
   symbol: string,

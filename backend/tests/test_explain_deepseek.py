@@ -252,7 +252,8 @@ def client(db_session):
     app.dependency_overrides.pop(get_db, None)
 
 
-def test_status_endpoint_reports_missing_configuration(client):
+def test_status_endpoint_reports_missing_configuration(client, monkeypatch):
+    monkeypatch.setattr("app.api.fundamentals._local_harness_config", lambda: None)
     body = client.get("/api/fundamentals/explain/status").json()
     assert body["ready"] is False
     assert body["api_key"] == ""
@@ -260,7 +261,8 @@ def test_status_endpoint_reports_missing_configuration(client):
     assert "回环接口" in body["note"]
 
 
-def test_explain_endpoint_returns_analysis_even_when_not_configured(client):
+def test_explain_endpoint_returns_analysis_even_when_not_configured(client, monkeypatch):
+    monkeypatch.setattr("app.api.fundamentals._local_harness_config", lambda: None)
     resp = client.post("/api/fundamentals/000333/explain", json={"valuation": VALUATION})
     assert resp.status_code == 200
     body = resp.json()

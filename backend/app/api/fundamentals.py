@@ -47,12 +47,18 @@ from app.fundamentals.quality import (
     profile_for,
 )
 from app.fundamentals.repository import (
+    apply_statement_detail,
     beijing_today,
     coverage,
     industry_peers,
     latest_snapshot,
     snapshot_history,
     upsert_snapshots,
+)
+from app.fundamentals.statement_details import (
+    StatementDetail,
+    StatementDetailError,
+    fetch_statement_detail,
 )
 from app.fundamentals.valuation import (
     ValuationAssumptions,
@@ -100,6 +106,7 @@ def _serialize(row: FundamentalSnapshot) -> dict:
         warnings = json.loads(row.warnings or "[]")
     except (TypeError, ValueError):
         warnings = [f"告警字段无法解析: {row.warnings!r}"]
+    statement = _statement_detail_from_row(row)
     return {
         **data.to_dict(),
         "snapshot_date": row.snapshot_date.isoformat(),
@@ -115,9 +122,44 @@ def _serialize(row: FundamentalSnapshot) -> dict:
             "ps_annualized": data.ps_annualized,
             "origin": "模型推断（由报告期数据年化后计算），非上游直接给出",
         },
+        "statement_detail": (
+            {
+                **statement.to_dict(revenue=row.revenue, net_profit=row.net_profit_parent),
+                "fetched_at": (
+                    row.statement_fetched_at.isoformat()
+                    if row.statement_fetched_at else None
+                ),
+            }
+            if statement is not None else None
+        ),
         "warnings": warnings,
         "disclaimer": DISCLAIMER,
     }
+
+
+def _statement_detail_from_row(row: FundamentalSnapshot) -> StatementDetail | None:
+    """只使用与当前基本面快照同报告期的三表，避免时点错配。"""
+    if (
+        row.statement_report_date is None
+        or row.statement_report_date != row.report_date
+        or not row.statement_source
+    ):
+        return None
+    return StatementDetail(
+        symbol=row.symbol,
+        report_date=row.statement_report_date,
+        operating_cash_flow=row.operating_cash_flow,
+        capital_expenditure=row.capital_expenditure,
+        monetary_funds=row.monetary_funds,
+        short_loan=row.short_loan,
+        long_loan=row.long_loan,
+        bonds_payable=row.bonds_payable,
+        noncurrent_liab_due_year=row.noncurrent_liab_due_year,
+        lease_liabilities=row.lease_liabilities,
+        goodwill=row.goodwill,
+        statement_equity=row.statement_equity,
+        source=row.statement_source,
+    )
 
 
 @router.get("/coverage")
@@ -176,6 +218,11 @@ async def refresh_snapshot(
 
 
 def _quality_inputs(row: FundamentalSnapshot, as_of: date) -> QualityInputs:
+    statement = _statement_detail_from_row(row)
+    statement_values = (
+        statement.to_dict(revenue=row.revenue, net_profit=row.net_profit_parent)
+        if statement is not None else {}
+    )
     return QualityInputs(
         roe=row.roe,
         gross_margin=row.gross_margin,
@@ -183,9 +230,8 @@ def _quality_inputs(row: FundamentalSnapshot, as_of: date) -> QualityInputs:
         debt_ratio=row.debt_ratio,
         revenue_yoy=row.revenue_yoy,
         profit_yoy=row.net_profit_yoy,
-        # 行情接口不提供现金流与商誉 → 明确为 None，等三表接入后填
-        ocf_to_profit=None,
-        goodwill_to_equity=None,
+        ocf_to_profit=statement_values.get("ocf_to_profit"),
+        goodwill_to_equity=statement_values.get("goodwill_to_equity"),
         report_date=row.report_date,
         as_of=as_of,
         industry=row.industry,
@@ -202,8 +248,8 @@ def _quality_and_confidence(row: FundamentalSnapshot) -> tuple[dict, dict, date]
         report_date=row.report_date,
         as_of=as_of,
         industry_identified=bool(row.industry),
-        has_statement_detail=False,
-        sources=1,
+        has_statement_detail=_statement_detail_from_row(row) is not None,
+        sources=2 if _statement_detail_from_row(row) is not None else 1,
     )
     return assessment.to_dict(), confidence.to_dict(), as_of
 
@@ -236,6 +282,40 @@ def get_symbol(symbol: str, db: Session = Depends(get_db)) -> dict:
             "本接口不替使用者假设增长率或折现率",
             "质量分与证据置信度必须分开展示，二者都不是上涨概率",
         ],
+        "disclaimer": DISCLAIMER,
+    }
+
+
+@router.post("/{symbol}/statement-detail/refresh")
+async def refresh_statement_detail(
+    symbol: str, db: Session = Depends(get_db)
+) -> dict:
+    """按标的刷新同报告期资产负债表与现金流量表，并返回派生口径。"""
+    row = _require_snapshot(db, symbol)
+    try:
+        detail = await fetch_statement_detail(symbol)
+    except StatementDetailError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if row.report_date and detail.report_date != row.report_date:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"三表报告期 {detail.report_date} 与快照报告期 {row.report_date} 不一致；"
+                "为避免时点错配，本次不入库"
+            ),
+        )
+    apply_statement_detail(db, row, detail)
+    quality, confidence, _ = _quality_and_confidence(row)
+    return {
+        "symbol": row.symbol,
+        "name": row.name,
+        "statement_detail": {
+            **detail.to_dict(revenue=row.revenue, net_profit=row.net_profit_parent),
+            "fetched_at": row.statement_fetched_at.isoformat()
+            if row.statement_fetched_at else None,
+        },
+        "quality": quality,
+        "evidence_confidence": confidence,
         "disclaimer": DISCLAIMER,
     }
 
@@ -431,6 +511,11 @@ def post_analysis(
 ) -> dict:
     """统一 7 项输出。缺假设/缺约束时如实输出「暂不行动」并列出缺什么。"""
     row = _require_snapshot(db, symbol)
+    statement = _statement_detail_from_row(row)
+    statement_payload = (
+        statement.to_dict(revenue=row.revenue, net_profit=row.net_profit_parent)
+        if statement is not None else None
+    )
     as_of = beijing_today()
     quality = assess_quality(_quality_inputs(row, as_of))
     confidence = evidence_confidence(
@@ -438,8 +523,8 @@ def post_analysis(
         report_date=row.report_date,
         as_of=as_of,
         industry_identified=bool(row.industry),
-        has_statement_detail=False,
-        sources=1,
+        has_statement_detail=_statement_detail_from_row(row) is not None,
+        sources=2 if _statement_detail_from_row(row) is not None else 1,
     )
     band = None
     basis = ""
@@ -488,6 +573,7 @@ def post_analysis(
             valuation_basis=basis,
             portfolio=portfolio,
             portfolio_notes=tuple(payload.portfolio_notes),
+            statement_detail=statement_payload,
         )
     )
 

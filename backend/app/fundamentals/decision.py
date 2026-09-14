@@ -115,6 +115,8 @@ class DecisionInputs:
     portfolio: PortfolioContext | None = None
     #: 组合相对收益/相关性等外部输入（未提供时如实标注"未接入"）
     portfolio_notes: tuple[str, ...] = field(default_factory=tuple)
+    #: 与基本面快照同报告期的三表派生值；None 表示尚未接入或报告期不一致。
+    statement_detail: dict | None = None
 
     def missing_inputs(self) -> list[str]:
         gaps: list[str] = []
@@ -346,6 +348,25 @@ def build_analysis(inputs: DecisionInputs) -> dict:
     oppose = oppose[:3]
 
     scoring_ceiling = position_ceiling(inputs, stop_distance=None)
+    unverified = [
+        "商业模式与竞争优势（需人工阅读年报/公告，系统无法自动断言）",
+        "管理层资本配置质量（需人工判断）",
+        "卖方一致预期与价格隐含假设 —— 未接入",
+        "公司行为（分红、增发、回购）对每股口径的影响 —— 未接入",
+    ]
+    if inputs.statement_detail is None:
+        unverified.insert(
+            2,
+            "三表明细（经营现金流、资本开支、有息负债、商誉）尚未按本报告期刷新",
+        )
+    leverage = "未接入（需资产负债表有息负债明细）"
+    if inputs.statement_detail is not None:
+        net_debt = inputs.statement_detail.get("identified_net_debt")
+        leverage = (
+            f"已识别净负债 {net_debt} 元；"
+            "口径不含上游未披露的其他有息负债"
+            if net_debt is not None else "三表已刷新，但净负债组件不足"
+        )
 
     payload = {
         "symbol": inputs.symbol,
@@ -400,7 +421,7 @@ def build_analysis(inputs: DecisionInputs) -> dict:
                 "position_ceiling": scoring_ceiling,
                 "permanent_loss_risk": "未量化（缺少历史最大回撤与破产概率口径）",
                 "liquidity": "未量化（需成交额/换手与持仓规模）",
-                "leverage": "未接入（需资产负债表有息负债明细）",
+                "leverage": leverage,
                 "notes": list(inputs.portfolio_notes),
             },
         },
@@ -420,13 +441,7 @@ def build_analysis(inputs: DecisionInputs) -> dict:
                       "折现率、永续增长率与股本，系统不代填",
         },
         "6_open_items": {
-            "unverified": [
-                "商业模式与竞争优势（需人工阅读年报/公告，系统无法自动断言）",
-                "管理层资本配置质量（需人工判断）",
-                "三表明细（资本开支、有息负债、商誉）—— 数据源已实测可用（东财现金流/资产负债表接口），尚未接入",
-                "卖方一致预期与价格隐含假设 —— 未接入",
-                "公司行为（分红、增发、回购）对每股口径的影响 —— 未接入",
-            ],
+            "unverified": unverified,
             "invalidation_conditions": _invalidation_conditions(inputs),
             "review_triggers": _review_triggers(inputs),
             "horizon_discipline": (
@@ -440,6 +455,8 @@ def build_analysis(inputs: DecisionInputs) -> dict:
                 "annualization": "报告期年化倍数：一季×4、半年×2、三季×4/3、年报×1（模型推断，未计季节性）",
                 "dcf": "见 /api/fundamentals/{symbol}/valuation 返回的 formula 字段",
                 "margin_of_safety": "(价值 − 价格) ÷ 价值",
+                "free_cash_flow": "经营现金流量净额 − 购建长期资产支付的现金",
+                "identified_net_debt": "已识别有息负债合计 − 货币资金",
             },
             "model_version": "fundamentals-decision-v1",
             "inputs_snapshot": {
@@ -451,6 +468,8 @@ def build_analysis(inputs: DecisionInputs) -> dict:
                 "portfolio_context": (
                     "已提供" if inputs.portfolio is not None else "未提供"
                 ),
+                "statement_detail": "已提供且报告期一致"
+                if inputs.statement_detail is not None else "未提供",
             },
             "reproduce": "同样的输入（快照 + 假设）必然得到同样的结论：本模块为纯函数",
         },
