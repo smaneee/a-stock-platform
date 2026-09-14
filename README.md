@@ -1,11 +1,21 @@
-# A 股个人量化平台
+# A 股量化研究平台
 
 > ⚠️ **免责声明**：本项目所有分析、选股与回测结果仅用于研究，不构成投资建议。
 > 模拟盘与实盘接口默认全部关闭，任何真实下单都必须由使用者在界面上逐笔确认。
 
-面向个人使用的 A 股量化研究工作台：从**全市场股票池 → 历史入库 → 多因子选股 →
+面向个人与研究者的 A 股量化研究工作台：从**全市场股票池 → 历史入库 → 多因子选股 →
 样本外验证 → 模拟盘调仓 → 风控 → 经确认的实盘委托**形成闭环。
 前端 Vite + React 18 + TypeScript，后端 FastAPI + SQLAlchemy + SQLite/PostgreSQL。
+
+## 项目定位
+
+这个仓库公开展示完整源码、研究纪律与工程实现，欢迎学习、试用、复现和改进。
+如果这个项目节省了你的时间，或你希望获得更省心的打包版、数据初始化、部署指导与后续更新，
+可以通过 GitHub Sponsors 支持作者。建议赞助层级从 **0.5 美元**起；如果 Sponsors 后台不支持
+0.5 美元档，可改为 1 美元档。
+
+公开仓库只包含源码，不包含数据库、密钥、行情数据、研究输出和个人账户配置。
+本项目不承诺收益，不提供荐股服务，不代客理财。
 
 ## 下载方式
 
@@ -13,7 +23,7 @@
 
 **方式 A：git clone（推荐，便于后续更新）**
 
-本仓库为**私有**仓库，clone 需要 GitHub 登录凭据：
+本仓库公开后可直接 clone：
 
 ```powershell
 git clone https://github.com/smaneee/a-stock-platform.git
@@ -22,7 +32,7 @@ Set-Location a-stock-platform
 
 **方式 B：网页下载 ZIP**
 
-仓库页 → 绿色 `Code` 按钮 → `Download ZIP` → 解压即用（私有仓库需先登录对应账号）。
+仓库页 → 绿色 `Code` 按钮 → `Download ZIP` → 解压即用。
 
 **方式 C：本机离线压缩包（不依赖 GitHub）**
 
@@ -56,21 +66,23 @@ Get-Content .\a-stock-platform-src-*.zip.sha256.txt
 > 仓库**只放代码**：数据库（约 2.5 GB）、`.env` 密钥、Python venv、`node_modules`、
 > 行情数据与研究产物全部由 `.gitignore` 排除。首次运行会自动建表，数据按需拉取。
 
-### 把本仓库发布到 GitHub（维护者一次性操作）
+### 付费支持与使用方式
 
-本机已安装 GitHub Desktop 且已登录，最省事的方式：
+本项目适合采用“公开源码 + 自愿赞助 + 付费服务”的方式持续维护：
 
-1. GitHub Desktop → `File` → `Add local repository…` → 选择本目录；
-2. 右上角 `Publish repository`；
-3. **勾选 `Keep this code private`**（私有），仓库名填 `a-stock-platform`；
-4. 点 `Publish repository`。
+- **源码学习与本机自用**：直接 clone 或下载 ZIP，自行配置环境与数据源。
+- **0.5 美元支持档**：用于表达支持，帮助项目继续维护；如果 GitHub Sponsors 不接受 0.5 美元，
+  就设置为 1 美元支持档。
+- **付费便利包**：可单独提供一键安装包、初始化脚本、演示数据包、常见问题支持。
+- **商业使用/二次分发/付费部署**：请先联系作者确认授权边界。
 
-等价的命令行方式：
+项目仍处于个人研究工具阶段。任何付费都不是收益承诺，也不是投资建议订阅。
 
-```powershell
-git remote add origin https://github.com/smaneee/a-stock-platform.git
-git push -u origin main
-```
+### 授权说明
+
+当前仓库暂未采用 MIT / Apache-2.0 等开放许可证。源码公开用于学习、研究、试用和交流；
+商业使用、二次分发、托管服务、收费课程/社群打包分发、或基于本项目向第三方提供付费服务前，
+请先联系作者取得明确授权。
 
 ## 功能概览
 
