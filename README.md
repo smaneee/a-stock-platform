@@ -16,7 +16,7 @@
 本仓库为**私有**仓库，clone 需要 GitHub 登录凭据：
 
 ```powershell
-git clone https://github.com/<你的账号>/a-stock-platform.git
+git clone https://github.com/smaneee/a-stock-platform.git
 Set-Location a-stock-platform
 ```
 
@@ -68,7 +68,7 @@ Get-Content .\a-stock-platform-src-*.zip.sha256.txt
 等价的命令行方式：
 
 ```powershell
-git remote add origin https://github.com/<你的账号>/a-stock-platform.git
+git remote add origin https://github.com/smaneee/a-stock-platform.git
 git push -u origin main
 ```
 
