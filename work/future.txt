@@ -1,0 +1,16 @@
+﻿请求 trade_date=None         → 响应 trade_date=2026-09-11   total=  40 n=40 首3=['000993', '002161', '002790']
+请求 trade_date=2026-09-11   → 响应 trade_date=2026-09-11   total=  40 n=40 首3=['000993', '002161', '002790']
+请求 trade_date=2099-01-01   → 响应 trade_date=2099-01-01   total=  40 n=40 首3=['000993', '002161', '002790']
+请求 trade_date=2026-12-31   → 响应 trade_date=2026-12-31   total=  40 n=40 首3=['000993', '002161', '002790']
+请求 trade_date=2026-06-01   → 响应 trade_date=2026-06-01   total=   0 n=0 首3=[]
+python.exe : Traceback (most recent call last):
+At line:5 char:1
++ & $py "$proj\work\em_probe_future.py" "$proj\work\probe_future.json"  ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "E:\workbuddy work\2026-09-09-15-34-54\a-stock-platform\work\em_probe_future.py", line 31, in <module>
+    print(f"\n{k}: 响应回显 trade_date={res[k]['trade_date']}，与 2026-09-11 快照交集={len(s & base)}/{len(s)}"
+                                        ~~~~~~^^^^^^^^^^^^^^
+KeyError: 'trade_date'

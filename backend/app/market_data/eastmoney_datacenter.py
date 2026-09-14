@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Callable, Sequence
 
 import httpx
@@ -40,6 +41,12 @@ from app.market_data.eastmoney_provider import (
     eastmoney_request_json,
     em_to_float,
 )
+from app.market_rules.session_state import now_cst
+
+
+def _beijing_today() -> date:
+    """北京时间的今天（东财按交易日发布数据，不能用 UTC 推断「今天」）。"""
+    return now_cst().date()
 
 DATA_HOSTS = ("datacenter-web.eastmoney.com", "datacenter.eastmoney.com")
 DATA_PATH = "/api/data/v1/get"
@@ -118,6 +125,9 @@ class Field:
     kind: str = "num"
     title: str = ""
     labels: dict[str, str] | None = None
+    #: 字段口径说明。用于标注「上游该字段当前恒为空」这类事实（EM-04~06 实测），
+    #: 避免使用者把「—」误解成抓取失败或程序 bug。
+    note: str = ""
 
     def parse(self, row: dict) -> Any:
         raw = row.get(self.column)
@@ -143,6 +153,18 @@ class DatasetSpec:
     date_column: str | None = None
     symbol_column: str | None = None
     description: str = ""
+    #: 默认视角（未显式给出日期区间且未要求 order=asc 时生效）：
+    #:   None                = 用上游默认排序
+    #:   "upcoming"          = 从今天（北京时间）起、按日期升序（限售解禁「最近将解禁」）
+    #:   "latest_trading_day" = 只取最近一个**有数据的**交易日（按日全市场报表）
+    default_scope: str | None = None
+    #: 排序去重键：与 ``sort_column`` 组成复合排序。
+    #: 为什么必需：单列排序（例如只按 DATE）在几百万行上会产生巨大的并列组，
+    #: 上游 OFFSET 分页在这种不稳定顺序下会返回高度重叠的页 —— 实测融资融券
+    #: page1∩page2 = 499/500，page2 与 page3 **完全相同**（EM-01）。
+    #: 加一个唯一性较好的键（如股票代码）后分页才可用。
+    tiebreak_column: str | None = None
+    tiebreak_order: str = "1"
 
     @property
     def columns(self) -> tuple[str, ...]:
@@ -184,9 +206,12 @@ DRAGON_TIGER = DatasetSpec(
         Field("deal_amount_ratio", "DEAL_AMOUNT_RATIO", "opt_num", title="龙虎榜成交占比(%)"),
         Field("net_amount_ratio", "DEAL_NET_RATIO", "opt_num", title="龙虎榜净额占比(%)"),
         Field("change_1d_pct", "D1_CLOSE_ADJCHRATE", "opt_num", title="上榜后1日涨跌幅(%)"),
-        Field("change_5d_pct", "D5_CLOSE_ADJCHRATE", "opt_num", title="上榜后5日涨跌幅(%)"),
-        Field("change_10d_pct", "D10_CLOSE_ADJCHRATE", "opt_num", title="上榜后10日涨跌幅(%)"),
-        Field("change_20d_pct", "D20_CLOSE_ADJCHRATE", "opt_num", title="上榜后20日涨跌幅(%)"),
+        Field("change_5d_pct", "D5_CLOSE_ADJCHRATE", "opt_num", title="上榜后5日涨跌幅(%)",
+              note="该字段上游经常为空（2026-09-13 实测 500 行中 336 行为空）；空值显示为「—」，不代表抓取失败。"),
+        Field("change_10d_pct", "D10_CLOSE_ADJCHRATE", "opt_num", title="上榜后10日涨跌幅(%)",
+              note="上游当前恒为空（2026-09-13 实测 500/500 行全空）：东财不再提供上榜后 10 日涨跌幅。"),
+        Field("change_20d_pct", "D20_CLOSE_ADJCHRATE", "opt_num", title="上榜后20日涨跌幅(%)",
+              note="上游当前恒为空（2026-09-13 实测 500/500 行全空）：东财不再提供上榜后 20 日涨跌幅。"),
         Field("reason", "EXPLANATION", "text", title="上榜原因"),
         Field("interpretation", "EXPLAIN", "text", title="上榜解读"),
     ),
@@ -246,11 +271,15 @@ BLOCK_TRADE = DatasetSpec(
 MARGIN = DatasetSpec(
     key="margin",
     label="融资融券",
-    description="融资融券个股明细：融资余额/买入/偿还、融券余额/卖出及占流通市值比。",
+    description="融资融券个股明细：融资余额/买入/偿还、融券余额/卖出及占流通市值比。"
+                "默认只取最近一个有数据的交易日（避免在 680 万行历史里翻页）；"
+                "配合 date_from/date_to 或 symbol 可按区间/个股查询。",
     report="RPTA_WEB_RZRQ_GGMX",
     date_column="DATE",
     symbol_column="SCODE",
     sort_column="DATE",
+    default_scope="latest_trading_day",
+    tiebreak_column="SCODE",
     fields=(
         Field("trade_date", "DATE", "date", title="交易日期"),
         Field("symbol", "SCODE", "text", title="股票代码"),
@@ -298,11 +327,13 @@ NORTHBOUND = DatasetSpec(
         Field("buy_amount", "BUY_AMT", "opt_million", title="买入成交额(元)"),
         Field("sell_amount", "SELL_AMT", "opt_million", title="卖出成交额(元)"),
         Field("net_deal_amount", "NET_DEAL_AMT", "opt_million", title="成交净买额(元)"),
-        Field("fund_inflow", "FUND_INFLOW", "opt_million", title="资金净流入(元)"),
+        Field("fund_inflow", "FUND_INFLOW", "opt_million", title="资金净流入(元)",
+              note="上游当前恒为空（2026-09-13 实测 200/200 行全空）：北向资金实时买卖自 2024-08 起停止披露，只有南向通道有值。"),
         Field("accum_deal_amount", "ACCUM_DEAL_AMT", "opt_million", title="累计成交额(元)"),
         Field("deal_num", "DEAL_NUM", "opt_num", title="成交笔数"),
         Field("hold_market_cap", "HOLD_MARKET_CAP", "opt_num", title="持股市值(元)"),
-        Field("quota_balance", "QUOTA_BALANCE", "opt_num", title="额度余额"),
+        Field("quota_balance", "QUOTA_BALANCE", "opt_num", title="额度余额",
+              note="上游当前恒为空（2026-09-13 实测 200/200 行全空）；额度状态请改用「额度状态」文本列。"),
         Field("quota_balance_text", "QUOTA_BALANCE_TEXT", "text", title="额度状态"),
         Field("index_close", "INDEX_CLOSE_PRICE", "opt_num", title="指数收盘"),
         Field("index_change_pct", "INDEX_CHANGE_RATE", "opt_num", title="指数涨跌幅(%)"),
@@ -363,11 +394,13 @@ HOLDER_NUMBER = DatasetSpec(
 RESTRICTED_RELEASE = DatasetSpec(
     key="restricted-release",
     label="限售解禁",
-    description="限售股解禁安排（含未来日期，建议配合 date_from 当解禁日历使用）。",
+    description="限售股解禁安排。默认给出「最近将解禁」视角（从今天起按解禁日期升序）；"
+                "显式传 order=asc 可查看历史解禁，或传 date_from/date_to 自定义区间。",
     report="RPT_LIFT_STAGE",
     date_column="FREE_DATE",
     symbol_column="SECURITY_CODE",
     sort_column="FREE_DATE",
+    default_scope="upcoming",
     fields=(
         Field("free_date", "FREE_DATE", "date", title="解禁日期"),
         Field("symbol", "SECURITY_CODE", "text", title="股票代码"),
@@ -427,8 +460,10 @@ DIVIDEND = DatasetSpec(
         Field("progress", "ASSIGN_PROGRESS", "text", title="分配进度"),
         Field("plan", "IMPL_PLAN_PROFILE", "text", title="分红方案"),
         Field("pretax_bonus", "PRETAX_BONUS_RMB", "opt_num", title="每10股派息(元,含税)"),
-        Field("bonus_ratio", "BONUS_RATIO", "opt_num", title="送股比例"),
-        Field("it_ratio", "IT_RATIO", "opt_num", title="转增比例"),
+        Field("bonus_ratio", "BONUS_RATIO", "opt_num", title="送股比例",
+              note="上游当前恒为空（2026-09-13 实测 200/200 行全空）：送股比例需从「送转比例」文本列解析。"),
+        Field("it_ratio", "IT_RATIO", "opt_num", title="转增比例",
+              note="该字段上游经常为空（2026-09-13 实测 200 行中 198 行为空）。"),
         Field("dividend_ratio", "DIVIDENT_RATIO", "opt_num", title="股息率(%)"),
         Field("equity_record_date", "EQUITY_RECORD_DATE", "date", title="股权登记日"),
         Field("ex_dividend_date", "EX_DIVIDEND_DATE", "date", title="除权除息日"),
@@ -563,12 +598,24 @@ class DatasetResult:
     spec: DatasetSpec
     total: int
     rows: list[dict[str, Any]]
+    #: 本次查询是否套用了数据集默认视角（目前仅 "upcoming"），供调用方如实展示
+    applied_default: str | None = None
 
 
 def _require_date(value: str, label: str) -> str:
+    """校验 YYYY-MM-DD **且必须是真实存在的日历日期**。
+
+    只做正则会让 `2026-13-45` / `2026-02-30` 通过，然后被原样发给上游并触发
+    上游报错 → API 返回 503「数据源暂不可用」，把「参数错误」误报成「上游故障」。
+    这里提前抛 ValueError，由 API 映射为 422（EM-03）。
+    """
     text = (value or "").strip()
     if not _DATE_RE.match(text):
         raise ValueError(f"{label} 需要 YYYY-MM-DD 格式，收到 {value!r}")
+    try:
+        date.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError(f"{label} 不是有效的日历日期：{value!r}") from exc
     return text
 
 
@@ -609,21 +656,28 @@ def _sort_type(order: str | None, default: str) -> str:
 
 
 def dataset_catalog() -> list[dict[str, Any]]:
-    """数据集自描述信息，供前端渲染表头与参数提示。"""
-    return [
-        {
+    """数据集自描述信息，供前端渲染表头与参数提示。
+
+    ``dragon-tiger-seats`` 不是可独立查询的数据集（它挂在 `dragon-tiger` 行上，
+    通过 ``/datacenter/dragon-tiger/{symbol}/seats`` 取），但同样需要向前端暴露
+    字段清单：否则前端只能硬编码列，实测就出现过「12 个字段只渲染 4 个」（EM-09）。
+    """
+    def entry(spec: DatasetSpec) -> dict[str, Any]:
+        return {
             "key": spec.key,
             "label": spec.label,
             "description": spec.description,
             "supports_date": spec.supports_date,
             "supports_symbol": spec.supports_symbol,
             "fields": [
-                {"key": item.key, "title": item.title, "kind": item.kind}
+                {"key": item.key, "title": item.title, "kind": item.kind, "note": item.note}
                 for item in spec.fields
             ],
         }
-        for spec in DATASETS.values()
-    ]
+
+    items = [entry(spec) for spec in DATASETS.values()]
+    items.append(entry(DRAGON_TIGER_SEATS))
+    return items
 
 
 class EastmoneyDatacenterService:
@@ -666,6 +720,22 @@ class EastmoneyDatacenterService:
     ) -> DatasetResult:
         """查询一个数据集（默认按该报表的推荐排序，取一页）。"""
         spec = self.spec(dataset)
+        applied_default: str | None = None
+        explicit_range = bool(date or date_from or date_to)
+        if spec.default_scope and not explicit_range and order != "asc":
+            if spec.default_scope == "upcoming":
+                # 「最近将解禁」：从今天起、按日期升序
+                date_from = _beijing_today().isoformat()
+                order = "asc"
+                applied_default = f"upcoming>={date_from}"
+            elif spec.default_scope == "latest_trading_day":
+                # 按日全市场报表：默认只取最近一个**有数据**的交易日。
+                # 日期从上游真实数据里取（而不是本地日历推断），避免休市/缺数据时
+                # 过滤出空结果。
+                latest = await self._latest_date(spec)
+                if latest:
+                    date = latest
+                    applied_default = f"latest_trading_day={latest}"
         filter_expr = self._build_filter(spec, date, date_from, date_to, symbol)
         rows, total = await self._fetch(
             spec.report,
@@ -675,7 +745,27 @@ class EastmoneyDatacenterService:
             page=page,
             order=order,
         )
-        return DatasetResult(spec=spec, total=total, rows=_parse_rows(spec, rows))
+        return DatasetResult(
+            spec=spec, total=total, rows=_parse_rows(spec, rows), applied_default=applied_default
+        )
+
+    async def _latest_date(self, spec: DatasetSpec) -> str | None:
+        """取该报表里最大的日期列取值（用于「最近一个有数据的交易日」默认视角）。"""
+        if spec.date_column is None:
+            return None
+        rows, _total = await self._fetch(
+            spec.report,
+            spec,
+            filter_expr="",
+            limit=1,
+            page=1,
+            order="desc",
+        )
+        if not rows:
+            return None
+        raw = rows[0].get(spec.date_column)
+        text = str(raw or "")[:10]
+        return text if len(text) == 10 and text.count("-") == 2 else None
 
     async def dragon_tiger_seats(
         self,
@@ -744,6 +834,12 @@ class EastmoneyDatacenterService:
         page: int,
         order: str | None,
     ) -> tuple[list[dict], int]:
+        sort_columns = spec.sort_column
+        sort_types = _sort_type(order, spec.sort_order)
+        if spec.tiebreak_column:
+            # 复合排序：主排序列 + 去重键，避免并列组过大导致分页重叠（EM-01）
+            sort_columns = f"{spec.sort_column},{spec.tiebreak_column}"
+            sort_types = f"{sort_types},{spec.tiebreak_order}"
         params = {
             "reportName": report,
             "columns": ",".join(spec.columns),
@@ -751,8 +847,8 @@ class EastmoneyDatacenterService:
             "client": "WEB",
             "pageNumber": str(max(1, int(page))),
             "pageSize": str(max(1, min(limit, MAX_PAGE_SIZE))),
-            "sortColumns": spec.sort_column,
-            "sortTypes": _sort_type(order, spec.sort_order),
+            "sortColumns": sort_columns,
+            "sortTypes": sort_types,
         }
         if filter_expr:
             params["filter"] = filter_expr

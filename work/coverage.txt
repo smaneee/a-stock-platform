@@ -1,0 +1,36 @@
+﻿=== 数据中心（limit=500，单页上限） ===
+dragon-tiger         HTTP 200    353ms total=268118 n=500 市场={'SZ': 238, 'BJ': 57, 'SH': 205} trade_date=['2026-09-02']..['2026-09-11']
+block-trade          HTTP 200    726ms total=681569 n=500 市场={'SH': 200, 'SZ': 256, 'BJ': 11, '其他': 33} trade_date=['2026-09-07']..['2026-09-11']
+margin               HTTP 200   5257ms total=6822021 n=500 市场={'其他': 96, 'SH': 404} trade_date=['2026-09-11']..['2026-09-11']
+northbound           HTTP 200    166ms total=15449 n=500 市场={'其他': 500} trade_date=['2026-05-14']..['2026-09-11']
+org-survey           HTTP 200    231ms total=286909 n=500 市场={'SZ': 111, 'SH': 374, 'BJ': 15} notice_date=['2026-09-11']..['2026-09-13']
+holder-number        HTTP 200    164ms total=5557 n=500 市场={'SH': 248, 'SZ': 252} end_date=['2014-06-30']..['2026-09-10']
+restricted-release   HTTP 200    133ms total=31497 n=500 市场={'SH': 243, 'SZ': 225, 'BJ': 32} free_date=['2028-10-09']..['2035-10-29']
+earnings-forecast    HTTP 200    735ms total=190920 n=500 市场={'SH': 243, 'SZ': 181, 'BJ': 76} notice_date=['2026-07-16']..['2026-09-14']
+dividend             HTTP 200    152ms total=56973 n=500 市场={'SH': 261, 'SZ': 226, 'BJ': 13} notice_date=['2026-08-26']..['2026-09-14']
+executive-hold       HTTP 200    263ms total=171740 n=500 市场={'SH': 197, 'BJ': 87, 'SZ': 216} change_date=['2026-08-27']..['2026-09-11']
+pledge               HTTP 200    883ms total=1633259 n=500 市场={'SZ': 263, 'SH': 237} trade_date=['2026-09-11']..['2026-09-11']
+convertible-bond     HTTP 200    225ms total=1052 n=500 市场={'BJ': 5, 'SH': 237, 'SZ': 258} listing_date=['2021-04-27']..['2026-09-09']
+
+=== 涨停池（limit=200，单页上限） ===
+limit-up         HTTP 200    236ms trade_date=2026-09-11 total=40 n=40 市场={'SZ': 18, 'SH': 22}
+limit-down       HTTP 200     44ms trade_date=2026-09-11 total=21 n=21 市场={'SZ': 13, 'SH': 8}
+broken-board     HTTP 200     41ms trade_date=2026-09-11 total=18 n=18 市场={'SH': 9, 'SZ': 9}
+strong           HTTP 200     59ms trade_date=2026-09-11 total=90 n=90 市场={'BJ': 2, 'SZ': 47, 'SH': 41}
+sub-new          HTTP 200     58ms trade_date=2026-09-11 total=159 n=159 市场={'SH': 47, 'BJ': 70, 'SZ': 42}
+
+=== 板块与成分股（各 kind 的最大覆盖） ===
+boards.industry  HTTP 200    765ms n=496 首个=BK1592 (通信线缆及配套)
+boards.concept   HTTP 200    320ms n=504 首个=BK0976 (被动元件概念)
+boards.region    HTTP 200     57ms n=31 首个=BK0153 (广东板块)
+constituents BK1592 HTTP 200     53ms n=13 市场={'SZ': 5, 'SH': 7, 'BJ': 1}
+constituents BK0976 HTTP 200    311ms n=30 市场={'SZ': 23, 'SH': 6, 'BJ': 1}
+constituents BK0153 HTTP 200    536ms n=905 市场={'BJ': 40, 'SH': 179, 'SZ': 686}
+
+=== 资金流 ===
+fund-flow/boards industry  HTTP 200    246ms n=496
+fund-flow/boards concept   HTTP 200    298ms n=504
+fund-flow/boards region    HTTP 200     72ms n=31
+fund-flow/stocks HTTP 200    488ms n=1000 市场={'SZ': 528, 'SH': 453, 'BJ': 19}（上限 1000）
+
+WROTE E:\workbuddy work\2026-09-09-15-34-54\a-stock-platform\work\probe_coverage.json

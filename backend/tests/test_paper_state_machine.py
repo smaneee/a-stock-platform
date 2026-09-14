@@ -1,6 +1,7 @@
 """模拟交易订单状态机、现金冻结与日终结算测试。"""
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -40,7 +41,9 @@ def _create_account(db, cash=100_000.0) -> PaperAccount:
 
 
 def _buy_quote(price=10.0):
-    return make_quote(symbol="600000", price=price)
+    # previous_close 与 price 一致：避免价格恰好落在涨跌停价上，
+    # 让用例测的是它声称的那件事（资金/状态机），而不是被可成交性护栏拦下。
+    return make_quote(symbol="600000", price=price, previous_close=price)
 
 
 # ──────── 订单状态机 ────────
@@ -58,9 +61,12 @@ def test_submit_order_freezes_cash(db_session):
     assert order.status == SUBMITTED
 
     db_session.refresh(account)
-    # 冻结 = 成交额 + 佣金（100 * 10.01 + 5）
-    assert float(account.frozen_cash) == pytest.approx(1006.0)
-    assert float(account.available_cash) == pytest.approx(100_000.0 - 1006.0)
+    # 冻结 = 含滑点上限价成交额 + 佣金 + 过户费。`_buy_quote(10.0)` 的可成交价是 **10.01**
+    # （make_quote 的口径），10.01 × 1.0005 = 10.015005 → 向上取到 4 位 = 10.0151，
+    # 100 股 → 1001.51 + 最低佣金 5.00 + 过户费 0.02（1001.51×0.00001 向上取整到分）
+    # = 1006.53（2026-09-14 起模拟盘与回测同计 5bp 滑点与 0.001% 双边过户费）
+    assert float(account.frozen_cash) == pytest.approx(1006.53)
+    assert float(account.available_cash) == pytest.approx(100_000.0 - 1006.53)
 
 
 def test_cancel_order_releases_cash(db_session):
@@ -202,7 +208,17 @@ def test_settlement_unfreezes_and_records_snapshot(db_session):
     assert position.available_quantity == 0
 
     settlement = DailySettlement(db_session)
-    summary = settlement.settle_account(account, {"600000": quote})
+    # T+1 口径：以**买入当天**为结算日不得解冻（否则等于允许当日回转交易）
+    same_day = settlement.settle_account(
+        account, {"600000": quote}, trading_date=position.acquisition_date
+    )
+    db_session.refresh(position)
+    assert position.available_quantity == 0, "买入当日结算不得解冻（T+1）"
+    assert same_day["positions_settled"] == 0
+
+    # 以次一交易日结算才解冻
+    next_day = position.acquisition_date + timedelta(days=1)
+    summary = settlement.settle_account(account, {"600000": quote}, trading_date=next_day)
     assert summary["account_id"] == account.id
 
     db_session.refresh(position)
@@ -211,5 +227,6 @@ def test_settlement_unfreezes_and_records_snapshot(db_session):
     records = db_session.scalars(
         select(AssetRecord).where(AssetRecord.account_id == account.id)
     ).all()
-    assert len(records) == 1
-    assert float(records[0].total_asset) > 0
+    # 两次结算（买入当日不解冻 + 次一交易日解冻）各留一条资产快照
+    assert len(records) == 2
+    assert all(float(record.total_asset) > 0 for record in records)

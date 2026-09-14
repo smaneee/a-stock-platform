@@ -59,13 +59,17 @@ def _service(handler, **kwargs) -> EastmoneyDatacenterService:
 
 def test_catalog_describes_every_dataset():
     catalog = dataset_catalog()
-    assert [item["key"] for item in catalog] == list(DATASETS)
-    assert len(catalog) == 12
+    keys = [item["key"] for item in catalog]
+    # 12 个可独立查询的数据集 + 1 个席位字段清单（dragon-tiger-seats，挂在
+    # dragon-tiger 行上，不单独查询，但需要向前端暴露字段以避免 EM-09 漏渲染）
+    assert keys == list(DATASETS) + ["dragon-tiger-seats"]
+    assert len(catalog) == 13
     for item in catalog:
         assert item["label"]
         assert item["description"]
         assert item["fields"]
         assert all(field["key"] and field["title"] for field in item["fields"])
+        assert all("note" in field for field in item["fields"])
 
 
 def test_declared_fields_are_unique():

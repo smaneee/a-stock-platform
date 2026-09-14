@@ -10,7 +10,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+import json
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -18,10 +19,7 @@ from app.history.quality import QualityReport
 from app.history.service import HistoryResult
 from app.market_data.base import QuoteData
 from app.market_data.mock_provider import MockProvider
-from app.tasks.portfolio_worker import (
-    PortfolioBacktestWorker,
-    _wrap_history,
-)
+from app.tasks.portfolio_worker import PortfolioBacktestWorker
 
 
 # ──────────────── 1. PortfolioBacktestWorker 完整性校验 ────────────────
@@ -110,6 +108,25 @@ class TestPortfolioCompletenessCheck:
         assert reason["reason"] == "incomplete"
         assert "2024-01-02" in reason["missing_dates"]
 
+    def test_missing_dates_are_json_serializable(self):
+        """missing_dates 必须是 ISO 字符串，任务结果才能 json.dumps。
+
+        回归：DataQualityChecker 产出的是 datetime.date 对象，直接透传会让
+        后台任务以 "Object of type date is not JSON serializable" 失败，
+        把「基准/标的缺了哪些交易日」这条真正的失败原因整条吞掉。
+        """
+        bars = [_bar("2024-01-15T00:00:00")]
+        result = _make_history_result(
+            bars,
+            is_complete=False,
+            missing_dates=[date(2024, 1, 2), date(2024, 1, 3)],
+        )
+        reason = self.worker._check_history_completeness(
+            "600000", result, self.start, self.end
+        )
+        assert reason["missing_dates"] == ["2024-01-02", "2024-01-03"]
+        json.dumps({"exclusion_reasons": {"600000": reason}})
+
     def test_check_fails_for_range_too_short(self):
         """实际跨度远小于请求跨度 → 缓存命中错误版本。"""
         bars = [
@@ -122,6 +139,61 @@ class TestPortfolioCompletenessCheck:
         )
         assert reason is not None
         assert reason["reason"] in ("range_too_short", "range_mismatch")
+
+    def test_check_passes_when_request_window_starts_on_holiday(self):
+        """请求区间以节假日开头（如 10-01 国庆休市至 10-08）不应误判。
+
+        交易日历可用（expected_count > 0）且 missing_dates 为空时，完整性
+        已由日历逐日核对，不能再拿自然日跨度比较：该请求的首根 bar 必然是
+        10-09，自然日跨度天生比请求跨度少 8 天。
+        """
+        start = datetime(2025, 10, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 9, 11, tzinfo=timezone.utc)
+        bars = [
+            _bar("2025-10-09T00:00:00"),
+            _bar("2026-01-05T00:00:00"),
+            _bar("2026-09-11T00:00:00"),
+        ]
+        result = HistoryResult(
+            bars=bars,
+            source="cache",
+            data_updated_at=None,
+            is_complete=True,
+            quality=QualityReport(
+                total=len(bars),
+                actual_count=len(bars),
+                expected_count=229,
+                missing_dates=[],
+            ),
+        )
+        reason = self.worker._check_history_completeness(
+            "600000", result, start, end
+        )
+        assert reason is None
+
+    def test_check_still_guards_span_without_calendar(self):
+        """交易日历不可用（expected_count == 0）时仍需兜底跨度校验。"""
+        bars = [
+            _bar("2025-10-09T00:00:00"),
+            _bar("2026-01-05T00:00:00"),
+        ]
+        result = HistoryResult(
+            bars=bars,
+            source="cache",
+            data_updated_at=None,
+            is_complete=True,
+            quality=QualityReport(
+                total=len(bars), actual_count=len(bars), missing_dates=[]
+            ),
+        )
+        reason = self.worker._check_history_completeness(
+            "600000",
+            result,
+            datetime(2025, 10, 1, tzinfo=timezone.utc),
+            datetime(2026, 9, 11, tzinfo=timezone.utc),
+        )
+        assert reason is not None
+        assert reason["reason"] == "range_too_short"
 
     def test_check_fails_when_bars_outside_requested_window(self):
         """bars 超出请求窗口（如含未来日期）→ range_mismatch。"""
@@ -136,20 +208,6 @@ class TestPortfolioCompletenessCheck:
         )
         assert reason is not None
         assert reason["reason"] == "range_mismatch"
-
-
-def test_wrap_history_marks_incomplete_when_empty():
-    """_wrap_history 应当如实标记完整性：空 bars 必须 is_complete=False。"""
-    result = _wrap_history([])
-    assert result.is_complete is False
-    assert result.bars == []
-
-
-def test_wrap_history_marks_complete_when_has_bars():
-    bars = [_bar("2024-01-02T00:00:00")]
-    result = _wrap_history(bars)
-    assert result.is_complete is True
-    assert len(result.bars) == 1
 
 
 # ──────────────── 2. MockProvider 历史数据 ────────────────
@@ -171,6 +229,23 @@ class TestMockProviderHistory:
         bars = asyncio.run(run())
         # 2024-01 的交易日：1/2-1/31 去除周末 ≈ 22 天
         assert 18 <= len(bars) <= 23
+
+    def test_minute_period_returns_intraday_bars(self):
+        """1m 等分钟周期要真的给分钟 K 线：mock 模式下分时曲线也得有形状。"""
+        start = datetime(2026, 9, 11, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 9, 11, 23, 59, tzinfo=timezone.utc)
+
+        async def run():
+            return await self.provider.get_history("600000", "1m", start, end)
+
+        bars = asyncio.run(run())
+        minutes = [bar.market_time.strftime("%H:%M") for bar in bars]
+        # 上午 9:30-11:30 + 下午 13:00-15:00 ≈ 242 根，远多于「一天一根」
+        assert len(bars) >= 200
+        assert minutes[0] == "09:30" and minutes[-1] == "15:00"
+        # 午休不产生 K 线
+        assert not [m for m in minutes if "11:31" <= m <= "12:59"]
+        assert {bar.market_time.date() for bar in bars} == {date(2026, 9, 11)}
 
     def test_ohlc_is_self_consistent(self):
         start = datetime(2024, 6, 1, tzinfo=timezone.utc)

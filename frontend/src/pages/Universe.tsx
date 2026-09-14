@@ -5,14 +5,17 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 
 import {
+  fetchMarketSession,
   fetchUniverseStatus,
   listUniverseMembers,
   listUniverseSnapshots,
   syncUniverse,
 } from "../lib/api";
 import type {
+  MarketSessionResponse,
   UniverseProviderHealth,
   UniverseSnapshotSummary,
 } from "../lib/types";
@@ -49,6 +52,7 @@ const EXCLUDE_LABELS: Record<string, string> = {
   new_listing: "次新",
   illiquid: "流动性不足",
   incomplete_history: "历史不足",
+  not_listed_yet: "待上市",
 };
 
 const panel = "bg-slate-900 rounded-lg border border-slate-800 overflow-hidden";
@@ -60,6 +64,33 @@ const input =
 function formatTime(raw: string | null): string {
   if (!raw) return "—";
   return raw.replace("T", " ").slice(0, 19);
+}
+
+/** 今日是否交易的提示条：把「可交易」与「今天能下单」彻底分开。 */
+function MarketSessionBadge({
+  session,
+}: {
+  session: MarketSessionResponse | undefined;
+}) {
+  if (!session) return null;
+  if (session.is_trading_day) {
+    return (
+      <div className="mt-2 inline-flex items-center gap-2 rounded border border-emerald-900 bg-emerald-950/30 px-3 py-1 text-xs text-emerald-300">
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+        今日（{session.day}）是交易日
+      </div>
+    );
+  }
+  return (
+    <div className="mt-2 inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded border border-amber-900 bg-amber-950/30 px-3 py-1 text-xs text-amber-300">
+      <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+      今日休市（{session.day}），最近交易日 {session.last_trading_day}
+      {session.next_trading_day ? `，下一交易日 ${session.next_trading_day}` : ""}
+      <span className="text-amber-400/70">
+        · 休市不影响股票池的「可交易」标记
+      </span>
+    </div>
+  );
 }
 
 export default function UniversePage() {
@@ -78,6 +109,11 @@ export default function UniversePage() {
     queryKey: ["universe-status"],
     queryFn: fetchUniverseStatus,
     refetchInterval: 30_000,
+  });
+  const session = useQuery({
+    queryKey: ["market-session"],
+    queryFn: fetchMarketSession,
+    refetchInterval: 60_000,
   });
 
   const latestDay = snapshots.data?.snapshots[0]?.trading_day ?? "";
@@ -129,6 +165,7 @@ export default function UniversePage() {
             东方财富股票主数据同步到本地的全市场快照（沪深京三市 A 股）。
             选股、回测、模拟交易都只在这个池子里取材。
           </p>
+          <MarketSessionBadge session={session.data} />
         </div>
         <button
           type="button"
@@ -263,7 +300,15 @@ export default function UniversePage() {
               )}
               {pageRows.map((item) => (
                 <tr key={item.symbol} className="hover:bg-slate-800/40">
-                  <td className={`${td} numeric text-slate-400`}>{item.symbol}</td>
+                  <td className={`${td} numeric`}>
+                    <Link
+                      to={`/intraday?symbol=${item.symbol}`}
+                      className="text-slate-400 hover:text-sky-400"
+                      title="查看分时"
+                    >
+                      {item.symbol}
+                    </Link>
+                  </td>
                   <td className={`${td} text-slate-200`}>
                     {item.name}
                     {item.is_st && (
@@ -355,6 +400,11 @@ function Stats({
         <div className="mt-1 text-sm text-slate-300">
           {shown} 只匹配（快照内 {total} 只）
         </div>
+        <p className="mt-1 text-xs text-slate-500">
+          「可交易」= 通过了池子的排除规则（退市 / 停牌 / 长期停牌 / ST）被纳入本地池子，
+          不是「今天能下单」，休市日也不会变成不可交易；快照交易日只会落在交易日，
+          周末或节假日同步会自动归到最近一个交易日。
+        </p>
       </div>
     </div>
   );

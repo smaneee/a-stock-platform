@@ -306,6 +306,26 @@ class TestExclusionEngine:
         )
         assert decisions[0].reason == "suspended"
 
+    def test_pending_listing_excluded(self, db_session):
+        """东财 f292=9（已分配代码、尚未挂牌）必须按 not_listed_yet 排除。
+
+        回归：这类代码 listing_date 为空，trading_status 也不是 delisted /
+        suspended，修复前会以「可交易」进入股票池（001246 力勤资源等 9 只）。
+        """
+        _seed_security(
+            db_session,
+            "001246",
+            listing_date=None,
+            trading_status="pending_listing",
+        )
+        engine = ExclusionEngine(db_session)
+        decisions = engine.evaluate(
+            [db_session.get(Security, "001246")],
+            as_of=date(2026, 9, 11),
+        )
+        assert decisions[0].is_included is False
+        assert decisions[0].reason == "not_listed_yet"
+
     def test_no_listing_date_kept_as_audit_tag(self, db_session):
         """listing_date 缺失：仅 audit_reason（'listing_date_unknown'），不排除。
 
@@ -557,6 +577,36 @@ class TestRealLoopClosing:
         snap = db_session.get(UniverseSnapshot, result.snapshot_id)
         assert snap is not None
         assert snap.source_provider == "mock"
+
+    def test_weekend_sync_snaps_back_to_last_trading_day(self, db_session):
+        """周末点同步时快照日必须归一到最近交易日。
+
+        回归：东财 / mock 这类「只有当前名单」的数据源把 as_of_date 填成抓取
+        当天，2026-09-12（周六）曾落出一个「快照日 = 非交易日」的快照，
+        选股与回测按快照日对齐时会错位。
+        """
+        from app.database.models import TradingDate
+
+        friday = date(2026, 9, 11)
+        saturday = date(2026, 9, 12)
+        db_session.add(TradingDate(trade_date=friday))
+        db_session.commit()
+
+        class _WeekendProvider(MockUniverseProvider):
+            """模拟东财：名单只有当前一份，as_of_date 就是抓取当天。"""
+
+            async def fetch_all(self):
+                records = await super().fetch_all()
+                for record in records:
+                    record.as_of_date = saturday
+                return records
+
+        svc = UniverseSyncService(db=db_session, providers=[_WeekendProvider()])
+        result = asyncio.run(svc.sync(create_snapshot=True))
+
+        assert result.snapshot_trading_day == friday.isoformat()
+        snap = db_session.get(UniverseSnapshot, result.snapshot_id)
+        assert snap.trading_day == friday
 
     def test_sync_to_filter_loop_via_api(self, db_session):
         """完整闭环：POST /sync → GET /snapshots/{td}/members → POST /filter。"""
@@ -1112,11 +1162,57 @@ class TestSnapshotConflictDetection:
         s2 = snap_svc.get_or_create_snapshot(
             td, source_provider="mock", force_overwrite=True
         )
-        # 新建（id 应当不同，因为 force_overwrite 走 delete+insert 路径）
-        # 但 universe_snapshots.trading_day UQ 意味着同一 day 只能有一行；
-        # 这里 s2.id 可能 == s1.id（取决于 SQLAlchemy 是否复用 identity map）
-        # 至少要保证调用不抛错
+        # 同 day 只能有一行：force_overwrite 原地刷新，id 保持不变
         assert s2 is not None
+        assert s2.id == s1.id
+        assert s2.trading_day == td
+
+    def test_resync_same_day_keeps_snapshot_id_with_dependents(self, db_session):
+        """同一天重复同步必须原地刷新，保住 snapshot.id。
+
+        回归：force_overwrite 原来走 delete + insert，只要已有选股运行引用这张
+        快照（selection_runs.snapshot_id，外键 ON DELETE NO ACTION），DELETE 就
+        会 IntegrityError —— 实测「同步股票池」第二次点击返回 HTTP 500。
+        """
+        from app.database.models import SelectionRun
+
+        svc = UniverseSyncService(db=db_session, providers=[MockUniverseProvider()])
+        first = asyncio.run(svc.sync(create_snapshot=True))
+        assert first.snapshot_id is not None
+        db_session.add(
+            SelectionRun(
+                snapshot_id=first.snapshot_id,
+                trading_day=date.fromisoformat(first.snapshot_trading_day),
+                config_hash="0" * 64,
+                config_json={"top_n": 10},
+                total_candidates=26,
+                eligible_count=1,
+            )
+        )
+        db_session.commit()
+
+        class _RenamedProvider(MockUniverseProvider):
+            """内容变化（provider 不同）→ 必然走 force_overwrite 分支。"""
+
+            source_id = "mock-resync"
+
+        svc2 = UniverseSyncService(db=db_session, providers=[_RenamedProvider()])
+        second = asyncio.run(svc2.sync(create_snapshot=True))
+
+        assert second.snapshot_id == first.snapshot_id, "同一天刷新必须复用同一行"
+        snap = db_session.get(UniverseSnapshot, second.snapshot_id)
+        assert snap.source_provider == "mock-resync"
+        assert snap.included_count + snap.excluded_count == snap.total_count > 0
+        # 成员行被重建，不会残留旧行
+        members = (
+            db_session.query(UniverseMember)
+            .filter(UniverseMember.snapshot_id == snap.id)
+            .count()
+        )
+        assert members == snap.total_count
+        # 依赖这张快照的选股运行仍然指着同一行快照
+        run = db_session.get(SelectionRun, 1)
+        assert run.snapshot_id == snap.id
 
 
 # ─────────────── 10. point-in-time trading_day 校验（修复 P0） ───────────────
@@ -1922,3 +2018,150 @@ class TestBaoStockSocketTimeout:
             assert socket.getdefaulttimeout() == before
         finally:
             socket.setdefaulttimeout(before)
+
+
+class TestPointInTimeSnapshotFromRecords:
+    """历史时点快照：成员只来自「当日清单」，不能被当前全量证券表污染。"""
+
+    @staticmethod
+    def _seed_master(db) -> None:
+        from app.market_rules.security_master import SecurityMasterService
+
+        master = SecurityMasterService(db)
+        # 2026 年才上市：绝不能出现在 2022 年的快照里（否则是未来函数）
+        master.ensure(
+            symbol="999999", name="未来上市股", is_st=False,
+            listing_date=date(2026, 1, 5), source="test", exchange="SH",
+            trading_status="active",
+        )
+        # 当年在场、后来退市：必须留在 2022 快照里（否则是幸存者偏差）
+        master.ensure(
+            symbol="888888", name="后来退市股", is_st=False,
+            listing_date=date(2010, 3, 1), source="test", exchange="SZ",
+            delisted_date=date(2024, 5, 20), trading_status="delisted",
+        )
+        db.commit()
+
+    @staticmethod
+    def _records(day: date):
+        from app.universe.providers import SecurityRecord
+
+        return [
+            SecurityRecord(
+                symbol="888888", name="后来退市股", exchange="SZ", board="main",
+                is_st=False, listing_date=date(2010, 3, 1),
+                trading_status="active", as_of_date=day,
+            ),
+            SecurityRecord(
+                symbol="777777", name="当年在场新股", exchange="SH", board="main",
+                is_st=False, listing_date=date(2015, 3, 1),
+                trading_status="active", as_of_date=day,
+            ),
+            SecurityRecord(
+                symbol="666666", name="当日停牌股", exchange="SZ", board="main",
+                is_st=False, listing_date=date(2009, 7, 1),
+                trading_status="suspended", as_of_date=day,
+            ),
+        ]
+
+    def test_members_come_from_records_not_current_master(self, db_session):
+        from app.time_utils import utc_now
+        from app.universe.snapshot_service import UniverseSnapshotService
+
+        self._seed_master(db_session)
+        day = date(2022, 6, 30)
+        snap = UniverseSnapshotService(db_session).get_or_create_snapshot_from_records(
+            records=self._records(day), trading_day=day, source_provider="test",
+            source_synced_at=utc_now(), as_of_date=day,
+        )
+        db_session.flush()
+        members = {
+            m.symbol: m
+            for m in db_session.execute(
+                select(UniverseMember).where(UniverseMember.snapshot_id == snap.id)
+            ).scalars()
+        }
+        assert set(members) == {"888888", "777777", "666666"}
+        assert "999999" not in members, "2026 年上市的标的不能进 2022 年快照"
+        assert snap.total_count == 3
+
+    def test_delisted_later_and_suspended_are_classified_by_that_day(self, db_session):
+        from app.time_utils import utc_now
+        from app.universe.snapshot_service import UniverseSnapshotService
+
+        self._seed_master(db_session)
+        day = date(2022, 6, 30)
+        snap = UniverseSnapshotService(db_session).get_or_create_snapshot_from_records(
+            records=self._records(day), trading_day=day, source_provider="test",
+            source_synced_at=utc_now(), as_of_date=day,
+        )
+        db_session.flush()
+        members = {
+            m.symbol: m
+            for m in db_session.execute(
+                select(UniverseMember).where(UniverseMember.snapshot_id == snap.id)
+            ).scalars()
+        }
+        # 当年正常交易 → 入选；当日停牌 → 排除，理由是 suspended 而不是 delisted
+        assert members["888888"].is_included is True
+        assert members["888888"].trading_status == "active"
+        assert members["777777"].is_included is True
+        assert members["666666"].is_included is False
+        assert members["666666"].exclude_reason == "suspended"
+        assert snap.included_count == 2
+        assert snap.excluded_count == 1
+
+    def test_master_is_only_extended_never_overwritten(self, db_session):
+        from app.time_utils import utc_now
+        from app.universe.snapshot_service import UniverseSnapshotService
+
+        self._seed_master(db_session)
+        day = date(2022, 6, 30)
+        UniverseSnapshotService(db_session).get_or_create_snapshot_from_records(
+            records=self._records(day), trading_day=day, source_provider="test",
+            source_synced_at=utc_now(), as_of_date=day,
+        )
+        db_session.flush()
+        # 当前主数据不能被 2022 年的「当日状态」改写
+        assert db_session.get(Security, "888888").trading_status == "delisted"
+        assert db_session.get(Security, "999999").name == "未来上市股"
+        # 从没进过主数据表的标的需要补一条，否则 universe_members.security_id 外键悬空
+        added = db_session.get(Security, "777777")
+        assert added is not None and added.listing_date == date(2015, 3, 1)
+
+    def test_rebuild_same_day_keeps_snapshot_id_and_replaces_members(self, db_session):
+        from app.time_utils import utc_now
+        from app.universe.snapshot_service import UniverseSnapshotService
+
+        self._seed_master(db_session)
+        day = date(2022, 6, 30)
+        service = UniverseSnapshotService(db_session)
+        first = service.get_or_create_snapshot_from_records(
+            records=self._records(day), trading_day=day, source_provider="test",
+            source_synced_at=utc_now(), as_of_date=day,
+        )
+        first_id = first.id
+        second = service.get_or_create_snapshot_from_records(
+            records=self._records(day)[:2], trading_day=day, source_provider="test",
+            source_synced_at=utc_now(), as_of_date=day,
+        )
+        assert second.id == first_id, "同交易日重建必须原地刷新，保住外键引用"
+        db_session.flush()
+        rows = db_session.execute(
+            select(UniverseMember).where(UniverseMember.snapshot_id == first_id)
+        ).scalars().all()
+        assert len(rows) == 2
+        assert second.total_count == 2
+
+    def test_empty_records_rejected(self, db_session):
+        from app.time_utils import utc_now
+        from app.universe.snapshot_service import (
+            SnapshotConflictError,
+            UniverseSnapshotService,
+        )
+
+        with pytest.raises(SnapshotConflictError):
+            UniverseSnapshotService(db_session).get_or_create_snapshot_from_records(
+                records=[], trading_day=date(2022, 6, 30), source_provider="test",
+                source_synced_at=utc_now(), as_of_date=date(2022, 6, 30),
+            )

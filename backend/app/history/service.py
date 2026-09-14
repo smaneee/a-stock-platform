@@ -186,7 +186,24 @@ class HistoricalDataService:
             .order_by(HistoricalBar.trade_date)
         ).all()
 
-        return [self._bar_to_quote(r) for r in rows]
+        return self._attach_previous_close([self._bar_to_quote(r) for r in rows])
+
+    @staticmethod
+    def _attach_previous_close(bars: list[QuoteData]) -> list[QuoteData]:
+        """用同口径的上一根收盘价补 ``previous_close``。
+
+        执行层（``ExecutionSimulator.try_fill``）依赖昨收计算涨跌停价，而
+        ``HistoricalBar`` 不存昨收；不补的话回测里涨跌停约束会静默失效。
+        这里用**同一复权口径**的上一根收盘价，保证「前复权收益」与「未复权
+        涨跌停判断」不被混用：调用方要涨跌停约束就得取 adjust=none 的序列。
+        区间首根没有更早数据，保持 0（执行层据此跳过涨跌停判断）。
+        """
+        enriched: list[QuoteData] = []
+        previous_close = 0.0
+        for bar in bars:
+            enriched.append(bar.model_copy(update={"previous_close": previous_close}))
+            previous_close = float(bar.price or 0.0)
+        return enriched
 
     async def sync(
         self,

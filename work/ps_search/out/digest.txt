@@ -1,0 +1,742 @@
+﻿# meta
+algo_version: sent-factor-v2.0.0
+generated_at: 2026-09-13T12:27:31.721944+00:00
+db: {"path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\backend\\a_stock.db", "size_bytes": 2682593280, "mtime": "2026-09-12T17:28:13.708989+00:00", "opened_mode": "file:...?mode=ro + PRAGMA query_only=ON", "sha256": "ee9c5d141619cdff2faaacdda4b1479c7d44a011e52ad4148387166a2ab137e9"}
+sentiment: {"rows": 241, "db_return_order_monotonic": true, "unique_dates_per_source": {"derived": 226, "eastmoney": 15}, "row_counts_per_source": {"derived": 226, "eastmoney": 15}, "captured_at_per_source": {"derived": {"min": "2026-09-12 08:58:18.498974", "max": "2026-09-12 08:58:18.536556"}, "eastmoney": {"min": "2026-09-12 06:20:48.392548", "max": "2026-09-12 08:52:58.171404"}}}
+calendar_days_in_window: 269
+
+===== adjust=qfq =====
+
+--- k1  per_symbol_rows=1391407 market_days=254 median_universe=5477.0 ---
+   ret: {"min": -0.3658486707566462, "max": 2.443901355254388, "mean": 0.0006591399529005804, "abs_gt_1_count": 3}
+  [derived] days=226 aligned=226 lookahead=pass verdict=区间跨越零，结论为不确定
+      spearman seal_rate: self=-0.044870 scipy=-0.044870 abs_diff=0.000000000000 ok=True p=0.502131
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.044870 CI=[-0.177569, 0.086115] excl0=False degenerate=False
+            b=1   point=-0.044870 CI=[-0.177569, 0.086115] excl0=False degenerate=False
+            b=5   point=-0.044870 CI=[-0.170973, 0.102243] excl0=False degenerate=False
+            b=10  point=-0.044870 CI=[-0.182840, 0.111191] excl0=False degenerate=False
+            b=20  point=-0.044870 CI=[-0.176384, 0.104883] excl0=False degenerate=False
+      spearman broken_rate: self=0.044870 scipy=0.044870 abs_diff=0.000000000000 ok=True p=0.502131
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.044870 CI=[-0.086115, 0.177569] excl0=False degenerate=False
+            b=1   point=0.044870 CI=[-0.086115, 0.177569] excl0=False degenerate=False
+            b=5   point=0.044870 CI=[-0.102243, 0.170973] excl0=False degenerate=False
+            b=10  point=0.044870 CI=[-0.111191, 0.182840] excl0=False degenerate=False
+            b=20  point=0.044870 CI=[-0.104883, 0.176384] excl0=False degenerate=False
+      spearman max_streak: self=0.046450 scipy=0.046450 abs_diff=0.000000000000 ok=True p=0.487179
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.046450 CI=[-0.084272, 0.177061] excl0=False degenerate=False
+            b=1   point=0.046450 CI=[-0.084272, 0.177061] excl0=False degenerate=False
+            b=5   point=0.046450 CI=[-0.095723, 0.190496] excl0=False degenerate=False
+            b=10  point=0.046450 CI=[-0.109740, 0.176766] excl0=False degenerate=False
+            b=20  point=0.046450 CI=[-0.117907, 0.150570] excl0=False degenerate=False
+      spearman limit_up_count: self=-0.065041 scipy=-0.065041 abs_diff=0.000000000000 ok=True p=0.330357
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.065041 CI=[-0.203938, 0.079365] excl0=False degenerate=False
+            b=1   point=-0.065041 CI=[-0.203938, 0.079365] excl0=False degenerate=False
+            b=5   point=-0.065041 CI=[-0.214898, 0.061211] excl0=False degenerate=False
+            b=10  point=-0.065041 CI=[-0.197102, 0.053148] excl0=False degenerate=False
+            b=20  point=-0.065041 CI=[-0.190636, 0.040144] excl0=False degenerate=False
+      splits: {"horizon_k": 1, "gap_before_select": 1, "embargo_covering_label_end": 1, "train": {"n": 113, "start": "2025-09-15", "end": "2026-03-10"}, "select": {"n": 55, "start": "2026-03-12", "end": "2026-06-02"}, "embargo": {"n": 1, "dates": ["2026-06-03"]}, "holdout": {"n": 56, "start": "2026-06-04", "end": "2026-08-21"}}
+      integrity: {"train_label_ends_before_select_starts": true, "select_label_ends_before_holdout_starts": true, "embargo_covers_select_label_end": true, "segments_disjoint": true, "all_ok": true, "train_last_label_end": "2026-03-11", "select_last_label_end": "2026-06-03", "holdout_start": "2026-06-04", "embargo_dates": ["2026-06-03"]}
+      timing_rule: {"signal": "seal_rate", "threshold": 0.7040816326530612, "threshold_source": "train split median only (冻结，不在留出段重估)", "position": "w=1 若 seal_rate_t >= threshold，否则 w=0（空仓/现金）", "execution": "t 日收盘后得信号，t+1 开盘建仓（k=1 时 t+1 收盘平仓）"}
+      seg train: n=113 2025-09-15~2026-03-10 mean_mkt=0.001586 mean_spread=-0.000387 overlay_excess=-0.000986 hi=0.001189 lo=0.001990
+         spread mean=-0.000387 stable_sign=True sig95=False
+            HAC L=0   se=0.00094250 CI=[-0.002234, 0.001461] t=-0.4103
+            HAC L=1   se=0.00089026 CI=[-0.002132, 0.001358] t=-0.4343
+            HAC L=5   se=0.00086346 CI=[-0.002079, 0.001306] t=-0.4478
+            HAC L=10  se=0.00078548 CI=[-0.001926, 0.001153] t=-0.4923
+            BOOT b=1   se=0.00094103 CI=[-0.002199, 0.001411]
+            BOOT b=5   se=0.00089714 CI=[-0.002153, 0.001407]
+            BOOT b=10  se=0.00080065 CI=[-0.001868, 0.001300]
+            BOOT b=20  se=0.00073384 CI=[-0.001304, 0.001545]
+         overlay mean=-0.000986 stable_sign=True sig95=False
+            HAC L=0   se=0.00067192 CI=[-0.002303, 0.000331] t=-1.4679
+            HAC L=1   se=0.00061096 CI=[-0.002184, 0.000211] t=-1.6143
+            HAC L=5   se=0.00059224 CI=[-0.002147, 0.000174] t=-1.6653
+            HAC L=10  se=0.00054653 CI=[-0.002057, 0.000085] t=-1.8046
+            BOOT b=1   se=0.00067176 CI=[-0.002277, 0.000359]
+            BOOT b=5   se=0.00060787 CI=[-0.002071, 0.000285]
+            BOOT b=10  se=0.00057058 CI=[-0.002035, 0.000223]
+            BOOT b=20  se=0.00055878 CI=[-0.001854, 0.000288]
+      seg select: n=55 2026-03-12~2026-06-02 mean_mkt=-0.000815 mean_spread=-0.000756 overlay_excess=0.000029 hi=-0.001234 lo=-0.000081
+         spread mean=-0.000756 stable_sign=True sig95=False
+            HAC L=0   se=0.00182617 CI=[-0.004335, 0.002823] t=-0.4139
+            HAC L=1   se=0.00187745 CI=[-0.004436, 0.002924] t=-0.4025
+            HAC L=5   se=0.00198447 CI=[-0.004645, 0.003134] t=-0.3808
+            HAC L=10  se=0.00205898 CI=[-0.004791, 0.003280] t=-0.3671
+            BOOT b=1   se=0.00179451 CI=[-0.004219, 0.002721]
+            BOOT b=5   se=0.00192477 CI=[-0.004441, 0.002923]
+            BOOT b=10  se=0.00203837 CI=[-0.004526, 0.003300]
+            BOOT b=20  se=0.00158008 CI=[-0.002562, 0.003337]
+         overlay mean=0.000029 stable_sign=True sig95=False
+            HAC L=0   se=0.00123201 CI=[-0.002385, 0.002444] t=0.0239
+            HAC L=1   se=0.00118011 CI=[-0.002284, 0.002342] t=0.0250
+            HAC L=5   se=0.00105786 CI=[-0.002044, 0.002103] t=0.0279
+            HAC L=10  se=0.00085489 CI=[-0.001646, 0.001705] t=0.0345
+            BOOT b=1   se=0.00122064 CI=[-0.002313, 0.002444]
+            BOOT b=5   se=0.00111164 CI=[-0.002156, 0.002096]
+            BOOT b=10  se=0.00076156 CI=[-0.001754, 0.001243]
+            BOOT b=20  se=0.00077808 CI=[-0.001509, 0.001429]
+      seg holdout: n=56 2026-06-04~2026-08-21 mean_mkt=0.000437 mean_spread=0.000631 overlay_excess=0.000097 hi=0.000880 lo=-0.000246
+         spread mean=0.000631 stable_sign=True sig95=False
+            HAC L=0   se=0.00198813 CI=[-0.003266, 0.004527] t=0.3172
+            HAC L=1   se=0.00192382 CI=[-0.003140, 0.004401] t=0.3278
+            HAC L=5   se=0.00184208 CI=[-0.002980, 0.004241] t=0.3423
+            HAC L=10  se=0.00178094 CI=[-0.002860, 0.004121] t=0.3541
+            BOOT b=1   se=0.00195257 CI=[-0.003266, 0.004484]
+            BOOT b=5   se=0.00187873 CI=[-0.002657, 0.004680]
+            BOOT b=10  se=0.00185474 CI=[-0.001837, 0.005272]
+            BOOT b=20  se=0.00122920 CI=[-0.000667, 0.004043]
+         overlay mean=0.000097 stable_sign=True sig95=False
+            HAC L=0   se=0.00137950 CI=[-0.002607, 0.002800] t=0.0700
+            HAC L=1   se=0.00139832 CI=[-0.002644, 0.002837] t=0.0691
+            HAC L=5   se=0.00143796 CI=[-0.002722, 0.002915] t=0.0672
+            HAC L=10  se=0.00153334 CI=[-0.002909, 0.003102] t=0.0630
+            BOOT b=1   se=0.00138251 CI=[-0.002573, 0.002970]
+            BOOT b=5   se=0.00144688 CI=[-0.002477, 0.003099]
+            BOOT b=10  se=0.00166901 CI=[-0.002480, 0.003985]
+            BOOT b=20  se=0.00153755 CI=[-0.002278, 0.003813]
+  [eastmoney] days=15 aligned=14 lookahead=pass verdict=样本不足，结论为不确定
+      reason: 可对齐信号日 14 天 < 建立训练/选择/隔离带/留出四段所需的最低要求（120）
+      spearman seal_rate: self=0.305495 scipy=0.305495 abs_diff=0.000000000000 ok=True p=0.288170
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.305495 CI=[-0.287377, 0.772321] excl0=False degenerate=False
+            b=1   point=0.305495 CI=[-0.287377, 0.772321] excl0=False degenerate=False
+            b=5   point=0.305495 CI=[-0.308204, 0.414634] excl0=False degenerate=False
+            b=10  point=0.305495 CI=[-0.294900, 0.452539] excl0=False degenerate=False
+            b=14  point=0.305495 CI=[0.305495, 0.305495] excl0=False degenerate=True
+      spearman broken_rate: self=-0.305495 scipy=-0.305495 abs_diff=0.000000000000 ok=True p=0.288170
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.305495 CI=[-0.772321, 0.287377] excl0=False degenerate=False
+            b=1   point=-0.305495 CI=[-0.772321, 0.287377] excl0=False degenerate=False
+            b=5   point=-0.305495 CI=[-0.414634, 0.308204] excl0=False degenerate=False
+            b=10  point=-0.305495 CI=[-0.452539, 0.294900] excl0=False degenerate=False
+            b=14  point=-0.305495 CI=[-0.305495, -0.305495] excl0=False degenerate=True
+      spearman max_streak: self=0.306531 scipy=0.306531 abs_diff=0.000000000000 ok=True p=0.286454
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.306531 CI=[-0.327386, 0.761007] excl0=False degenerate=False
+            b=1   point=0.306531 CI=[-0.327386, 0.761007] excl0=False degenerate=False
+            b=5   point=0.306531 CI=[-0.149187, 0.621412] excl0=False degenerate=False
+            b=10  point=0.306531 CI=[-0.250850, 0.681348] excl0=False degenerate=False
+            b=14  point=0.306531 CI=[0.306531, 0.306531] excl0=False degenerate=True
+      spearman limit_up_count: self=0.288229 scipy=0.288229 abs_diff=0.000000000000 ok=True p=0.317637
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.288229 CI=[-0.320298, 0.818263] excl0=False degenerate=False
+            b=1   point=0.288229 CI=[-0.320298, 0.818263] excl0=False degenerate=False
+            b=5   point=0.288229 CI=[-0.195812, 0.521652] excl0=False degenerate=False
+            b=10  point=0.288229 CI=[-0.195774, 0.552106] excl0=False degenerate=False
+            b=14  point=0.288229 CI=[0.288229, 0.288229] excl0=False degenerate=True
+
+--- k3  per_symbol_rows=1380065 market_days=252 median_universe=5476.0 ---
+   ret: {"min": -0.9614457831325302, "max": 1.2135345221764973, "mean": 0.0010208848018265165, "abs_gt_1_count": 2}
+  [derived] days=226 aligned=226 lookahead=pass verdict=区间跨越零，结论为不确定
+      spearman seal_rate: self=-0.036209 scipy=-0.036209 abs_diff=0.000000000000 ok=True p=0.588158
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.036209 CI=[-0.154047, 0.093934] excl0=False degenerate=False
+            b=3   point=-0.036209 CI=[-0.157792, 0.083893] excl0=False degenerate=False
+            b=5   point=-0.036209 CI=[-0.156419, 0.084922] excl0=False degenerate=False
+            b=10  point=-0.036209 CI=[-0.145992, 0.071436] excl0=False degenerate=False
+            b=20  point=-0.036209 CI=[-0.116476, 0.054919] excl0=False degenerate=False
+      spearman broken_rate: self=0.036209 scipy=0.036209 abs_diff=0.000000000000 ok=True p=0.588158
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.036209 CI=[-0.093934, 0.154047] excl0=False degenerate=False
+            b=3   point=0.036209 CI=[-0.083893, 0.157792] excl0=False degenerate=False
+            b=5   point=0.036209 CI=[-0.084922, 0.156419] excl0=False degenerate=False
+            b=10  point=0.036209 CI=[-0.071436, 0.145992] excl0=False degenerate=False
+            b=20  point=0.036209 CI=[-0.054919, 0.116476] excl0=False degenerate=False
+      spearman max_streak: self=0.112368 scipy=0.112368 abs_diff=0.000000000000 ok=True p=0.091943
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.112368 CI=[-0.024364, 0.240637] excl0=False degenerate=False
+            b=3   point=0.112368 CI=[-0.052411, 0.274210] excl0=False degenerate=False
+            b=5   point=0.112368 CI=[-0.077168, 0.284072] excl0=False degenerate=False
+            b=10  point=0.112368 CI=[-0.102035, 0.281689] excl0=False degenerate=False
+            b=20  point=0.112368 CI=[-0.134481, 0.265322] excl0=False degenerate=False
+      spearman limit_up_count: self=-0.071692 scipy=-0.071692 abs_diff=0.000000000000 ok=True p=0.283191
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.071692 CI=[-0.215563, 0.063834] excl0=False degenerate=False
+            b=3   point=-0.071692 CI=[-0.236606, 0.087216] excl0=False degenerate=False
+            b=5   point=-0.071692 CI=[-0.228896, 0.077808] excl0=False degenerate=False
+            b=10  point=-0.071692 CI=[-0.224826, 0.084031] excl0=False degenerate=False
+            b=20  point=-0.071692 CI=[-0.220154, 0.070129] excl0=False degenerate=False
+      splits: {"horizon_k": 3, "gap_before_select": 3, "embargo_covering_label_end": 3, "train": {"n": 113, "start": "2025-09-15", "end": "2026-03-10"}, "select": {"n": 53, "start": "2026-03-16", "end": "2026-06-02"}, "embargo": {"n": 3, "dates": ["2026-06-03", "2026-06-04", "2026-06-05"]}, "holdout": {"n": 54, "start": "2026-06-08", "end": "2026-08-21"}}
+      integrity: {"train_label_ends_before_select_starts": true, "select_label_ends_before_holdout_starts": true, "embargo_covers_select_label_end": true, "segments_disjoint": true, "all_ok": true, "train_last_label_end": "2026-03-13", "select_last_label_end": "2026-06-05", "holdout_start": "2026-06-08", "embargo_dates": ["2026-06-03", "2026-06-04", "2026-06-05"]}
+      timing_rule: {"signal": "seal_rate", "threshold": 0.7040816326530612, "threshold_source": "train split median only (冻结，不在留出段重估)", "position": "w=1 若 seal_rate_t >= threshold，否则 w=0（空仓/现金）", "execution": "t 日收盘后得信号，t+1 开盘建仓（k=1 时 t+1 收盘平仓）"}
+      seg train: n=113 2025-09-15~2026-03-10 mean_mkt=0.003403 mean_spread=-0.000475 overlay_excess=-0.001939 hi=0.002902 lo=0.003913
+         spread mean=-0.000475 stable_sign=True sig95=False
+            HAC L=0   se=0.00168553 CI=[-0.003779, 0.002828] t=-0.2821
+            HAC L=1   se=0.00156945 CI=[-0.003552, 0.002601] t=-0.3030
+            HAC L=5   se=0.00128719 CI=[-0.002998, 0.002047] t=-0.3694
+            HAC L=10  se=0.00094191 CI=[-0.002322, 0.001371] t=-0.5048
+            BOOT b=1   se=0.00164583 CI=[-0.003679, 0.002849]
+            BOOT b=5   se=0.00140238 CI=[-0.003273, 0.002057]
+            BOOT b=10  se=0.00100940 CI=[-0.002680, 0.001327]
+            BOOT b=20  se=0.00092234 CI=[-0.002101, 0.001532]
+         overlay mean=-0.001939 stable_sign=True sig95=False
+            HAC L=0   se=0.00110250 CI=[-0.004100, 0.000221] t=-1.7591
+            HAC L=1   se=0.00113174 CI=[-0.004158, 0.000279] t=-1.7137
+            HAC L=5   se=0.00117406 CI=[-0.004241, 0.000362] t=-1.6519
+            HAC L=10  se=0.00116052 CI=[-0.004214, 0.000335] t=-1.6712
+            BOOT b=1   se=0.00107998 CI=[-0.004060, 0.000194]
+            BOOT b=5   se=0.00115341 CI=[-0.004236, 0.000265]
+            BOOT b=10  se=0.00115988 CI=[-0.004546, 0.000087]
+            BOOT b=20  se=0.00122819 CI=[-0.004592, 0.000138]
+      seg select: n=53 2026-03-16~2026-06-02 mean_mkt=-0.002026 mean_spread=-0.001559 overlay_excess=0.000234 hi=-0.002879 lo=-0.000620
+         spread mean=-0.001559 stable_sign=True sig95=False
+            HAC L=0   se=0.00328398 CI=[-0.007995, 0.004878] t=-0.4747
+            HAC L=1   se=0.00365523 CI=[-0.008723, 0.005605] t=-0.4265
+            HAC L=5   se=0.00409878 CI=[-0.009592, 0.006475] t=-0.3803
+            HAC L=10  se=0.00427755 CI=[-0.009943, 0.006825] t=-0.3644
+            BOOT b=1   se=0.00327064 CI=[-0.008102, 0.004916]
+            BOOT b=5   se=0.00388463 CI=[-0.008844, 0.006313]
+            BOOT b=10  se=0.00377921 CI=[-0.006882, 0.007764]
+            BOOT b=20  se=0.00296783 CI=[-0.003401, 0.007951]
+         overlay mean=0.000234 stable_sign=True sig95=False
+            HAC L=0   se=0.00147731 CI=[-0.002662, 0.003129] t=0.1582
+            HAC L=1   se=0.00143618 CI=[-0.002581, 0.003049] t=0.1628
+            HAC L=5   se=0.00142102 CI=[-0.002551, 0.003019] t=0.1645
+            HAC L=10  se=0.00147387 CI=[-0.002655, 0.003123] t=0.1586
+            BOOT b=1   se=0.00149891 CI=[-0.002807, 0.003187]
+            BOOT b=5   se=0.00132021 CI=[-0.002961, 0.002136]
+            BOOT b=10  se=0.00137361 CI=[-0.003203, 0.002098]
+            BOOT b=20  se=0.00143659 CI=[-0.003506, 0.002135]
+      seg holdout: n=54 2026-06-08~2026-08-21 mean_mkt=-0.000600 mean_spread=-0.003290 overlay_excess=-0.001345 hi=-0.003183 lo=0.003459
+         spread mean=-0.003290 stable_sign=True sig95=False
+            HAC L=0   se=0.00367383 CI=[-0.010491, 0.003910] t=-0.8956
+            HAC L=1   se=0.00376437 CI=[-0.010668, 0.004088] t=-0.8741
+            HAC L=5   se=0.00342610 CI=[-0.010005, 0.003425] t=-0.9604
+            HAC L=10  se=0.00257988 CI=[-0.008347, 0.001766] t=-1.2754
+            BOOT b=1   se=0.00362012 CI=[-0.010223, 0.003931]
+            BOOT b=5   se=0.00356024 CI=[-0.009982, 0.004066]
+            BOOT b=10  se=0.00284478 CI=[-0.007705, 0.003295]
+            BOOT b=20  se=0.00189377 CI=[-0.005656, 0.001395]
+         overlay mean=-0.001345 stable_sign=True sig95=False
+            HAC L=0   se=0.00262674 CI=[-0.006493, 0.003803] t=-0.5120
+            HAC L=1   se=0.00303507 CI=[-0.007294, 0.004604] t=-0.4431
+            HAC L=5   se=0.00311972 CI=[-0.007460, 0.004770] t=-0.4311
+            HAC L=10  se=0.00326260 CI=[-0.007740, 0.005050] t=-0.4122
+            BOOT b=1   se=0.00259701 CI=[-0.006346, 0.003794]
+            BOOT b=5   se=0.00335821 CI=[-0.007698, 0.005211]
+            BOOT b=10  se=0.00346647 CI=[-0.007252, 0.005875]
+            BOOT b=20  se=0.00377029 CI=[-0.007610, 0.006908]
+  [eastmoney] days=15 aligned=12 lookahead=pass verdict=样本不足，结论为不确定
+      reason: 可对齐信号日 12 天 < 建立训练/选择/隔离带/留出四段所需的最低要求（120）
+      spearman seal_rate: self=-0.153846 scipy=-0.153846 abs_diff=0.000000000000 ok=True p=0.633091
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.153846 CI=[-0.723404, 0.423512] excl0=False degenerate=False
+            b=3   point=-0.153846 CI=[-0.870821, 0.153559] excl0=False degenerate=False
+            b=5   point=-0.153846 CI=[-0.870504, 0.021127] excl0=False degenerate=False
+            b=10  point=-0.153846 CI=[-0.401408, -0.119718] excl0=True degenerate=False
+            b=12  point=-0.153846 CI=[-0.153846, -0.153846] excl0=False degenerate=True
+      spearman broken_rate: self=0.153846 scipy=0.153846 abs_diff=0.000000000000 ok=True p=0.633091
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.153846 CI=[-0.423512, 0.723404] excl0=False degenerate=False
+            b=3   point=0.153846 CI=[-0.153559, 0.870821] excl0=False degenerate=False
+            b=5   point=0.153846 CI=[-0.021127, 0.870504] excl0=False degenerate=False
+            b=10  point=0.153846 CI=[0.119718, 0.401408] excl0=True degenerate=False
+            b=12  point=0.153846 CI=[0.153846, 0.153846] excl0=False degenerate=True
+      spearman max_streak: self=-0.162845 scipy=-0.162845 abs_diff=0.000000000000 ok=True p=0.613085
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.162845 CI=[-0.803482, 0.531784] excl0=False degenerate=False
+            b=3   point=-0.162845 CI=[-0.869351, 0.380486] excl0=False degenerate=False
+            b=5   point=-0.162845 CI=[-0.916902, 0.217443] excl0=False degenerate=False
+            b=10  point=-0.162845 CI=[-0.537288, 0.021912] excl0=False degenerate=False
+            b=12  point=-0.162845 CI=[-0.162845, -0.162845] excl0=False degenerate=True
+      spearman limit_up_count: self=-0.497374 scipy=-0.497374 abs_diff=0.000000000000 ok=True p=0.099914
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.497374 CI=[-0.850038, 0.028681] excl0=False degenerate=False
+            b=3   point=-0.497374 CI=[-1.000000, 0.011316] excl0=False degenerate=False
+            b=5   point=-0.497374 CI=[-1.000000, -0.286730] excl0=True degenerate=False
+            b=10  point=-0.497374 CI=[-0.506152, -0.371687] excl0=True degenerate=False
+            b=12  point=-0.497374 CI=[-0.497374, -0.497374] excl0=False degenerate=True
+
+--- k5  per_symbol_rows=1368818 market_days=250 median_universe=5476.0 ---
+   ret: {"min": -0.9614457831325302, "max": 2.0548543689320384, "mean": 0.0015122493110241843, "abs_gt_1_count": 26}
+  [derived] days=226 aligned=226 lookahead=pass verdict=区间跨越零，结论为不确定
+      spearman seal_rate: self=0.058512 scipy=0.058512 abs_diff=0.000000000000 ok=True p=0.381304
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.058512 CI=[-0.071775, 0.189380] excl0=False degenerate=False
+            b=5   point=0.058512 CI=[-0.075916, 0.180972] excl0=False degenerate=False
+            b=5   point=0.058512 CI=[-0.075916, 0.180972] excl0=False degenerate=False
+            b=10  point=0.058512 CI=[-0.064956, 0.175947] excl0=False degenerate=False
+            b=20  point=0.058512 CI=[-0.042428, 0.163437] excl0=False degenerate=False
+      spearman broken_rate: self=-0.058512 scipy=-0.058512 abs_diff=0.000000000000 ok=True p=0.381304
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.058512 CI=[-0.189380, 0.071775] excl0=False degenerate=False
+            b=5   point=-0.058512 CI=[-0.180972, 0.075916] excl0=False degenerate=False
+            b=5   point=-0.058512 CI=[-0.180972, 0.075916] excl0=False degenerate=False
+            b=10  point=-0.058512 CI=[-0.175947, 0.064956] excl0=False degenerate=False
+            b=20  point=-0.058512 CI=[-0.163437, 0.042428] excl0=False degenerate=False
+      spearman max_streak: self=0.178798 scipy=0.178798 abs_diff=0.000000000000 ok=True p=0.007044
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.178798 CI=[0.050866, 0.305589] excl0=True degenerate=False
+            b=5   point=0.178798 CI=[-0.021512, 0.356376] excl0=False degenerate=False
+            b=5   point=0.178798 CI=[-0.021512, 0.356376] excl0=False degenerate=False
+            b=10  point=0.178798 CI=[-0.042424, 0.360116] excl0=False degenerate=False
+            b=20  point=0.178798 CI=[-0.069801, 0.363199] excl0=False degenerate=False
+      spearman limit_up_count: self=-0.092899 scipy=-0.092899 abs_diff=0.000000000000 ok=True p=0.163968
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.092899 CI=[-0.231435, 0.044450] excl0=False degenerate=False
+            b=5   point=-0.092899 CI=[-0.255521, 0.066302] excl0=False degenerate=False
+            b=5   point=-0.092899 CI=[-0.255521, 0.066302] excl0=False degenerate=False
+            b=10  point=-0.092899 CI=[-0.253392, 0.082963] excl0=False degenerate=False
+            b=20  point=-0.092899 CI=[-0.257138, 0.067460] excl0=False degenerate=False
+      splits: {"horizon_k": 5, "gap_before_select": 5, "embargo_covering_label_end": 5, "train": {"n": 113, "start": "2025-09-15", "end": "2026-03-10"}, "select": {"n": 51, "start": "2026-03-18", "end": "2026-06-02"}, "embargo": {"n": 5, "dates": ["2026-06-03", "2026-06-04", "2026-06-05", "2026-06-08", "2026-06-09"]}, "holdout": {"n": 52, "start": "2026-06-10", "end": "2026-08-21"}}
+      integrity: {"train_label_ends_before_select_starts": true, "select_label_ends_before_holdout_starts": true, "embargo_covers_select_label_end": true, "segments_disjoint": true, "all_ok": true, "train_last_label_end": "2026-03-17", "select_last_label_end": "2026-06-09", "holdout_start": "2026-06-10", "embargo_dates": ["2026-06-03", "2026-06-04", "2026-06-05", "2026-06-08", "2026-06-09"]}
+      timing_rule: {"signal": "seal_rate", "threshold": 0.7040816326530612, "threshold_source": "train split median only (冻结，不在留出段重估)", "position": "w=1 若 seal_rate_t >= threshold，否则 w=0（空仓/现金）", "execution": "t 日收盘后得信号，t+1 开盘建仓（k=1 时 t+1 收盘平仓）"}
+      seg train: n=113 2025-09-15~2026-03-10 mean_mkt=0.005249 mean_spread=0.002842 overlay_excess=-0.001203 hi=0.008020 lo=0.002428
+         spread mean=0.002842 stable_sign=True sig95=False
+            HAC L=0   se=0.00209997 CI=[-0.001274, 0.006958] t=1.3533
+            HAC L=1   se=0.00199321 CI=[-0.001065, 0.006749] t=1.4258
+            HAC L=5   se=0.00176842 CI=[-0.000624, 0.006308] t=1.6071
+            HAC L=10  se=0.00176615 CI=[-0.000620, 0.006304] t=1.6091
+            BOOT b=1   se=0.00201934 CI=[-0.001028, 0.006846]
+            BOOT b=5   se=0.00181315 CI=[-0.000353, 0.006803]
+            BOOT b=10  se=0.00183167 CI=[-0.000316, 0.006797]
+            BOOT b=20  se=0.00179100 CI=[-0.000385, 0.006575]
+         overlay mean=-0.001203 stable_sign=True sig95=False
+            HAC L=0   se=0.00140676 CI=[-0.003961, 0.001554] t=-0.8554
+            HAC L=1   se=0.00157303 CI=[-0.004286, 0.001880] t=-0.7650
+            HAC L=5   se=0.00181221 CI=[-0.004755, 0.002349] t=-0.6640
+            HAC L=10  se=0.00177437 CI=[-0.004681, 0.002274] t=-0.6782
+            BOOT b=1   se=0.00137518 CI=[-0.003829, 0.001480]
+            BOOT b=5   se=0.00181985 CI=[-0.004761, 0.002145]
+            BOOT b=10  se=0.00183403 CI=[-0.004999, 0.002194]
+            BOOT b=20  se=0.00179482 CI=[-0.005293, 0.001586]
+      seg select: n=51 2026-03-18~2026-06-02 mean_mkt=0.000421 mean_spread=-0.001972 overlay_excess=-0.001197 hi=-0.001235 lo=0.003212
+         spread mean=-0.001972 stable_sign=True sig95=False
+            HAC L=0   se=0.00385098 CI=[-0.009520, 0.005576] t=-0.5120
+            HAC L=1   se=0.00424030 CI=[-0.010283, 0.006339] t=-0.4650
+            HAC L=5   se=0.00480653 CI=[-0.011392, 0.007449] t=-0.4102
+            HAC L=10  se=0.00483581 CI=[-0.011450, 0.007506] t=-0.4077
+            BOOT b=1   se=0.00387384 CI=[-0.009370, 0.005790]
+            BOOT b=5   se=0.00458848 CI=[-0.008962, 0.008846]
+            BOOT b=10  se=0.00454456 CI=[-0.008143, 0.009888]
+            BOOT b=20  se=0.00314046 CI=[-0.003122, 0.009167]
+         overlay mean=-0.001197 stable_sign=True sig95=False
+            HAC L=0   se=0.00177687 CI=[-0.004679, 0.002286] t=-0.6734
+            HAC L=1   se=0.00194065 CI=[-0.005000, 0.002607] t=-0.6166
+            HAC L=5   se=0.00235674 CI=[-0.005816, 0.003423] t=-0.5077
+            HAC L=10  se=0.00288800 CI=[-0.006857, 0.004464] t=-0.4143
+            BOOT b=1   se=0.00181669 CI=[-0.004672, 0.002348]
+            BOOT b=5   se=0.00217048 CI=[-0.005433, 0.002921]
+            BOOT b=10  se=0.00260394 CI=[-0.006391, 0.003665]
+            BOOT b=20  se=0.00274510 CI=[-0.006917, 0.003210]
+      seg holdout: n=52 2026-06-10~2026-08-21 mean_mkt=-0.001014 mean_spread=0.003269 overlay_excess=0.002142 hi=0.001891 lo=-0.005304
+         spread mean=0.003269 stable_sign=False sig95=False
+            HAC L=0   se=0.00511460 CI=[-0.006755, 0.013294] t=0.6392
+            HAC L=1   se=0.00527219 CI=[-0.007064, 0.013603] t=0.6201
+            HAC L=5   se=0.00461535 CI=[-0.005777, 0.012315] t=0.7083
+            HAC L=10  se=0.00377829 CI=[-0.004136, 0.010675] t=0.8653
+            BOOT b=1   se=0.00512716 CI=[-0.006793, 0.012959]
+            BOOT b=5   se=0.00483759 CI=[-0.006107, 0.013037]
+            BOOT b=10  se=0.00414556 CI=[-0.002877, 0.013261]
+            BOOT b=20  se=0.00246624 CI=[0.001634, 0.011571]
+         overlay mean=0.002142 stable_sign=True sig95=False
+            HAC L=0   se=0.00375403 CI=[-0.005216, 0.009500] t=0.5705
+            HAC L=1   se=0.00451691 CI=[-0.006711, 0.010995] t=0.4742
+            HAC L=5   se=0.00554476 CI=[-0.008726, 0.013009] t=0.3863
+            HAC L=10  se=0.00616861 CI=[-0.009948, 0.014232] t=0.3472
+            BOOT b=1   se=0.00373115 CI=[-0.005111, 0.009399]
+            BOOT b=5   se=0.00553126 CI=[-0.007358, 0.014182]
+            BOOT b=10  se=0.00659525 CI=[-0.008554, 0.016553]
+            BOOT b=20  se=0.00708809 CI=[-0.009954, 0.017685]
+  [eastmoney] days=15 aligned=10 lookahead=pass verdict=样本不足，结论为不确定
+      reason: 可对齐信号日 10 天 < 建立训练/选择/隔离带/留出四段所需的最低要求（120）
+      spearman seal_rate: self=0.333333 scipy=0.333333 abs_diff=0.000000000000 ok=True p=0.346594
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.333333 CI=[-0.471781, 1.000000] excl0=False degenerate=False
+            b=5   point=0.333333 CI=[-0.600000, 1.000000] excl0=False degenerate=False
+            b=5   point=0.333333 CI=[-0.600000, 1.000000] excl0=False degenerate=False
+            b=10  point=0.333333 CI=[0.333333, 0.333333] excl0=False degenerate=True
+            b=10  point=0.333333 CI=[0.333333, 0.333333] excl0=False degenerate=True
+      spearman broken_rate: self=-0.333333 scipy=-0.333333 abs_diff=0.000000000000 ok=True p=0.346594
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.333333 CI=[-1.000000, 0.471781] excl0=False degenerate=False
+            b=5   point=-0.333333 CI=[-1.000000, 0.600000] excl0=False degenerate=False
+            b=5   point=-0.333333 CI=[-1.000000, 0.600000] excl0=False degenerate=False
+            b=10  point=-0.333333 CI=[-0.333333, -0.333333] excl0=False degenerate=True
+            b=10  point=-0.333333 CI=[-0.333333, -0.333333] excl0=False degenerate=True
+      spearman max_streak: self=-0.101031 scipy=-0.101031 abs_diff=0.000000000000 ok=True p=0.781236
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.101031 CI=[-0.722167, 0.581644] excl0=False degenerate=False
+            b=5   point=-0.101031 CI=[-0.872082, 0.790569] excl0=False degenerate=False
+            b=5   point=-0.101031 CI=[-0.872082, 0.790569] excl0=False degenerate=False
+            b=10  point=-0.101031 CI=[-0.101031, -0.101031] excl0=False degenerate=True
+            b=10  point=-0.101031 CI=[-0.101031, -0.101031] excl0=False degenerate=True
+      spearman limit_up_count: self=0.200609 scipy=0.200609 abs_diff=0.000000000000 ok=True p=0.578406
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.200609 CI=[-0.765600, 0.873438] excl0=False degenerate=False
+            b=5   point=0.200609 CI=[-0.801242, 0.700000] excl0=False degenerate=False
+            b=5   point=0.200609 CI=[-0.801242, 0.700000] excl0=False degenerate=False
+            b=10  point=0.200609 CI=[0.200609, 0.200609] excl0=False degenerate=True
+            b=10  point=0.200609 CI=[0.200609, 0.200609] excl0=False degenerate=True
+
+===== adjust=none =====
+
+--- k1  per_symbol_rows=1391443 market_days=254 median_universe=5477.0 ---
+   ret: {"min": -0.3658486707566462, "max": 2.443901355254388, "mean": 0.0006590815648106831, "abs_gt_1_count": 3}
+  [derived] days=226 aligned=226 lookahead=pass verdict=区间跨越零，结论为不确定
+      spearman seal_rate: self=-0.044870 scipy=-0.044870 abs_diff=0.000000000000 ok=True p=0.502131
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.044870 CI=[-0.177569, 0.086115] excl0=False degenerate=False
+            b=1   point=-0.044870 CI=[-0.177569, 0.086115] excl0=False degenerate=False
+            b=5   point=-0.044870 CI=[-0.170973, 0.102243] excl0=False degenerate=False
+            b=10  point=-0.044870 CI=[-0.182840, 0.111191] excl0=False degenerate=False
+            b=20  point=-0.044870 CI=[-0.176384, 0.104883] excl0=False degenerate=False
+      spearman broken_rate: self=0.044870 scipy=0.044870 abs_diff=0.000000000000 ok=True p=0.502131
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.044870 CI=[-0.086115, 0.177569] excl0=False degenerate=False
+            b=1   point=0.044870 CI=[-0.086115, 0.177569] excl0=False degenerate=False
+            b=5   point=0.044870 CI=[-0.102243, 0.170973] excl0=False degenerate=False
+            b=10  point=0.044870 CI=[-0.111191, 0.182840] excl0=False degenerate=False
+            b=20  point=0.044870 CI=[-0.104883, 0.176384] excl0=False degenerate=False
+      spearman max_streak: self=0.046450 scipy=0.046450 abs_diff=0.000000000000 ok=True p=0.487179
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.046450 CI=[-0.084272, 0.177061] excl0=False degenerate=False
+            b=1   point=0.046450 CI=[-0.084272, 0.177061] excl0=False degenerate=False
+            b=5   point=0.046450 CI=[-0.095723, 0.190496] excl0=False degenerate=False
+            b=10  point=0.046450 CI=[-0.109740, 0.176766] excl0=False degenerate=False
+            b=20  point=0.046450 CI=[-0.117907, 0.150570] excl0=False degenerate=False
+      spearman limit_up_count: self=-0.065041 scipy=-0.065041 abs_diff=0.000000000000 ok=True p=0.330357
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.065041 CI=[-0.203938, 0.079365] excl0=False degenerate=False
+            b=1   point=-0.065041 CI=[-0.203938, 0.079365] excl0=False degenerate=False
+            b=5   point=-0.065041 CI=[-0.214898, 0.061211] excl0=False degenerate=False
+            b=10  point=-0.065041 CI=[-0.197102, 0.053148] excl0=False degenerate=False
+            b=20  point=-0.065041 CI=[-0.190636, 0.040144] excl0=False degenerate=False
+      splits: {"horizon_k": 1, "gap_before_select": 1, "embargo_covering_label_end": 1, "train": {"n": 113, "start": "2025-09-15", "end": "2026-03-10"}, "select": {"n": 55, "start": "2026-03-12", "end": "2026-06-02"}, "embargo": {"n": 1, "dates": ["2026-06-03"]}, "holdout": {"n": 56, "start": "2026-06-04", "end": "2026-08-21"}}
+      integrity: {"train_label_ends_before_select_starts": true, "select_label_ends_before_holdout_starts": true, "embargo_covers_select_label_end": true, "segments_disjoint": true, "all_ok": true, "train_last_label_end": "2026-03-11", "select_last_label_end": "2026-06-03", "holdout_start": "2026-06-04", "embargo_dates": ["2026-06-03"]}
+      timing_rule: {"signal": "seal_rate", "threshold": 0.7040816326530612, "threshold_source": "train split median only (冻结，不在留出段重估)", "position": "w=1 若 seal_rate_t >= threshold，否则 w=0（空仓/现金）", "execution": "t 日收盘后得信号，t+1 开盘建仓（k=1 时 t+1 收盘平仓）"}
+      seg train: n=113 2025-09-15~2026-03-10 mean_mkt=0.001586 mean_spread=-0.000387 overlay_excess=-0.000986 hi=0.001189 lo=0.001990
+         spread mean=-0.000387 stable_sign=True sig95=False
+            HAC L=0   se=0.00094250 CI=[-0.002234, 0.001461] t=-0.4103
+            HAC L=1   se=0.00089026 CI=[-0.002132, 0.001358] t=-0.4343
+            HAC L=5   se=0.00086346 CI=[-0.002079, 0.001306] t=-0.4478
+            HAC L=10  se=0.00078548 CI=[-0.001926, 0.001153] t=-0.4923
+            BOOT b=1   se=0.00094103 CI=[-0.002199, 0.001411]
+            BOOT b=5   se=0.00089714 CI=[-0.002153, 0.001407]
+            BOOT b=10  se=0.00080065 CI=[-0.001868, 0.001300]
+            BOOT b=20  se=0.00073384 CI=[-0.001304, 0.001545]
+         overlay mean=-0.000986 stable_sign=True sig95=False
+            HAC L=0   se=0.00067192 CI=[-0.002303, 0.000331] t=-1.4679
+            HAC L=1   se=0.00061096 CI=[-0.002184, 0.000211] t=-1.6143
+            HAC L=5   se=0.00059224 CI=[-0.002147, 0.000174] t=-1.6653
+            HAC L=10  se=0.00054653 CI=[-0.002057, 0.000085] t=-1.8046
+            BOOT b=1   se=0.00067176 CI=[-0.002277, 0.000359]
+            BOOT b=5   se=0.00060787 CI=[-0.002071, 0.000285]
+            BOOT b=10  se=0.00057058 CI=[-0.002035, 0.000223]
+            BOOT b=20  se=0.00055878 CI=[-0.001854, 0.000288]
+      seg select: n=55 2026-03-12~2026-06-02 mean_mkt=-0.000815 mean_spread=-0.000756 overlay_excess=0.000029 hi=-0.001234 lo=-0.000081
+         spread mean=-0.000756 stable_sign=True sig95=False
+            HAC L=0   se=0.00182617 CI=[-0.004335, 0.002823] t=-0.4139
+            HAC L=1   se=0.00187745 CI=[-0.004436, 0.002924] t=-0.4025
+            HAC L=5   se=0.00198447 CI=[-0.004645, 0.003134] t=-0.3808
+            HAC L=10  se=0.00205898 CI=[-0.004791, 0.003280] t=-0.3671
+            BOOT b=1   se=0.00179451 CI=[-0.004219, 0.002721]
+            BOOT b=5   se=0.00192477 CI=[-0.004441, 0.002923]
+            BOOT b=10  se=0.00203837 CI=[-0.004526, 0.003300]
+            BOOT b=20  se=0.00158008 CI=[-0.002562, 0.003337]
+         overlay mean=0.000029 stable_sign=True sig95=False
+            HAC L=0   se=0.00123201 CI=[-0.002385, 0.002444] t=0.0239
+            HAC L=1   se=0.00118011 CI=[-0.002284, 0.002342] t=0.0250
+            HAC L=5   se=0.00105786 CI=[-0.002044, 0.002103] t=0.0279
+            HAC L=10  se=0.00085489 CI=[-0.001646, 0.001705] t=0.0345
+            BOOT b=1   se=0.00122064 CI=[-0.002313, 0.002444]
+            BOOT b=5   se=0.00111164 CI=[-0.002156, 0.002096]
+            BOOT b=10  se=0.00076156 CI=[-0.001754, 0.001243]
+            BOOT b=20  se=0.00077808 CI=[-0.001509, 0.001429]
+      seg holdout: n=56 2026-06-04~2026-08-21 mean_mkt=0.000437 mean_spread=0.000631 overlay_excess=0.000097 hi=0.000880 lo=-0.000246
+         spread mean=0.000631 stable_sign=True sig95=False
+            HAC L=0   se=0.00198813 CI=[-0.003266, 0.004527] t=0.3172
+            HAC L=1   se=0.00192382 CI=[-0.003140, 0.004401] t=0.3278
+            HAC L=5   se=0.00184208 CI=[-0.002980, 0.004241] t=0.3423
+            HAC L=10  se=0.00178094 CI=[-0.002860, 0.004121] t=0.3541
+            BOOT b=1   se=0.00195257 CI=[-0.003266, 0.004484]
+            BOOT b=5   se=0.00187873 CI=[-0.002657, 0.004680]
+            BOOT b=10  se=0.00185474 CI=[-0.001837, 0.005272]
+            BOOT b=20  se=0.00122920 CI=[-0.000667, 0.004043]
+         overlay mean=0.000097 stable_sign=True sig95=False
+            HAC L=0   se=0.00137950 CI=[-0.002607, 0.002800] t=0.0700
+            HAC L=1   se=0.00139832 CI=[-0.002644, 0.002837] t=0.0691
+            HAC L=5   se=0.00143796 CI=[-0.002722, 0.002915] t=0.0672
+            HAC L=10  se=0.00153334 CI=[-0.002909, 0.003102] t=0.0630
+            BOOT b=1   se=0.00138251 CI=[-0.002573, 0.002970]
+            BOOT b=5   se=0.00144688 CI=[-0.002477, 0.003099]
+            BOOT b=10  se=0.00166901 CI=[-0.002480, 0.003985]
+            BOOT b=20  se=0.00153755 CI=[-0.002278, 0.003813]
+  [eastmoney] days=15 aligned=14 lookahead=pass verdict=样本不足，结论为不确定
+      reason: 可对齐信号日 14 天 < 建立训练/选择/隔离带/留出四段所需的最低要求（120）
+      spearman seal_rate: self=0.305495 scipy=0.305495 abs_diff=0.000000000000 ok=True p=0.288170
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.305495 CI=[-0.287377, 0.772321] excl0=False degenerate=False
+            b=1   point=0.305495 CI=[-0.287377, 0.772321] excl0=False degenerate=False
+            b=5   point=0.305495 CI=[-0.308204, 0.414634] excl0=False degenerate=False
+            b=10  point=0.305495 CI=[-0.294900, 0.452539] excl0=False degenerate=False
+            b=14  point=0.305495 CI=[0.305495, 0.305495] excl0=False degenerate=True
+      spearman broken_rate: self=-0.305495 scipy=-0.305495 abs_diff=0.000000000000 ok=True p=0.288170
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.305495 CI=[-0.772321, 0.287377] excl0=False degenerate=False
+            b=1   point=-0.305495 CI=[-0.772321, 0.287377] excl0=False degenerate=False
+            b=5   point=-0.305495 CI=[-0.414634, 0.308204] excl0=False degenerate=False
+            b=10  point=-0.305495 CI=[-0.452539, 0.294900] excl0=False degenerate=False
+            b=14  point=-0.305495 CI=[-0.305495, -0.305495] excl0=False degenerate=True
+      spearman max_streak: self=0.306531 scipy=0.306531 abs_diff=0.000000000000 ok=True p=0.286454
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.306531 CI=[-0.327386, 0.761007] excl0=False degenerate=False
+            b=1   point=0.306531 CI=[-0.327386, 0.761007] excl0=False degenerate=False
+            b=5   point=0.306531 CI=[-0.149187, 0.621412] excl0=False degenerate=False
+            b=10  point=0.306531 CI=[-0.250850, 0.681348] excl0=False degenerate=False
+            b=14  point=0.306531 CI=[0.306531, 0.306531] excl0=False degenerate=True
+      spearman limit_up_count: self=0.288229 scipy=0.288229 abs_diff=0.000000000000 ok=True p=0.317637
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.288229 CI=[-0.320298, 0.818263] excl0=False degenerate=False
+            b=1   point=0.288229 CI=[-0.320298, 0.818263] excl0=False degenerate=False
+            b=5   point=0.288229 CI=[-0.195812, 0.521652] excl0=False degenerate=False
+            b=10  point=0.288229 CI=[-0.195774, 0.552106] excl0=False degenerate=False
+            b=14  point=0.288229 CI=[0.288229, 0.288229] excl0=False degenerate=True
+
+--- k3  per_symbol_rows=1380101 market_days=252 median_universe=5476.0 ---
+   ret: {"min": -0.9614457831325302, "max": 1.2135345221764973, "mean": 0.000807371167647685, "abs_gt_1_count": 2}
+  [derived] days=226 aligned=226 lookahead=pass verdict=区间跨越零，结论为不确定
+      spearman seal_rate: self=-0.033461 scipy=-0.033461 abs_diff=0.000000000000 ok=True p=0.616805
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.033461 CI=[-0.151289, 0.097467] excl0=False degenerate=False
+            b=3   point=-0.033461 CI=[-0.154438, 0.085635] excl0=False degenerate=False
+            b=5   point=-0.033461 CI=[-0.154034, 0.086462] excl0=False degenerate=False
+            b=10  point=-0.033461 CI=[-0.142917, 0.074915] excl0=False degenerate=False
+            b=20  point=-0.033461 CI=[-0.112523, 0.055695] excl0=False degenerate=False
+      spearman broken_rate: self=0.033461 scipy=0.033461 abs_diff=0.000000000000 ok=True p=0.616805
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.033461 CI=[-0.097467, 0.151289] excl0=False degenerate=False
+            b=3   point=0.033461 CI=[-0.085635, 0.154438] excl0=False degenerate=False
+            b=5   point=0.033461 CI=[-0.086462, 0.154034] excl0=False degenerate=False
+            b=10  point=0.033461 CI=[-0.074915, 0.142917] excl0=False degenerate=False
+            b=20  point=0.033461 CI=[-0.055695, 0.112523] excl0=False degenerate=False
+      spearman max_streak: self=0.116179 scipy=0.116179 abs_diff=0.000000000000 ok=True p=0.081373
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.116179 CI=[-0.021098, 0.244426] excl0=False degenerate=False
+            b=3   point=0.116179 CI=[-0.048749, 0.276311] excl0=False degenerate=False
+            b=5   point=0.116179 CI=[-0.073825, 0.286826] excl0=False degenerate=False
+            b=10  point=0.116179 CI=[-0.100327, 0.285893] excl0=False degenerate=False
+            b=20  point=0.116179 CI=[-0.131336, 0.270619] excl0=False degenerate=False
+      spearman limit_up_count: self=-0.072273 scipy=-0.072273 abs_diff=0.000000000000 ok=True p=0.279303
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.072273 CI=[-0.214575, 0.065189] excl0=False degenerate=False
+            b=3   point=-0.072273 CI=[-0.235148, 0.085690] excl0=False degenerate=False
+            b=5   point=-0.072273 CI=[-0.228044, 0.075946] excl0=False degenerate=False
+            b=10  point=-0.072273 CI=[-0.225025, 0.083157] excl0=False degenerate=False
+            b=20  point=-0.072273 CI=[-0.220209, 0.066851] excl0=False degenerate=False
+      splits: {"horizon_k": 3, "gap_before_select": 3, "embargo_covering_label_end": 3, "train": {"n": 113, "start": "2025-09-15", "end": "2026-03-10"}, "select": {"n": 53, "start": "2026-03-16", "end": "2026-06-02"}, "embargo": {"n": 3, "dates": ["2026-06-03", "2026-06-04", "2026-06-05"]}, "holdout": {"n": 54, "start": "2026-06-08", "end": "2026-08-21"}}
+      integrity: {"train_label_ends_before_select_starts": true, "select_label_ends_before_holdout_starts": true, "embargo_covers_select_label_end": true, "segments_disjoint": true, "all_ok": true, "train_last_label_end": "2026-03-13", "select_last_label_end": "2026-06-05", "holdout_start": "2026-06-08", "embargo_dates": ["2026-06-03", "2026-06-04", "2026-06-05"]}
+      timing_rule: {"signal": "seal_rate", "threshold": 0.7040816326530612, "threshold_source": "train split median only (冻结，不在留出段重估)", "position": "w=1 若 seal_rate_t >= threshold，否则 w=0（空仓/现金）", "execution": "t 日收盘后得信号，t+1 开盘建仓（k=1 时 t+1 收盘平仓）"}
+      seg train: n=113 2025-09-15~2026-03-10 mean_mkt=0.003371 mean_spread=-0.000475 overlay_excess=-0.001923 hi=0.002870 lo=0.003880
+         spread mean=-0.000475 stable_sign=True sig95=False
+            HAC L=0   se=0.00168510 CI=[-0.003778, 0.002828] t=-0.2819
+            HAC L=1   se=0.00156859 CI=[-0.003549, 0.002599] t=-0.3029
+            HAC L=5   se=0.00128656 CI=[-0.002997, 0.002047] t=-0.3693
+            HAC L=10  se=0.00094202 CI=[-0.002321, 0.001371] t=-0.5043
+            BOOT b=1   se=0.00164538 CI=[-0.003675, 0.002850]
+            BOOT b=5   se=0.00140159 CI=[-0.003273, 0.002050]
+            BOOT b=10  se=0.00100955 CI=[-0.002675, 0.001327]
+            BOOT b=20  se=0.00092340 CI=[-0.002104, 0.001536]
+         overlay mean=-0.001923 stable_sign=True sig95=False
+            HAC L=0   se=0.00110247 CI=[-0.004084, 0.000238] t=-1.7442
+            HAC L=1   se=0.00113181 CI=[-0.004141, 0.000295] t=-1.6989
+            HAC L=5   se=0.00117479 CI=[-0.004225, 0.000380] t=-1.6368
+            HAC L=10  se=0.00116148 CI=[-0.004199, 0.000354] t=-1.6555
+            BOOT b=1   se=0.00107998 CI=[-0.004043, 0.000212]
+            BOOT b=5   se=0.00115404 CI=[-0.004224, 0.000280]
+            BOOT b=10  se=0.00116074 CI=[-0.004535, 0.000102]
+            BOOT b=20  se=0.00122920 CI=[-0.004582, 0.000154]
+      seg select: n=53 2026-03-16~2026-06-02 mean_mkt=-0.002462 mean_spread=-0.001534 overlay_excess=0.000464 hi=-0.003208 lo=-0.001230
+         spread mean=-0.001534 stable_sign=True sig95=False
+            HAC L=0   se=0.00330957 CI=[-0.008020, 0.004953] t=-0.4634
+            HAC L=1   se=0.00366496 CI=[-0.008717, 0.005650] t=-0.4185
+            HAC L=5   se=0.00407564 CI=[-0.009522, 0.006454] t=-0.3763
+            HAC L=10  se=0.00424776 CI=[-0.009859, 0.006792] t=-0.3611
+            BOOT b=1   se=0.00329540 CI=[-0.008094, 0.005016]
+            BOOT b=5   se=0.00386614 CI=[-0.008883, 0.006325]
+            BOOT b=10  se=0.00374798 CI=[-0.006885, 0.007664]
+            BOOT b=20  se=0.00294378 CI=[-0.003396, 0.007836]
+         overlay mean=0.000464 stable_sign=True sig95=False
+            HAC L=0   se=0.00150444 CI=[-0.002485, 0.003413] t=0.3084
+            HAC L=1   se=0.00147675 CI=[-0.002430, 0.003358] t=0.3142
+            HAC L=5   se=0.00149925 CI=[-0.002474, 0.003403] t=0.3095
+            HAC L=10  se=0.00158719 CI=[-0.002647, 0.003575] t=0.2924
+            BOOT b=1   se=0.00152661 CI=[-0.002647, 0.003460]
+            BOOT b=5   se=0.00139935 CI=[-0.002889, 0.002538]
+            BOOT b=10  se=0.00146247 CI=[-0.003170, 0.002480]
+            BOOT b=20  se=0.00151831 CI=[-0.003487, 0.002420]
+      seg holdout: n=54 2026-06-08~2026-08-21 mean_mkt=-0.001002 mean_spread=-0.003371 overlay_excess=-0.001185 hi=-0.003578 lo=0.003047
+         spread mean=-0.003371 stable_sign=True sig95=False
+            HAC L=0   se=0.00368475 CI=[-0.010593, 0.003850] t=-0.9150
+            HAC L=1   se=0.00377513 CI=[-0.010771, 0.004028] t=-0.8931
+            HAC L=5   se=0.00345014 CI=[-0.010134, 0.003391] t=-0.9772
+            HAC L=10  se=0.00260838 CI=[-0.008484, 0.001741] t=-1.2926
+            BOOT b=1   se=0.00362896 CI=[-0.010307, 0.003817]
+            BOOT b=5   se=0.00358014 CI=[-0.009981, 0.004154]
+            BOOT b=10  se=0.00287032 CI=[-0.007734, 0.003347]
+            BOOT b=20  se=0.00190014 CI=[-0.005651, 0.001426]
+         overlay mean=-0.001185 stable_sign=True sig95=False
+            HAC L=0   se=0.00263189 CI=[-0.006343, 0.003974] t=-0.4502
+            HAC L=1   se=0.00304364 CI=[-0.007150, 0.004781] t=-0.3893
+            HAC L=5   se=0.00314785 CI=[-0.007355, 0.004985] t=-0.3764
+            HAC L=10  se=0.00330589 CI=[-0.007664, 0.005295] t=-0.3584
+            BOOT b=1   se=0.00260134 CI=[-0.006200, 0.003967]
+            BOOT b=5   se=0.00338299 CI=[-0.007567, 0.005423]
+            BOOT b=10  se=0.00351281 CI=[-0.007176, 0.006118]
+            BOOT b=20  se=0.00383358 CI=[-0.007569, 0.007146]
+  [eastmoney] days=15 aligned=12 lookahead=pass verdict=样本不足，结论为不确定
+      reason: 可对齐信号日 12 天 < 建立训练/选择/隔离带/留出四段所需的最低要求（120）
+      spearman seal_rate: self=-0.153846 scipy=-0.153846 abs_diff=0.000000000000 ok=True p=0.633091
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.153846 CI=[-0.723404, 0.423512] excl0=False degenerate=False
+            b=3   point=-0.153846 CI=[-0.870821, 0.153559] excl0=False degenerate=False
+            b=5   point=-0.153846 CI=[-0.870504, 0.021127] excl0=False degenerate=False
+            b=10  point=-0.153846 CI=[-0.401408, -0.119718] excl0=True degenerate=False
+            b=12  point=-0.153846 CI=[-0.153846, -0.153846] excl0=False degenerate=True
+      spearman broken_rate: self=0.153846 scipy=0.153846 abs_diff=0.000000000000 ok=True p=0.633091
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.153846 CI=[-0.423512, 0.723404] excl0=False degenerate=False
+            b=3   point=0.153846 CI=[-0.153559, 0.870821] excl0=False degenerate=False
+            b=5   point=0.153846 CI=[-0.021127, 0.870504] excl0=False degenerate=False
+            b=10  point=0.153846 CI=[0.119718, 0.401408] excl0=True degenerate=False
+            b=12  point=0.153846 CI=[0.153846, 0.153846] excl0=False degenerate=True
+      spearman max_streak: self=-0.162845 scipy=-0.162845 abs_diff=0.000000000000 ok=True p=0.613085
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.162845 CI=[-0.803482, 0.531784] excl0=False degenerate=False
+            b=3   point=-0.162845 CI=[-0.869351, 0.380486] excl0=False degenerate=False
+            b=5   point=-0.162845 CI=[-0.916902, 0.217443] excl0=False degenerate=False
+            b=10  point=-0.162845 CI=[-0.537288, 0.021912] excl0=False degenerate=False
+            b=12  point=-0.162845 CI=[-0.162845, -0.162845] excl0=False degenerate=True
+      spearman limit_up_count: self=-0.497374 scipy=-0.497374 abs_diff=0.000000000000 ok=True p=0.099914
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.497374 CI=[-0.850038, 0.028681] excl0=False degenerate=False
+            b=3   point=-0.497374 CI=[-1.000000, 0.011316] excl0=False degenerate=False
+            b=5   point=-0.497374 CI=[-1.000000, -0.286730] excl0=True degenerate=False
+            b=10  point=-0.497374 CI=[-0.506152, -0.371687] excl0=True degenerate=False
+            b=12  point=-0.497374 CI=[-0.497374, -0.497374] excl0=False degenerate=True
+
+--- k5  per_symbol_rows=1368854 market_days=250 median_universe=5476.0 ---
+   ret: {"min": -0.9614457831325302, "max": 2.0548543689320384, "mean": 0.0010827639383872453, "abs_gt_1_count": 26}
+  [derived] days=226 aligned=226 lookahead=pass verdict=区间跨越零，结论为不确定
+      spearman seal_rate: self=0.059407 scipy=0.059407 abs_diff=0.000000000000 ok=True p=0.374050
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.059407 CI=[-0.070838, 0.191607] excl0=False degenerate=False
+            b=5   point=0.059407 CI=[-0.074930, 0.181704] excl0=False degenerate=False
+            b=5   point=0.059407 CI=[-0.074930, 0.181704] excl0=False degenerate=False
+            b=10  point=0.059407 CI=[-0.065541, 0.175412] excl0=False degenerate=False
+            b=20  point=0.059407 CI=[-0.043333, 0.164294] excl0=False degenerate=False
+      spearman broken_rate: self=-0.059407 scipy=-0.059407 abs_diff=0.000000000000 ok=True p=0.374050
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.059407 CI=[-0.191607, 0.070838] excl0=False degenerate=False
+            b=5   point=-0.059407 CI=[-0.181704, 0.074930] excl0=False degenerate=False
+            b=5   point=-0.059407 CI=[-0.181704, 0.074930] excl0=False degenerate=False
+            b=10  point=-0.059407 CI=[-0.175412, 0.065541] excl0=False degenerate=False
+            b=20  point=-0.059407 CI=[-0.164294, 0.043333] excl0=False degenerate=False
+      spearman max_streak: self=0.184565 scipy=0.184565 abs_diff=0.000000000000 ok=True p=0.005383
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.184565 CI=[0.056263, 0.310845] excl0=True degenerate=False
+            b=5   point=0.184565 CI=[-0.015068, 0.364531] excl0=False degenerate=False
+            b=5   point=0.184565 CI=[-0.015068, 0.364531] excl0=False degenerate=False
+            b=10  point=0.184565 CI=[-0.037470, 0.366981] excl0=False degenerate=False
+            b=20  point=0.184565 CI=[-0.066059, 0.369485] excl0=False degenerate=False
+      spearman limit_up_count: self=-0.097097 scipy=-0.097097 abs_diff=0.000000000000 ok=True p=0.145660
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.097097 CI=[-0.235860, 0.041141] excl0=False degenerate=False
+            b=5   point=-0.097097 CI=[-0.260462, 0.061191] excl0=False degenerate=False
+            b=5   point=-0.097097 CI=[-0.260462, 0.061191] excl0=False degenerate=False
+            b=10  point=-0.097097 CI=[-0.257953, 0.078831] excl0=False degenerate=False
+            b=20  point=-0.097097 CI=[-0.262961, 0.063092] excl0=False degenerate=False
+      splits: {"horizon_k": 5, "gap_before_select": 5, "embargo_covering_label_end": 5, "train": {"n": 113, "start": "2025-09-15", "end": "2026-03-10"}, "select": {"n": 51, "start": "2026-03-18", "end": "2026-06-02"}, "embargo": {"n": 5, "dates": ["2026-06-03", "2026-06-04", "2026-06-05", "2026-06-08", "2026-06-09"]}, "holdout": {"n": 52, "start": "2026-06-10", "end": "2026-08-21"}}
+      integrity: {"train_label_ends_before_select_starts": true, "select_label_ends_before_holdout_starts": true, "embargo_covers_select_label_end": true, "segments_disjoint": true, "all_ok": true, "train_last_label_end": "2026-03-17", "select_last_label_end": "2026-06-09", "holdout_start": "2026-06-10", "embargo_dates": ["2026-06-03", "2026-06-04", "2026-06-05", "2026-06-08", "2026-06-09"]}
+      timing_rule: {"signal": "seal_rate", "threshold": 0.7040816326530612, "threshold_source": "train split median only (冻结，不在留出段重估)", "position": "w=1 若 seal_rate_t >= threshold，否则 w=0（空仓/现金）", "execution": "t 日收盘后得信号，t+1 开盘建仓（k=1 时 t+1 收盘平仓）"}
+      seg train: n=113 2025-09-15~2026-03-10 mean_mkt=0.005184 mean_spread=0.002844 overlay_excess=-0.001170 hi=0.007959 lo=0.002361
+         spread mean=0.002844 stable_sign=True sig95=False
+            HAC L=0   se=0.00209866 CI=[-0.001269, 0.006958] t=1.3554
+            HAC L=1   se=0.00199152 CI=[-0.001059, 0.006748] t=1.4283
+            HAC L=5   se=0.00176696 CI=[-0.000619, 0.006308] t=1.6098
+            HAC L=10  se=0.00176446 CI=[-0.000614, 0.006303] t=1.6121
+            BOOT b=1   se=0.00201813 CI=[-0.001016, 0.006842]
+            BOOT b=5   se=0.00181171 CI=[-0.000344, 0.006800]
+            BOOT b=10  se=0.00182980 CI=[-0.000309, 0.006794]
+            BOOT b=20  se=0.00178864 CI=[-0.000374, 0.006568]
+         overlay mean=-0.001170 stable_sign=True sig95=False
+            HAC L=0   se=0.00140656 CI=[-0.003927, 0.001587] t=-0.8318
+            HAC L=1   se=0.00157325 CI=[-0.004254, 0.001914] t=-0.7437
+            HAC L=5   se=0.00181306 CI=[-0.004724, 0.002384] t=-0.6453
+            HAC L=10  se=0.00177472 CI=[-0.004648, 0.002308] t=-0.6593
+            BOOT b=1   se=0.00137508 CI=[-0.003792, 0.001514]
+            BOOT b=5   se=0.00182062 CI=[-0.004730, 0.002178]
+            BOOT b=10  se=0.00183409 CI=[-0.004975, 0.002228]
+            BOOT b=20  se=0.00179456 CI=[-0.005270, 0.001616]
+      seg select: n=51 2026-03-18~2026-06-02 mean_mkt=-0.000528 mean_spread=-0.001997 overlay_excess=-0.000735 hi=-0.002012 lo=0.001973
+         spread mean=-0.001997 stable_sign=True sig95=False
+            HAC L=0   se=0.00394052 CI=[-0.009721, 0.005726] t=-0.5069
+            HAC L=1   se=0.00428474 CI=[-0.010395, 0.006401] t=-0.4662
+            HAC L=5   se=0.00479138 CI=[-0.011388, 0.007394] t=-0.4169
+            HAC L=10  se=0.00480623 CI=[-0.011417, 0.007423] t=-0.4156
+            BOOT b=1   se=0.00396920 CI=[-0.009578, 0.005899]
+            BOOT b=5   se=0.00458980 CI=[-0.009011, 0.008785]
+            BOOT b=10  se=0.00451976 CI=[-0.008151, 0.009690]
+            BOOT b=20  se=0.00311598 CI=[-0.003116, 0.009013]
+         overlay mean=-0.000735 stable_sign=True sig95=False
+            HAC L=0   se=0.00185060 CI=[-0.004362, 0.002892] t=-0.3971
+            HAC L=1   se=0.00203571 CI=[-0.004725, 0.003255] t=-0.3610
+            HAC L=5   se=0.00253254 CI=[-0.005699, 0.004229] t=-0.2902
+            HAC L=10  se=0.00311112 CI=[-0.006833, 0.005363] t=-0.2362
+            BOOT b=1   se=0.00189342 CI=[-0.004373, 0.003054]
+            BOOT b=5   se=0.00232586 CI=[-0.005244, 0.003744]
+            BOOT b=10  se=0.00278221 CI=[-0.006300, 0.004432]
+            BOOT b=20  se=0.00291268 CI=[-0.006855, 0.003807]
+      seg holdout: n=52 2026-06-10~2026-08-21 mean_mkt=-0.001718 mean_spread=0.003270 overlay_excess=0.002494 hi=0.001302 lo=-0.006177
+         spread mean=0.003270 stable_sign=False sig95=False
+            HAC L=0   se=0.00514246 CI=[-0.006809, 0.013349] t=0.6360
+            HAC L=1   se=0.00529893 CI=[-0.007115, 0.013656] t=0.6172
+            HAC L=5   se=0.00466559 CI=[-0.005874, 0.012415] t=0.7010
+            HAC L=10  se=0.00384348 CI=[-0.004263, 0.010804] t=0.8509
+            BOOT b=1   se=0.00515373 CI=[-0.006904, 0.012950]
+            BOOT b=5   se=0.00488560 CI=[-0.006197, 0.013090]
+            BOOT b=10  se=0.00421202 CI=[-0.002967, 0.013429]
+            BOOT b=20  se=0.00251241 CI=[0.001654, 0.011683]
+         overlay mean=0.002494 stable_sign=True sig95=False
+            HAC L=0   se=0.00377772 CI=[-0.004910, 0.009899] t=0.6603
+            HAC L=1   se=0.00454700 CI=[-0.006418, 0.011406] t=0.5486
+            HAC L=5   se=0.00560441 CI=[-0.008490, 0.013479] t=0.4451
+            HAC L=10  se=0.00625627 CI=[-0.009768, 0.014756] t=0.3987
+            BOOT b=1   se=0.00375743 CI=[-0.004806, 0.009871]
+            BOOT b=5   se=0.00558954 CI=[-0.007131, 0.014641]
+            BOOT b=10  se=0.00668868 CI=[-0.008401, 0.017177]
+            BOOT b=20  se=0.00721557 CI=[-0.009875, 0.018225]
+  [eastmoney] days=15 aligned=10 lookahead=pass verdict=样本不足，结论为不确定
+      reason: 可对齐信号日 10 天 < 建立训练/选择/隔离带/留出四段所需的最低要求（120）
+      spearman seal_rate: self=0.333333 scipy=0.333333 abs_diff=0.000000000000 ok=True p=0.346594
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.333333 CI=[-0.471781, 1.000000] excl0=False degenerate=False
+            b=5   point=0.333333 CI=[-0.600000, 1.000000] excl0=False degenerate=False
+            b=5   point=0.333333 CI=[-0.600000, 1.000000] excl0=False degenerate=False
+            b=10  point=0.333333 CI=[0.333333, 0.333333] excl0=False degenerate=True
+            b=10  point=0.333333 CI=[0.333333, 0.333333] excl0=False degenerate=True
+      spearman broken_rate: self=-0.333333 scipy=-0.333333 abs_diff=0.000000000000 ok=True p=0.346594
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.333333 CI=[-1.000000, 0.471781] excl0=False degenerate=False
+            b=5   point=-0.333333 CI=[-1.000000, 0.600000] excl0=False degenerate=False
+            b=5   point=-0.333333 CI=[-1.000000, 0.600000] excl0=False degenerate=False
+            b=10  point=-0.333333 CI=[-0.333333, -0.333333] excl0=False degenerate=True
+            b=10  point=-0.333333 CI=[-0.333333, -0.333333] excl0=False degenerate=True
+      spearman max_streak: self=-0.101031 scipy=-0.101031 abs_diff=0.000000000000 ok=True p=0.781236
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=-0.101031 CI=[-0.722167, 0.581644] excl0=False degenerate=False
+            b=5   point=-0.101031 CI=[-0.872082, 0.790569] excl0=False degenerate=False
+            b=5   point=-0.101031 CI=[-0.872082, 0.790569] excl0=False degenerate=False
+            b=10  point=-0.101031 CI=[-0.101031, -0.101031] excl0=False degenerate=True
+            b=10  point=-0.101031 CI=[-0.101031, -0.101031] excl0=False degenerate=True
+      spearman limit_up_count: self=0.200609 scipy=0.200609 abs_diff=0.000000000000 ok=True p=0.578406
+         block-bootstrap rho: robust_excludes_zero=False
+            b=1   point=0.200609 CI=[-0.765600, 0.873438] excl0=False degenerate=False
+            b=5   point=0.200609 CI=[-0.801242, 0.700000] excl0=False degenerate=False
+            b=5   point=0.200609 CI=[-0.801242, 0.700000] excl0=False degenerate=False
+            b=10  point=0.200609 CI=[0.200609, 0.200609] excl0=False degenerate=True
+            b=10  point=0.200609 CI=[0.200609, 0.200609] excl0=False degenerate=True

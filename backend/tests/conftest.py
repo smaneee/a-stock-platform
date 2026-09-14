@@ -48,7 +48,13 @@ def _reset_app_engine_state():
     if str(_app_engine.url).startswith("sqlite"):
         Base.metadata.drop_all(bind=_app_engine)
         Base.metadata.create_all(bind=_app_engine)
+    # 复权口径解析是**进程级** TTL 缓存（见 screener.resolve_bar_adjust_cached）：
+    # 不清空会让「先播 none 行、后播 qfq 行」的两个用例互相串味。
+    from app.realtime.screener import reset_adjust_cache
+
+    reset_adjust_cache()
     yield
+    reset_adjust_cache()
 
 
 @pytest.fixture

@@ -3,6 +3,7 @@
 可排除：
 - trading_status = delisted（已退市，永久不可交易）
 - trading_status = suspended（停牌中，不能成交，除非人工确认）
+- trading_status = pending_listing（已分配代码但尚未挂牌，东财 f292=9）
 - 数据不完整：listing_date 太近或缺失（保守按不可交易处理）
 - ST（用户可配置：默认不排除，但允许用户在配置中开关）
 - 长期停牌：confirmed_long_suspension（连续 N 个预期交易日无成交）
@@ -95,6 +96,9 @@ class ExclusionEngine:
             return "delisted"
         if sec.trading_status == "suspended":
             return "suspended"
+        # 东财 f292=9：已分配代码但尚未挂牌，不能成交，按未上市处理。
+        if sec.trading_status == "pending_listing":
+            return "not_listed_yet"
         # listing_date 缺失：仅审计标签，不排除。
         # 原因：AKShare stock_info_a_code_name() 不返回 listing_date，
         # 早期版本若按"缺 listing_date 就排除"会把全市场全干掉。

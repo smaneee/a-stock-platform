@@ -83,7 +83,8 @@ def test_buy_insufficient_cash(db_session):
     """资金不足拒绝买入。"""
     account = _create_account(db_session, cash=100.0)
     broker = PaperBroker(db_session)
-    quote = make_quote(symbol="600000", price=100.0)
+    # previous_close 与价格一致：确保这是「资金不足」用例，而不是先被涨跌停护栏拦下
+    quote = make_quote(symbol="600000", price=100.0, previous_close=100.0)
 
     order, error = broker.place_order(account.id, "600000", "BUY", 100, 100.0, quote=quote)
     assert order is None

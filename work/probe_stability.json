@@ -1,0 +1,153 @@
+{
+ "margin_paging": {
+  "page1_n": 500,
+  "page2_n": 500,
+  "overlap": 499,
+  "repeat_stable": true,
+  "ms1": 219,
+  "ms2": 5113,
+  "page1_markets": {
+   "SH": 338,
+   "SZ": 0
+  },
+  "page2_markets": {
+   "SH": 338,
+   "SZ": 0
+  }
+ },
+ "dragon_tiger_nulls": {
+  "n": 500,
+  "nulls": {
+   "trade_date": 0,
+   "symbol": 0,
+   "name": 0,
+   "close": 0,
+   "change_pct": 0,
+   "turnover_rate": 0,
+   "market": 0,
+   "billboard_buy_amount": 0,
+   "billboard_sell_amount": 0,
+   "billboard_net_amount": 0,
+   "deal_amount": 0,
+   "accum_amount": 0,
+   "deal_amount_ratio": 0,
+   "net_amount_ratio": 0,
+   "change_1d_pct": 79,
+   "change_5d_pct": 336,
+   "change_10d_pct": 500,
+   "change_20d_pct": 500,
+   "reason": 0,
+   "interpretation": 0
+  }
+ },
+ "seats_crosscheck": {
+  "symbol": "300808",
+  "trade_date": "2026-09-11",
+  "seat_buy_sum": 16603015.0,
+  "billboard_buy": 21318934.0,
+  "ratio": 0.7787919883799068,
+  "seat_n": 5
+ },
+ "nulls.dragon-tiger": {
+  "n": 200,
+  "always_null": [
+   "change_5d_pct",
+   "change_10d_pct",
+   "change_20d_pct"
+  ],
+  "partial_null": {
+   "change_1d_pct": 71
+  }
+ },
+ "nulls.block-trade": {
+  "n": 200,
+  "always_null": [],
+  "partial_null": {
+   "discount_ratio": 18,
+   "trade_ratio": 18,
+   "free_shares_ratio": 18
+  }
+ },
+ "nulls.margin": {
+  "n": 200,
+  "always_null": [],
+  "partial_null": {
+   "financing_balance_pct": 20
+  }
+ },
+ "nulls.northbound": {
+  "n": 200,
+  "always_null": [
+   "fund_inflow",
+   "quota_balance"
+  ],
+  "partial_null": {
+   "buy_amount": 101,
+   "sell_amount": 101,
+   "net_deal_amount": 101,
+   "accum_deal_amount": 101,
+   "hold_market_cap": 67
+  }
+ },
+ "nulls.org-survey": {
+  "n": 200,
+  "always_null": [],
+  "partial_null": {}
+ },
+ "nulls.holder-number": {
+  "n": 200,
+  "always_null": [],
+  "partial_null": {
+   "holder_num_ratio": 2,
+   "interval_change_pct": 2
+  }
+ },
+ "nulls.restricted-release": {
+  "n": 200,
+  "always_null": [],
+  "partial_null": {}
+ },
+ "nulls.earnings-forecast": {
+  "n": 200,
+  "always_null": [],
+  "partial_null": {
+   "predict_amount_lower": 12,
+   "predict_amount_upper": 12,
+   "forecast_jz": 12,
+   "increase_jz": 16,
+   "add_amp_lower": 16,
+   "add_amp_upper": 16,
+   "preyear_same_period": 3
+  }
+ },
+ "nulls.dividend": {
+  "n": 200,
+  "always_null": [
+   "bonus_ratio"
+  ],
+  "partial_null": {
+   "pretax_bonus": 2,
+   "it_ratio": 198,
+   "dividend_ratio": 5
+  }
+ },
+ "nulls.executive-hold": {
+  "n": 200,
+  "always_null": [],
+  "partial_null": {
+   "after_hold_num": 1
+  }
+ },
+ "nulls.pledge": {
+  "n": 200,
+  "always_null": [],
+  "partial_null": {}
+ },
+ "nulls.convertible-bond": {
+  "n": 200,
+  "always_null": [],
+  "partial_null": {
+   "coupon_rate": 5
+  }
+ }
+}

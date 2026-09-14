@@ -37,6 +37,7 @@ from datetime import datetime
 from typing import Any, Callable, Sequence
 
 from app.market_data.base import MarketDataProvider, QuoteData
+from app.market_data.indices import IndexMeta, resolve_index
 from app.time_utils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,12 @@ MAX_KLINE_COUNT = 800
 MAX_KLINE_PAGES = 40
 # 1 手 = 100 股；通达信的成交量字段单位是「手」
 LOT_SIZE = 100
+# 成交量/成交额的有效下限：低于它的都是协议解码出的非规格化脏值，按 0 处理
+VOLUME_EPSILON = 1e-6
+# 通达信 K 线成交量字段的单位随周期而变（实测，见 tests/test_tdx_provider.py）：
+# 日/周/月/季/年线给「手」，分钟线（1/5/15/30/60 分钟）直接给「股」。
+# 出口统一换算成「股」，与 QuoteData 的约定保持一致。
+LOT_VOLUME_CATEGORIES = frozenset({4, 5, 6, 9, 10, 11})
 
 # 候选服务器：实测只有第一台能稳定供数，其余作为热备
 TDX_HOSTS: tuple[str, ...] = (
@@ -129,6 +136,17 @@ def _number(raw: Any) -> float:
     return value if math.isfinite(value) else 0.0
 
 
+def _volume_number(raw: Any) -> float:
+    """成交量/成交额专用转换：把协议里的非规格化脏值归零。
+
+    通达信的这两个字段走「协议浮点」解码，服务端把字段填 0 时会解出 2^-127
+    量级的非规格化小数（实测 5.877e-39，等于 0 却又不等于 0），直接落库或
+    返回给前端都会变成脏数据。
+    """
+    value = _number(raw)
+    return 0.0 if abs(value) < VOLUME_EPSILON else value
+
+
 def _parse_server_time(raw: Any) -> datetime | None:
     """``"15:17:46.110"`` 拼上当天日期；解析失败返回 None。"""
     text = "" if raw is None else str(raw).strip()
@@ -153,6 +171,19 @@ def _bar_time(row: dict) -> datetime | None:
         )
     except (TypeError, ValueError):
         return None
+
+
+def _bar_volume(raw: Any, kline_type: int) -> float:
+    """K 线成交量换算成「股」。
+
+    通达信日/周/月/季/年线的成交量字段是「手」，分钟线（1/5/15/30/60 分钟）
+    却直接是「股」；统一乘算后出口口径才是「股」。指数 K 线的量纲同样由协议
+    决定，这里不做额外缩放。
+    """
+    value = _volume_number(raw)
+    if kline_type in LOT_VOLUME_CATEGORIES:
+        return value * LOT_SIZE
+    return value
 
 
 def validate_quote(quote: QuoteData) -> bool:
@@ -185,8 +216,8 @@ def parse_quote_row(row: dict, name: str = "") -> QuoteData | None:
         high=_number(row.get("high")),
         low=_number(row.get("low")),
         previous_close=_number(row.get("last_close")),
-        volume=_number(row.get("vol")) * LOT_SIZE,
-        amount=_number(row.get("amount")),
+        volume=_volume_number(row.get("vol")) * LOT_SIZE,
+        amount=_volume_number(row.get("amount")),
         bid_price=_number(row.get("bid1")),
         ask_price=_number(row.get("ask1")),
         source="tdx",
@@ -376,6 +407,13 @@ class TdxProvider(MarketDataProvider):
         start_time: datetime,
         end_time: datetime,
     ) -> list[QuoteData]:
+        # 指数必须先分流：指数走 get_index_bars，个股走 get_security_bars，
+        # 两个接口的请求格式不同，混用会取到字段错位的乱码数据。
+        index_meta = resolve_index(symbol)
+        if index_meta is not None:
+            return await self._get_index_history(
+                symbol, index_meta, period, start_time, end_time
+            )
         market = to_tdx_market(symbol)
         if market is None:
             logger.info("通达信不支持 %s 的历史行情，交由其它数据源", symbol)
@@ -409,6 +447,61 @@ class TdxProvider(MarketDataProvider):
 
         # 每页内部按时间升序，页之间是从新到旧，因此倒序拼接得到完整升序序列
         ordered = [row for page in reversed(pages) for row in page]
+        return self._rows_to_quotes(symbol, ordered, start_time, end_time, kline_type)
+
+    async def _get_index_history(
+        self,
+        symbol: str,
+        meta: IndexMeta,
+        period: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> list[QuoteData]:
+        """基准指数历史 K 线（走通达信 ``get_index_bars``）。"""
+        kline_type = KLINE_TYPE_BY_PERIOD.get(period)
+        if kline_type is None:
+            logger.warning("通达信数据源不支持 period=%s", period)
+            return []
+
+        pages: list[list[dict]] = []
+        for page in range(MAX_KLINE_PAGES):
+            offset = page * MAX_KLINE_COUNT
+            chunk = await self._call(
+                lambda api, offset=offset: api.get_index_bars(
+                    kline_type,
+                    meta.tdx_market,
+                    meta.tdx_code,
+                    offset,
+                    MAX_KLINE_COUNT,
+                ),
+                [],
+            )
+            if not chunk:
+                break
+            rows = [dict(row) for row in chunk]
+            pages.append(rows)
+            oldest = _bar_time(rows[0])
+            if oldest is not None and oldest <= start_time:
+                break
+            if len(rows) < MAX_KLINE_COUNT:
+                break
+
+        ordered = [row for page in reversed(pages) for row in page]
+        return self._rows_to_quotes(symbol, ordered, start_time, end_time, kline_type)
+
+    @staticmethod
+    def _rows_to_quotes(
+        symbol: str,
+        ordered: list[dict],
+        start_time: datetime,
+        end_time: datetime,
+        kline_type: int,
+    ) -> list[QuoteData]:
+        """把通达信原始 K 线行按时间升序转成 QuoteData（区间外丢弃）。
+
+        ``kline_type`` 决定成交量字段的量纲（日线是「手」，分钟线是「股」），
+        由 ``_bar_volume`` 统一换算成「股」。
+        """
         quotes: list[QuoteData] = []
         previous_close = 0.0
         for row in ordered:
@@ -426,8 +519,8 @@ class TdxProvider(MarketDataProvider):
                         high=_number(row.get("high")),
                         low=_number(row.get("low")),
                         previous_close=previous_close,
-                        volume=_number(row.get("vol")) * LOT_SIZE,
-                        amount=_number(row.get("amount")),
+                        volume=_bar_volume(row.get("vol"), kline_type),
+                        amount=_volume_number(row.get("amount")),
                         source="tdx",
                         market_time=when,
                         received_at=utc_now(),

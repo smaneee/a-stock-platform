@@ -20,3 +20,6 @@ class PortfolioConfig:
     benchmark_symbol: str | None = None  # 基准指数代码（仅用于展示标注）
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     risk_free_rate: float = 0.0  # 无风险利率（年化，用于 alpha/夏普）
+    #: 本次回测实际使用的日线复权口径（D6）。只用于在结果里如实标注口径，
+    #: 引擎本身不据此取数（取数在 portfolio_worker 里按同一配置完成）。
+    bars_adjust: str = "none"

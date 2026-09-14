@@ -1,0 +1,40 @@
+{
+  "experiment_id": "radar-v2-future-holdout",
+  "hypothesis": "买点雷达候选在下一交易日起 3 日持有期上，相对同池等权基准具有正净超额",
+  "strategy_version": "radar-2026.09.14-paper-guards-v1",
+  "data_cutoff": "2026-09-11",
+  "universe_scope": "沪深京全 A（快照 2026-09-11；included 5550）",
+  "primary_horizon_days": 3,
+  "primary_benchmark": "equal_weight",
+  "costs": {
+    "commission_rate": 0.0003,
+    "min_commission": 5.0,
+    "stamp_tax_rate": 0.0005,
+    "transfer_fee_rate": 1e-05,
+    "slippage_bps": 5.0
+  },
+  "risk_budget": {
+    "max_weight_pct": 20.0,
+    "max_total_position_pct": 80.0,
+    "max_daily_loss_pct": 3.0,
+    "max_total_drawdown_pct": 15.0
+  },
+  "decision_criteria": {
+    "net_excess_ci_lower_gt": 0.0,
+    "ci_method": "block_bootstrap",
+    "max_drawdown_lt": 0.15,
+    "min_holdout_trading_days": 60,
+    "cost_doubling_must_hold": true,
+    "notes": "净超额 HAC/块自助置信区间下界须高于 0；区间跨零即判为不确定"
+  },
+  "planned_trials": 48,
+  "multiple_comparison": "benjamini_hochberg",
+  "holdout_definition": "自 2026-09-15 起的真实交易日；工程冻结 2026-09-13，累计满 60 个前向交易日后只揭盲一次",
+  "prior_results_status": "既有 6 折滚动样本外结果（3 日均值 -0.390%、调权后 -0.714%）与训练/验证段均在登记前已查看，只能作为研究资料，不构成样本外证据",
+  "registration_rationale": "D10 缺口：原实现无预登记载体，参数实验可反复查看留出段。本登记把判据、试验次数与多重比较方法在揭盲前固定下来。",
+  "frozen_hash": "639ded73d2b58f52dc97a11c3b93333dce981e8b54ebb9d7f64d3aad63e31c91",
+  "unblinded_at": null,
+  "unblind_count": 0,
+  "notes_history": [],
+  "integrity_ok": true
+}

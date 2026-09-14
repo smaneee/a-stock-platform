@@ -8,6 +8,7 @@ import statistics
 from bisect import bisect_left, bisect_right
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
+from typing import NamedTuple, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -24,6 +25,19 @@ from app.database.models import (
 
 class SelectionError(ValueError):
     """Selection cannot produce a reliable result."""
+
+
+class _BarRow(NamedTuple):
+    """选股只用得到这 4 个日线字段。
+
+    全市场一次排名要读约 127 万行，hydrate 成 ORM 实体是主要耗时
+    （实测 36.9s 中 32.3s）。只取需要的列可跳过实体构造与 populate。
+    """
+
+    trade_date: date
+    close: object
+    amount: object
+    fetched_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -238,12 +252,18 @@ class SelectionService:
         symbols: list[str],
         trading_day: date,
         config: SelectionConfig,
-    ) -> dict[str, list[HistoricalBar]]:
-        grouped: dict[str, list[HistoricalBar]] = {}
+    ) -> dict[str, list[_BarRow]]:
+        grouped: dict[str, list[_BarRow]] = {}
         for offset in range(0, len(symbols), 500):
             chunk = symbols[offset : offset + 500]
-            rows = self._db.scalars(
-                select(HistoricalBar)
+            rows = self._db.execute(
+                select(
+                    HistoricalBar.symbol,
+                    HistoricalBar.trade_date,
+                    HistoricalBar.close,
+                    HistoricalBar.amount,
+                    HistoricalBar.fetched_at,
+                )
                 .where(HistoricalBar.symbol.in_(chunk))
                 .where(HistoricalBar.trade_date <= trading_day)
                 .where(
@@ -254,10 +274,10 @@ class SelectionService:
                 .where(HistoricalBar.adjust == config.adjust)
                 .order_by(HistoricalBar.symbol, HistoricalBar.trade_date.desc())
             ).all()
-            for row in rows:
-                bucket = grouped.setdefault(row.symbol, [])
+            for symbol, trade_date, close, amount, fetched_at in rows:
+                bucket = grouped.setdefault(symbol, [])
                 if len(bucket) < config.lookback_days:
-                    bucket.append(row)
+                    bucket.append(_BarRow(trade_date, close, amount, fetched_at))
         for bucket in grouped.values():
             bucket.reverse()
         return grouped
@@ -265,7 +285,7 @@ class SelectionService:
     @staticmethod
     def _calculate_factors(
         member: UniverseMember,
-        bars: list[HistoricalBar],
+        bars: Sequence[_BarRow],
         trading_day: date,
         config: SelectionConfig,
     ) -> _Factors | None:

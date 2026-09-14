@@ -7,12 +7,14 @@ import {
   createHistoryIngest,
   evaluateSelection,
   fetchDailyPipelineSchedule,
+  fetchQfqBackfillStatus,
   fetchSelectionEvaluationSummary,
   listDailyPipelineRuns,
   listHistoryIngest,
   listPaperAccounts,
   listUniverseSnapshots,
   rankStocks,
+  startQfqBackfill,
 } from "../lib/api";
 
 const percent = (value: number) => `${(value * 100).toFixed(2)}%`;
@@ -78,7 +80,17 @@ export default function SelectionPage() {
     mutationFn: cancelHistoryIngest,
     onSuccess: () => ingestTasks.refetch(),
   });
+  const qfqStatus = useQuery({
+    queryKey: ["qfq-backfill"],
+    queryFn: fetchQfqBackfillStatus,
+    refetchInterval: 3000,
+  });
+  const startQfq = useMutation({
+    mutationFn: () => startQfqBackfill(),
+    onSuccess: () => qfqStatus.refetch(),
+  });
   const latestIngest = ingestTasks.data?.items[0];
+  const qfq = qfqStatus.data;
 
   useEffect(() => {
     const latest = snapshots.data?.snapshots[0]?.trading_day;
@@ -249,6 +261,62 @@ export default function SelectionPage() {
               <div className="h-full bg-sky-500" style={{ width: `${latestIngest.progress}%` }} />
             </div>
             {latestIngest.last_error && <div className="text-amber-400">{latestIngest.last_error}</div>}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div>
+            <div className="font-medium">前复权日线准备</div>
+            <div className="text-xs text-slate-500 mt-1">
+              用通达信除权除息数据把本地未复权日线换算成前复权（adjust=qfq），全市场约
+              4~5 分钟。买点雷达与样本外验证优先使用前复权口径，缺失时自动回退不复权。
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={startQfq.isPending || qfq?.state === "running"}
+            onClick={() => startQfq.mutate()}
+            className="ml-auto rounded border border-slate-700 hover:border-sky-500 disabled:opacity-40 px-4 py-2 text-sm"
+          >
+            {startQfq.isPending ? "启动中..." : "开始前复权回填"}
+          </button>
+        </div>
+        {qfq && (
+          <div className="space-y-2 text-xs text-slate-400">
+            <div className="flex justify-between">
+              <span>
+                任务 {qfq.state}
+                {qfq.progress.total
+                  ? ` · ${qfq.progress.done}/${qfq.progress.total}`
+                  : ""}
+              </span>
+              {qfq.report && (
+                <span>
+                  成功 {qfq.report.symbols_ok} · 失败 {qfq.report.symbols_failed} · 写入{" "}
+                  {qfq.report.rows_written} 行 · {qfq.report.elapsed_seconds}s
+                </span>
+              )}
+            </div>
+            {qfq.progress.total ? (
+              <div className="h-2 rounded bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500"
+                  style={{
+                    width: `${Math.round(
+                      (qfq.progress.done / qfq.progress.total) * 100,
+                    )}%`,
+                  }}
+                />
+              </div>
+            ) : null}
+            {qfq.report?.failure_count ? (
+              <div className="text-amber-400">
+                {qfq.report.failure_count} 只标的未回填（不会写入假前复权数据），可重跑补齐。
+              </div>
+            ) : null}
+            {qfq.error && <div className="text-rose-300">{qfq.error}</div>}
           </div>
         )}
       </div>

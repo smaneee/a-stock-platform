@@ -4,21 +4,29 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
+from app.api.auth import router as auth_router
 from app.api.backtests import router as backtests_router
 from app.api.daily_pipeline import router as daily_pipeline_router
+from app.api.evidence import router as evidence_router
+from app.api.fundamentals import router as fundamentals_router
 from app.api.health import router as health_router
 from app.api.history_ingest import router as history_ingest_router
+from app.api.history_adjust import router as history_adjust_router
 from app.api.indicators import router as indicators_router
 from app.api.live_trading import router as live_trading_router
 from app.api.market import router as market_router
@@ -27,6 +35,8 @@ from app.api.paper_accounts import router as paper_router
 from app.api.paper_rebalance import router as paper_rebalance_router
 from app.api.portfolio_backtests import router as portfolio_backtests_router
 from app.api.quotes import router as quotes_router
+from app.api.realtime import router as realtime_router
+from app.api.research import router as research_router
 from app.api.selections import router as selections_router
 from app.api.signals import router as signals_router
 from app.api.strategies import ensure_strategies, router as strategies_router
@@ -51,9 +61,19 @@ from app.live_trading.reconcile_worker import LiveReconcileWorker
 from app.observability.metrics import metrics
 from app.paper_trading.scheduler import SettlementScheduler, ensure_calendar_ready
 from app.realtime.quote_cache import QuoteCache
+from app.realtime.intraday import IntradayService
 from app.realtime.quote_scheduler import QuoteScheduler
+from app.realtime.screener import ScreenerService
+from app.realtime.validation import RadarValidationService
+from app.history.qfq_service import QfqBackfillRunner
 from app.realtime.signal_engine import SignalEngine
 from app.realtime.websocket_manager import ConnectionManager
+from app.security.auth import (
+    SESSION_COOKIE,
+    SESSION_HEADER,
+    AccessControlMiddleware,
+    AccessGuard,
+)
 from app.strategies import registry
 from app.tasks.portfolio_worker import PortfolioBacktestWorker
 from app.tasks.history_ingest_worker import HistoryIngestWorker
@@ -244,6 +264,11 @@ async def lifespan(app: FastAPI):
     )
     limit_up_sentiment_scheduler.start()
 
+    # 后台预热买点雷达的日线缓存：冷启动读 66 万行约 15.9 秒（实测），
+    # 不应算进「用户启动后第一次打开首页」的等待时间里。
+    warm_task = asyncio.create_task(app.state.screener_service.warm_bars_cache())
+    app.state.bars_warm_task = warm_task
+
     logger.info("A 股实时分析平台后端已启动")
     try:
         yield
@@ -262,7 +287,53 @@ async def lifespan(app: FastAPI):
         await app.state.market_service.close()
         await app.state.datacenter_service.close()
         await app.state.limit_up_service.close()
+        await app.state.screener_service.close()
+        await app.state.radar_validation_service.close()
+        await app.state.qfq_backfill_runner.close()
         logger.info("后端已关闭")
+
+
+def _mount_spa(app: FastAPI, dist: Path) -> bool:
+    """由后端托管前端静态产物（正式部署，不再依赖 Vite 开发服务）。
+
+    返回是否挂载成功。找不到 ``index.html`` 时只告警不抛错：这样后端依然能提供
+    API 与研究功能（研发计划 11.8：策略/前端问题不得让只读行情能力下线）。
+    """
+    index = dist / "index.html"
+    if not index.exists():
+        logger.warning("SERVE_STATIC 已开启但未找到 %s，请先执行 npm run build", index)
+        return False
+
+    assets = dist / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets)), name="assets")
+
+    root = dist.resolve()
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        if full_path.startswith(("api/", "ws/")) or full_path in {"docs", "redoc", "openapi.json"}:
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        candidate = (root / full_path).resolve()
+        if full_path and candidate.is_file() and root in candidate.parents:
+            return FileResponse(candidate)
+        # 前端是 BrowserRouter：/watchlist 这类深链必须回落到 index.html
+        return FileResponse(index)
+
+    logger.info("前端静态产物已挂载: %s", dist)
+    return True
+
+
+def _ws_authorized(websocket: WebSocket, guard: AccessGuard) -> bool:
+    """WebSocket 握手鉴权（HTTP 中间件不覆盖 WS 协议）。"""
+    if not guard.enabled:
+        return True
+    token = (
+        websocket.query_params.get("token")
+        or websocket.cookies.get(SESSION_COOKIE)
+        or websocket.headers.get(SESSION_HEADER)
+    )
+    return guard.verify(token)
 
 
 def create_app() -> FastAPI:
@@ -282,6 +353,32 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # ── 访问控制（P0-04）──
+    # 监听非回环地址却没有开鉴权 → 直接拒绝启动，避免把写接口裸奔到局域网。
+    if not settings.bind_is_loopback and not settings.require_auth:
+        raise RuntimeError(
+            f"监听地址 {settings.host} 不是回环地址，必须同时设置 REQUIRE_AUTH=true "
+            "并提供 ACCESS_PASSWORD；否则交易/删除/同步接口会暴露到局域网。"
+        )
+    if settings.require_auth and not settings.access_password:
+        raise RuntimeError(
+            "REQUIRE_AUTH=true 但 ACCESS_PASSWORD 为空：拒绝启动（fail closed）。"
+            "请在 backend/.env 或环境变量中设置访问口令。"
+        )
+    access_guard = AccessGuard(
+        password=settings.access_password,
+        secret=settings.session_secret,
+        ttl_seconds=settings.session_ttl_seconds,
+    )
+    app.state.access_guard = access_guard
+    app.add_middleware(AccessControlMiddleware, guard=access_guard)
+    logger.info(
+        "访问控制: enabled=%s bind=%s static=%s",
+        access_guard.enabled,
+        settings.host,
+        settings.serve_static,
+    )
+
     # 限流
     app.add_middleware(RateLimitMiddleware, max_per_minute=settings.rate_limit_per_minute)
 
@@ -295,6 +392,10 @@ def create_app() -> FastAPI:
     # 东方财富涨停板行情（涨停/跌停/炸板/强势/次新情绪池）只读服务
     limit_up_service = EastmoneyLimitUpService()
     quote_cache = QuoteCache()
+    # 当日分时曲线：实时分钟线（内存缓存）+ 数据源 1 分钟分时补齐
+    intraday_service = IntradayService(
+        quote_cache=quote_cache, provider_manager=provider_manager
+    )
     connection_manager = ConnectionManager()
     signal_engine = SignalEngine(
         quote_cache=quote_cache,
@@ -302,6 +403,15 @@ def create_app() -> FastAPI:
         get_enabled_strategies=_get_enabled_strategies,
         cooldown_seconds=settings.signal_cooldown_seconds,
     )
+    # 实时买点雷达：全市场两段式扫描（多连接并行通达信行情 + 本地日线）
+    screener_service = ScreenerService(
+        provider_manager=provider_manager,
+        tdx_pool_size=settings.screener_tdx_pool_size,
+    )
+    # 买点雷达样本外验证：只读本地日线，后台线程跑 walk-forward 重放
+    radar_validation_service = RadarValidationService()
+    # 前复权日线回填：通达信除权除息 + 本地未复权日线 → historical_bars(adjust=qfq)
+    qfq_backfill_runner = QfqBackfillRunner()
     scheduler = QuoteScheduler(
         provider_manager=provider_manager,
         quote_cache=quote_cache,
@@ -330,8 +440,12 @@ def create_app() -> FastAPI:
     # 把当前实际在跑的 provider 注册到 metrics（决定 data_status）
     _register_active_providers(provider_manager)
     app.state.quote_cache = quote_cache
+    app.state.intraday_service = intraday_service
     app.state.connection_manager = connection_manager
     app.state.signal_engine = signal_engine
+    app.state.screener_service = screener_service
+    app.state.radar_validation_service = radar_validation_service
+    app.state.qfq_backfill_runner = qfq_backfill_runner
     app.state.scheduler = scheduler
     app.state.backtest_worker = backtest_worker
     app.state.portfolio_backtest_worker = portfolio_backtest_worker
@@ -343,15 +457,21 @@ def create_app() -> FastAPI:
     app.state.settlement_scheduler = settlement_scheduler
 
     # 注册路由
+    app.include_router(auth_router)
     app.include_router(health_router)
+    app.include_router(evidence_router)
+    app.include_router(fundamentals_router)
+    app.include_router(research_router)
     app.include_router(metrics_router)
     app.include_router(market_router)
     app.include_router(daily_pipeline_router)
     app.include_router(history_ingest_router)
+    app.include_router(history_adjust_router)
     app.include_router(indicators_router)
     app.include_router(live_trading_router)
     app.include_router(universe_router)
     app.include_router(quotes_router)
+    app.include_router(realtime_router)
     app.include_router(selections_router)
     app.include_router(watchlists_router)
     app.include_router(signals_router)
@@ -370,6 +490,9 @@ def create_app() -> FastAPI:
     # WebSocket 行情推送
     @app.websocket("/ws/quotes")
     async def ws_quotes(websocket: WebSocket):
+        if not _ws_authorized(websocket, access_guard):
+            await websocket.close(code=4401)
+            return
         await connection_manager.connect(websocket, channel="quotes")
         try:
             while True:
@@ -386,6 +509,9 @@ def create_app() -> FastAPI:
     # WebSocket 信号推送
     @app.websocket("/ws/signals")
     async def ws_signals(websocket: WebSocket):
+        if not _ws_authorized(websocket, access_guard):
+            await websocket.close(code=4401)
+            return
         await connection_manager.connect(websocket, channel="signals")
         try:
             while True:
@@ -394,6 +520,10 @@ def create_app() -> FastAPI:
             await connection_manager.disconnect(websocket)
         except Exception:  # noqa: BLE001
             await connection_manager.disconnect(websocket)
+
+    # 正式部署：后端直接托管前端静态产物（放在所有路由之后，作为 SPA 回落）
+    if settings.serve_static:
+        _mount_spa(app, settings.static_path)
 
     return app
 

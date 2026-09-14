@@ -8,6 +8,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 
+import { authQuery } from "./auth";
 import type { QuoteData, Signal } from "./types";
 
 export type WsChannel = "quotes" | "signals";
@@ -23,10 +24,14 @@ interface UseWebSocketOptions {
   enabled?: boolean;
 }
 
-/** 构造相对 ws URL（vite 代理 /ws 到后端）。 */
+/** 构造相对 ws URL（vite 代理 /ws 到后端）。
+ *
+ * 开启访问鉴权时（局域网部署）握手需要携带令牌；HTTP 中间件不覆盖 WS 协议，
+ * 后端在 WS 端点里单独校验（见 app/main.py `_ws_authorized`）。
+ */
 function wsUrl(path: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}${path}`;
+  return `${protocol}//${window.location.host}${path}${authQuery()}`;
 }
 
 /** 通用 WebSocket hook：自动重连、订阅、消息分发。 */

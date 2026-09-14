@@ -1,6 +1,7 @@
 """模拟交易接口。"""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Literal
 
@@ -16,6 +17,10 @@ from app.paper_trading.broker import PaperBroker
 from app.paper_trading.portfolio import PortfolioService
 from app.paper_trading.settlement import DailySettlement
 from app.validation import validate_symbol
+
+#: 北京时间（UTC+8，无夏令时）——与 app.market_rules.session_state.CST 同义，
+#: 这里独立定义以避免 API 层反向依赖策略层
+_CN_TZ = timezone(timedelta(hours=8))
 
 router = APIRouter(prefix="/api/paper", tags=["paper"])
 
@@ -194,6 +199,7 @@ def list_trades(
                 "price": float(t.price),
                 "commission": float(t.commission),
                 "stamp_tax": float(t.stamp_tax),
+                "realized_pnl": float(t.realized_pnl),
                 "signal_id": t.signal_id,
                 "executed_at": t.executed_at.isoformat(),
             }
@@ -265,6 +271,16 @@ async def settle_account(
             parsed_date = _date.fromisoformat(trading_date)
         except ValueError:
             raise HTTPException(status_code=422, detail="trading_date 必须是 YYYY-MM-DD")
+        # 未来日期一律拒绝：否则可以提前解冻 T+1 批次（实测缺口）
+        today_cn = datetime.now(_CN_TZ).date()
+        if parsed_date > today_cn:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"trading_date={parsed_date.isoformat()} 晚于今天（{today_cn.isoformat()}），"
+                    "结算只能发生在已经过去的交易日"
+                ),
+            )
         calendar = TradingCalendar(db)
         if not calendar.is_trading_day(parsed_date):
             raise HTTPException(status_code=400, detail=f"{trading_date} 非交易日")
@@ -283,3 +299,92 @@ async def settle_account(
         account, quotes, trading_date=parsed_date, force=force
     )
     return summary
+
+
+# ──────────── 前向观察计时（P1-02） ────────────
+
+
+class ForwardStartRequest(BaseModel):
+    freeze_tag: str = Field(
+        "", max_length=64, description="工程冻结标识；留空用当前默认冻结标签"
+    )
+    started_on: str | None = Field(None, description="计时起点 (YYYY-MM-DD)，默认今天（北京）")
+    target_trading_days: int = Field(60, ge=1, le=500)
+    account_id: int | None = None
+    baseline_equity: float | None = None
+    notes: str = Field("", max_length=255)
+
+
+@router.get("/forward-observation")
+def forward_observation(
+    freeze_tag: str | None = Query(None, description="留空用当前默认冻结标签"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """前向模拟观察进度（研发计划 P1-02）。
+
+    未登记起点时返回 ``registered=false`` 并说明原因，**不伪造天数**；
+    达到目标天数不等于策略通过。
+    """
+    from app.paper_trading.forward import CURRENT_FREEZE_TAG, ForwardObservationService
+
+    service = ForwardObservationService(db)
+    return {
+        "current_freeze_tag": CURRENT_FREEZE_TAG,
+        "current": service.status(freeze_tag),
+        "all": [service._serialize(row) for row in service.list_all()],
+    }
+
+
+@router.post("/forward-observation/start", status_code=201)
+def forward_observation_start(
+    body: ForwardStartRequest, db: Session = Depends(get_db)
+) -> dict:
+    """登记一次工程冻结的前向计时起点（按 freeze_tag 幂等）。
+
+    改动成交/风控逻辑后必须用**新的** freeze_tag 重新登记，旧记录保留不清零。
+    """
+    from datetime import date as _date
+
+    from app.paper_trading.forward import CURRENT_FREEZE_TAG, ForwardObservationService
+
+    anchor = None
+    if body.started_on:
+        try:
+            anchor = _date.fromisoformat(body.started_on)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="started_on 必须是 YYYY-MM-DD")
+    service = ForwardObservationService(db)
+    return service.start(
+        freeze_tag=body.freeze_tag or CURRENT_FREEZE_TAG,
+        started_on=anchor,
+        target_trading_days=body.target_trading_days,
+        account_id=body.account_id,
+        baseline_equity=body.baseline_equity,
+        notes=body.notes,
+    )
+
+
+@router.post("/forward-observation/count")
+def forward_observation_count(
+    trading_date: str | None = Query(None, description="要计入的交易日 (YYYY-MM-DD)，默认今天（北京）"),
+    freeze_tag: str | None = Query(None),
+    db: Session = Depends(get_db),
+) -> dict:
+    """把一个交易日计入前向观察（幂等；拒绝未来日与非交易日）。"""
+    from datetime import date as _date
+
+    from app.paper_trading.forward import CURRENT_FREEZE_TAG, ForwardObservationService
+
+    target = None
+    if trading_date:
+        try:
+            target = _date.fromisoformat(trading_date)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="trading_date 必须是 YYYY-MM-DD")
+    service = ForwardObservationService(db)
+    result = service.count_day(
+        target, freeze_tag=freeze_tag or CURRENT_FREEZE_TAG
+    )
+    if result.get("counted") is False and "晚于今天" in str(result.get("reason", "")):
+        raise HTTPException(status_code=422, detail=result["reason"])
+    return result

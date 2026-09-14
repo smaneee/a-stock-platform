@@ -7,8 +7,12 @@
 
 数据来源优先级：
 
-1. 本地 ``historical_bars`` 缓存（``adjust=none``，与回测默认一致）；
-2. 缓存根数不足时经 ``ProviderManager`` 向行情数据源实时拉取。
+1. 本地 ``historical_bars`` 缓存（日线及以上优先 ``adjust=qfq`` 前复权，缺失时回退
+   ``none`` —— 与实时扫描、回测同口径，见 ``resolve_bar_adjust``）；
+2. 缓存根数不足时经 ``ProviderManager`` 向行情数据源实时拉取（数据源为未复权）。
+
+响应里带 ``bars_adjust`` / ``bars_adjust_label``，调用方必须按它判断口径，
+不得假定指标一定是某个固定口径。
 
 本模块只读：不写数据库、不改动任何现有信号逻辑。
 """
@@ -39,6 +43,10 @@ from app.indicators.suite import (
     to_json_series,
 )
 from app.market_data.provider_manager import ProviderManager
+from app.realtime.screener import (
+    ADJUST_LABELS,
+    resolve_bar_adjust_cached,
+)
 from app.validation import validate_symbol
 
 logger = logging.getLogger(__name__)
@@ -55,8 +63,10 @@ MAX_LIMIT = 800
 MIN_BARS = 2
 # 回退链（AKShare / BaoStock）单次只读拉取的超时
 _FALLBACK_TIMEOUT_SECONDS = 30.0
-# 本地缓存只读不复权数据，与回测默认口径一致
-CACHE_ADJUST = "none"
+# 本地缓存的复权口径：优先前复权（与实时扫描 / 回测同口径），缺失时回退不复权。
+# 旧实现写死 ``none``，于是「指标页看到的均线」与「扫描排名用的均线」在除权日会
+# 不一致 —— 计划 §7.4 要求指标口径与前复权策略口径一致。
+CACHE_ADJUST = "none"  # 兜底口径（前复权不可用时）
 
 # 多源回退链只提供日线，因此仅日/周/月这类由日线聚合的周期走它兜底
 _DAILY_LIKE = ("daily", "weekly", "monthly")
@@ -96,6 +106,10 @@ class IndicatorResponse(BaseModel):
     latest: dict[str, float | None] = Field(
         ..., description="每个指标最后一个有效值"
     )
+    bars_adjust: str = Field(
+        "none", description="本次参与计算的日线复权口径：qfq（前复权，本地缓存优先）/ none"
+    )
+    bars_adjust_label: str = Field("不复权", description="复权口径中文标签")
 
 
 def _lookback_start(period: str, limit: int, end: datetime) -> datetime:
@@ -116,19 +130,22 @@ def _bar_label(when: datetime, period: str) -> str:
 
 
 def _cached_bars(
-    db: Session, symbol: str, period: str, limit: int
+    db: Session, symbol: str, period: str, limit: int, adjust: str = CACHE_ADJUST
 ) -> list[tuple[str, float, float, float, float]]:
     """从本地缓存读取最近 limit 根 K 线，按时间升序返回。
 
     ``historical_bars.trade_date`` 是 DATE 列，存不下分钟级时刻，因此只用于
     日线及以上的周期；分钟线一律走数据源，避免同一天的多根 K 线挤在同一个日期上。
+
+    ``adjust`` 由 ``resolve_bar_adjust`` 决定：优先 ``qfq``，缺失或落后时回退
+    ``none`` —— 口径必须显式传入，不能让调用方默认读到某个写死的口径。
     """
     stmt = (
         select(HistoricalBar)
         .where(
             HistoricalBar.symbol == symbol,
             HistoricalBar.period == period,
-            HistoricalBar.adjust == CACHE_ADJUST,
+            HistoricalBar.adjust == adjust,
         )
         .order_by(HistoricalBar.trade_date.desc())
         .limit(limit)
@@ -273,8 +290,19 @@ async def get_indicators(
             detail=f"不支持的周期 {period!r}，可选 {', '.join(SUPPORTED_PERIODS)}",
         )
 
-    # 本地缓存是 DATE 列，只能代表日线及以上周期
-    rows = _cached_bars(db, symbol, period, limit) if period in _DAILY_LIKE else []
+    # 本地缓存是 DATE 列，只能代表日线及以上周期。
+    # 口径：日线及以上优先前复权（与实时扫描/回测一致），缺失时回退不复权；
+    # 分钟线没有本地缓存，走数据源（数据源返回未复权）。
+    cache_adjust = CACHE_ADJUST
+    if period in _DAILY_LIKE:
+        # 用**进程级带 TTL 的**解析：直连 `resolve_bar_adjust` 会让每个请求都付
+        # 一次 13,359,225 行的 `GROUP BY adjust`（实测 p50 6.06 秒，接口总耗时 7.7 秒）。
+        cache_adjust, _, _ = resolve_bar_adjust_cached(db, "daily")
+    rows = (
+        _cached_bars(db, symbol, period, limit, cache_adjust)
+        if period in _DAILY_LIKE
+        else []
+    )
     source = "cache" if rows else ""
 
     if len(rows) < limit:
@@ -323,6 +351,10 @@ async def get_indicators(
         key: None if value is None else round(value, 4)
         for key, value in latest_values(result).items()
     }
+    # 实际口径：只有整段都取自本地缓存时才是 cache_adjust；一旦换成数据源/回退链
+    # 的行情，那些数据源返回的是未复权，标注必须是 none，不能沿用缓存口径。
+    used_adjust = cache_adjust if source == "cache" else CACHE_ADJUST
+
     return IndicatorResponse(
         symbol=symbol,
         period=period,
@@ -333,4 +365,6 @@ async def get_indicators(
         titles=dict(SERIES_TITLES),
         series=to_json_series(result),
         latest=latest,
+        bars_adjust=used_adjust,
+        bars_adjust_label=ADJUST_LABELS.get(used_adjust, used_adjust),
     )

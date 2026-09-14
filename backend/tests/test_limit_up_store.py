@@ -1,14 +1,14 @@
 """涨停板情绪池落库与情绪因子接口测试（全部用桩服务，不联网）。"""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.api.deps import get_limit_up_service
-from app.database.models import LimitUpPoolMember, LimitUpSentiment
+from app.database.models import LimitUpPoolMember, LimitUpSentiment, TradingDate
 from app.main import app
 from app.market_data.eastmoney_limit_up import POOLS, LimitUpResult
 from app.market_data.limit_up_store import LimitUpSentimentStore
@@ -61,6 +61,13 @@ class _StubLimitUpService:
 
     async def close(self) -> None:
         return None
+
+
+def _seed_calendar(db, days: list[date]) -> None:
+    """只写入交易日（与 TradingDate 的语义一致）。"""
+    for day in days:
+        db.add(TradingDate(trade_date=day))
+    db.commit()
 
 
 def _pools() -> dict[str, list[dict]]:
@@ -291,3 +298,88 @@ def test_pool_endpoint_accepts_trade_date():
     assert resp.status_code == 200
     assert resp.json()["trade_date"] == "2026-09-10"
     assert service.queries == [("limit-up", date(2026, 9, 10))]
+
+
+# ──────────────── 非交易日对齐（幽灵行治理） ────────────────
+
+
+async def test_capture_snaps_non_trading_day_to_last_trading_day(db_session):
+    """周六抓取必须落成最近一个交易日，而不是新增一条幽灵行。"""
+    _seed_calendar(
+        db_session,
+        [date(2026, 9, 9), date(2026, 9, 10), date(2026, 9, 11)],
+    )
+    store = LimitUpSentimentStore(db_session, _StubLimitUpService(_pools()))
+    # 2026-09-12 是周六，不在日历里
+    result = await store.capture(date(2026, 9, 12))
+
+    assert result is not None
+    assert result.trade_date == date(2026, 9, 11)
+    assert db_session.get(LimitUpSentiment, date(2026, 9, 12)) is None
+    assert db_session.get(LimitUpSentiment, date(2026, 9, 11)) is not None
+
+
+async def test_capture_keeps_trading_day_unchanged(db_session):
+    _seed_calendar(db_session, [date(2026, 9, 11)])
+    store = LimitUpSentimentStore(db_session, _StubLimitUpService(_pools()))
+    result = await store.capture(date(2026, 9, 11))
+    assert result is not None
+    assert result.trade_date == date(2026, 9, 11)
+
+
+async def test_capture_without_calendar_falls_back_to_requested_date(db_session):
+    """日历为空（冷启动）时不阻断抓取，按请求日期原样落库。"""
+    store = LimitUpSentimentStore(db_session, _StubLimitUpService(_pools()))
+    result = await store.capture(date(2026, 9, 12))
+    assert result is not None
+    assert result.trade_date == date(2026, 9, 12)
+
+
+def test_prune_non_trading_days_removes_ghost_rows(db_session):
+    _seed_calendar(
+        db_session,
+        [date(2026, 9, 10), date(2026, 9, 11), date(2026, 9, 14)],
+    )
+    db_session.add(LimitUpSentiment(trade_date=date(2026, 9, 11)))
+    db_session.add(LimitUpSentiment(trade_date=date(2026, 9, 12)))  # 幽灵行
+    db_session.add(
+        LimitUpPoolMember(
+            trade_date=date(2026, 9, 12), pool="limit-up", symbol="000001"
+        )
+    )
+    db_session.commit()
+
+    store = LimitUpSentimentStore(db_session, _StubLimitUpService())
+    stale = store.prune_non_trading_days()
+
+    assert stale == [date(2026, 9, 12)]
+    assert db_session.get(LimitUpSentiment, date(2026, 9, 12)) is None
+    assert db_session.get(LimitUpSentiment, date(2026, 9, 11)) is not None
+    assert list(db_session.scalars(select(LimitUpPoolMember)).all()) == []
+
+
+def test_prune_non_trading_days_is_noop_without_calendar(db_session):
+    db_session.add(LimitUpSentiment(trade_date=date(2026, 9, 12)))
+    db_session.commit()
+
+    store = LimitUpSentimentStore(db_session, _StubLimitUpService())
+    assert store.prune_non_trading_days() == []
+    assert db_session.get(LimitUpSentiment, date(2026, 9, 12)) is not None
+
+
+async def test_backfill_only_requests_trading_days(db_session):
+    trading_days = [
+        date(2026, 9, 7),
+        date(2026, 9, 8),
+        date(2026, 9, 9),
+        date(2026, 9, 10),
+        date(2026, 9, 11),
+    ]
+    _seed_calendar(db_session, trading_days)
+    service = _StubLimitUpService(_pools())
+    store = LimitUpSentimentStore(db_session, service)
+
+    await store.backfill(7, end=date(2026, 9, 11), delay=0)
+
+    asked = sorted({day for _pool, day in service.calls if day is not None})
+    assert asked == trading_days

@@ -9,7 +9,12 @@ const STATUS_META: Record<string, { color: string; label: string }> = {
   simulated: { color: "bg-sky-500", label: "模拟数据" },
 };
 
-export default function Topbar() {
+interface TopbarProps {
+  /** 窄屏下点左上角按钮打开导航抽屉 */
+  onOpenNav?: () => void;
+}
+
+export default function Topbar({ onOpenNav }: TopbarProps) {
   const { data: health, isLoading, isError } = useQuery({
     queryKey: ["health"],
     queryFn: fetchHealth,
@@ -40,11 +45,31 @@ export default function Topbar() {
   const statusMeta = dataStatus ? STATUS_META[dataStatus] : null;
 
   return (
-    <header className="h-12 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-6">
-      <div className="text-sm text-slate-400">
-        A 股实时分析平台 · 研究用途
+    <header className="h-12 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-2 px-3 sm:px-6">
+      <div className="flex min-w-0 items-center gap-1">
+        <button
+          type="button"
+          aria-label="打开导航"
+          onClick={onOpenNav}
+          className="-ml-1 rounded p-1.5 text-slate-300 hover:bg-slate-800 lg:hidden"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          >
+            <path d="M3 6h18M3 12h18M3 18h18" />
+          </svg>
+        </button>
+        <div className="truncate text-sm text-slate-400">
+          A 股实时分析平台 · 研究用途
+        </div>
       </div>
-      <div className="flex items-center gap-4 text-xs">
+      <div className="flex shrink-0 items-center gap-3 text-xs sm:gap-4">
         {statusMeta && (
           <span className="flex items-center gap-1.5">
             <span className={`w-2 h-2 rounded-full ${statusMeta.color}`} />

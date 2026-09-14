@@ -3,9 +3,13 @@
 所有配置通过环境变量或 .env 文件提供，密钥一律不硬编码。
 """
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+PROJECT_DIR = BACKEND_DIR.parent
 
 
 class Settings(BaseSettings):
@@ -39,6 +43,12 @@ class Settings(BaseSettings):
     rolling_window_size: int = 300
     signal_cooldown_seconds: float = 60.0
     max_quote_age_seconds: float = 15.0
+
+    # ───────────── 实时买点雷达 ─────────────
+    # 扫描时并行的通达信连接数。实测全市场 5550 只：3 条约 4.1s、5 条约 3.0s、
+    # 6 条约 2.5s、8 条约 2.5s（8 条收益已不明显）。6 条是速度与连接数的折中；
+    # 设为 0 表示只用 ProviderManager 的顺序回退链（最慢但连接最少）。
+    screener_tdx_pool_size: int = Field(default=6, ge=0, le=16)
 
     # ───────────── Universe（股票池）Provider 配置 ─────────────
     # 生产环境默认值：东方财富当前全市场主源（含所属行业），BaoStock 历史时点备援，
@@ -84,6 +94,11 @@ class Settings(BaseSettings):
     risk_min_commission: float = Field(default=5.0, ge=0, le=1000)
     risk_commission_rate: float = Field(default=0.0003, ge=0, le=0.01)
     risk_stamp_tax_rate: float = Field(default=0.0005, ge=0, le=0.01)
+    # 模拟盘单边滑点。默认与回测引擎 ExecutionConfig.slippage 同值（0.0005），
+    # 使模拟盘与回测共用一套成交假设；不再出现「回测扣滑点、模拟盘不扣」的系统性偏乐观。
+    risk_slippage: float = Field(default=0.0005, ge=0, le=0.1)
+    # 过户费（双边）。与回测 ExecutionConfig.transfer_fee_rate 同值。
+    risk_transfer_fee_rate: float = Field(default=0.00001, ge=0, le=0.01)
 
     # ───────────── 每日流水线自动调度（可选） ─────────────
     # 开启后按 A 股交易日在北京时间 DAILY_PIPELINE_AUTO_HOUR:MINUTE 自动创建
@@ -109,8 +124,49 @@ class Settings(BaseSettings):
     tencent_api_key: str = "YOUR_API_KEY"
     akshare_api_key: str = "YOUR_API_KEY"
 
+    # ───────────── 研究报告解释层（DeepSeek，单用户本机） ─────────────
+    # 定位：**只做解释**，不参与任何计算、不写库、不碰策略门禁与下单。
+    # 数字一律来自确定性代码；模型只能引用证据包里有 id 的事实，引用不合格就整段拒收。
+    #
+    # 模型名**故意不给默认值**：2026-09-14 尝试核对官方文档时本机 web 检索工具不可用
+    # （firecrawl 403），无法确认当前型号与费率，所以按「不写死未经确认的信息」处理 ——
+    # 必须由使用者自己填 DEEPSEEK_MODEL，否则解释层返回 not_configured。
+    explain_enabled: bool = False
+    deepseek_api_key: str = ""
+    deepseek_model: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_timeout_seconds: float = Field(default=60.0, ge=5.0, le=300.0)
+    # 单次解释的最大输出 token（成本上限；不按金额计价，因为费率未核实）
+    deepseek_max_output_tokens: int = Field(default=1200, ge=128, le=8000)
+
     # CORS
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    # ───────────── 局域网访问控制（P0-04） ─────────────
+    # require_auth=true 时，除 /api/health 与 /api/auth 外的所有 /api/* 都需要会话令牌；
+    # 本机回环浏览器通过 /api/auth/local-token 免密取令牌，手机等局域网设备必须用
+    # ACCESS_PASSWORD 登录。access_password 为空而 require_auth=true 会在启动时直接失败
+    # （fail closed），不会出现「以为开了鉴权、实际裸奔」。
+    require_auth: bool = False
+    access_password: str = ""
+    session_secret: str = ""
+    session_ttl_seconds: int = Field(default=12 * 3600, ge=60, le=30 * 24 * 3600)
+    # 正式部署：由后端直接托管 frontend/dist 静态产物（不再依赖 Vite 开发服务）
+    serve_static: bool = False
+    static_dir: str = ""
+    # 会话 cookie 是否仅走 HTTPS（局域网通常无 TLS，默认关闭）
+    cookie_secure: bool = False
+
+    # ───────────── 回测复权口径（D6） ─────────────
+    # 策略/指标/账户净值使用的日线口径。默认前复权（qfq）：除权除息跳空不应计入收益。
+    # 涨跌停判断始终改用未复权昨收（见 app/history/limit_reference.py），因此这里
+    # 改成 qfq 不会让板价判断失真。设为 none 可一键回退到改造前的行为。
+    #
+    # 两个开关分开是刻意的：组合回测与单标的回测是两条独立的取数链路，分开回退
+    # 才能做「只退一条链路」的受控对照。两条都必须是 qfq 才满足计划 §7.4 的口径要求。
+    portfolio_bars_adjust: str = "qfq"
+    # 单标的回测（/api/backtests + BacktestEngine）用的同一口径
+    backtest_bars_adjust: str = "qfq"
 
     # 限流
     rate_limit_per_minute: int = 300
@@ -131,6 +187,19 @@ class Settings(BaseSettings):
     def provider_list(self) -> list[str]:
         """将逗号分隔的数据源优先级转换为列表。"""
         return [p.strip().lower() for p in self.market_providers.split(",") if p.strip()]
+
+    @property
+    def bind_is_loopback(self) -> bool:
+        """监听地址是否仅本机可访问。"""
+        return self.host.strip() in {"127.0.0.1", "localhost", "::1"}
+
+    @property
+    def static_path(self) -> Path:
+        """正式部署的前端静态产物目录（默认 frontend/dist）。"""
+        if self.static_dir:
+            candidate = Path(self.static_dir)
+            return candidate if candidate.is_absolute() else (PROJECT_DIR / candidate)
+        return PROJECT_DIR / "frontend" / "dist"
 
     @property
     def universe_provider_list(self) -> list[str]:

@@ -85,7 +85,7 @@ export default function SignalsPage() {
           </p>
         </div>
       ) : (
-        <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden">
+        <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-xs text-slate-500 uppercase bg-slate-950">
               <tr>

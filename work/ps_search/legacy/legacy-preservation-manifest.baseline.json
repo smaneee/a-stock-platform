@@ -1,0 +1,242 @@
+{
+  "generated_at": "2026-09-13T12:19:36.273121+00:00",
+  "policy": "旧脚本与旧产物一律不覆盖、不删除、不重命名；新结果只写到 work/ps_search/out/ 与 outputs/handoff/ 下的 **-v2 / p0-01-** 新文件。",
+  "session_start_state": {
+    "work/ps_search 目录": "会话开始时不存在（glob **/ps_search/** 无命中）",
+    "work/ 目录内容": "仅 tmp/（node-compile-cache、pytest-of-ASUS）",
+    "说明": "研发计划 1.2/11.2/13 节点名的 work/ps_search/sent_factor.py 与 wf_summary.json 在本工作区、上级目录与基线备份中均不存在，因此不存在被本任务覆盖的旧文件；旧结论以 docs/研发计划-2026Q4.md 1.2 节原文为准保留。"
+  },
+  "named_legacy": [
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\work\\ps_search\\sent_factor.py",
+      "exists": false
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\work\\ps_search\\wf_summary.json",
+      "exists": false
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\backend\\wf_summary.json",
+      "exists": false
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\wf_summary.json",
+      "exists": false
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\param_search_20260912-233431.json",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 195080,
+      "mtime": "2026-09-12T15:34:31.100685+00:00",
+      "sha256": "89301cb06e2620be92412cfebfbd343a2bd64eb3fe604991d204e3b488764137"
+    }
+  ],
+  "searched_roots": [
+    "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform",
+    "E:\\workbuddy work\\2026-09-09-15-34-54",
+    "D:\\A股量化平台备份\\20260913_193836\\source"
+  ],
+  "existing_artifacts_snapshot": [
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\.last_backup_dest.txt",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 41,
+      "mtime": "2026-09-13T11:40:20.683420+00:00",
+      "sha256": "f77b9c03d0e538a0d690c97f3f517e02b29fdef6b49689d4cad6e08b38667ae5"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\_api_smoke.py",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 6907,
+      "mtime": "2026-09-13T12:07:22.337220+00:00",
+      "sha256": "a30d6d7e61c0bd81cdd7b1b7fa3da751235d9164edfd58f05af3d3437bb5cbe3"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\_baseline_backup.py",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 5737,
+      "mtime": "2026-09-13T11:38:36.311121+00:00",
+      "sha256": "7f4b754e0490f8ff985401dae67ec56e3467fa7326b4a67ea8fb5ca929a6aac0"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\_baseline_copy.py",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 4435,
+      "mtime": "2026-09-13T11:46:30.725068+00:00",
+      "sha256": "436f447bd8799693497edeb67eaf342850ee83387b2ffa68ecce99f64bb04dfb"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\_baseline_facts.py",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 2022,
+      "mtime": "2026-09-13T11:45:42.824356+00:00",
+      "sha256": "3bfc554f045ec9fb614a6bad73c26e274afba2a31d8116145a06103193e46209"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\_cleanup.py",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 836,
+      "mtime": "2026-09-13T11:49:59.577110+00:00",
+      "sha256": "9ef20bc428dce7d5ee637a77312b46703b4f789661439a8a5ab65e0f6df8cf6f"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\_diag_db.py",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 1064,
+      "mtime": "2026-09-13T11:33:37.283178+00:00",
+      "sha256": "12b02c4993a729632bb493737b5f0420ebdd2a0b25923a0312f24e7390135aa3"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\_finalize_baseline.py",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 5022,
+      "mtime": "2026-09-13T11:50:24.623309+00:00",
+      "sha256": "620d62e6b579303bc7fa39e0d67d460ce7201385ec3fa5ce1c819ac3b40e061f"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\_integrity_check.py",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 1137,
+      "mtime": "2026-09-13T11:35:16.719337+00:00",
+      "sha256": "9839985eea31bd99ecb3d462ea25b58af325bde07dda090be1e809b2b1acdaf2"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\_latency_sample.py",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 5023,
+      "mtime": "2026-09-13T12:07:22.360032+00:00",
+      "sha256": "fa2de88dd69f6d9380321e648a4d15b3d0a90af090e0ad7920ef9b658aae99fa"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\_probe.py",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 1723,
+      "mtime": "2026-09-13T12:06:44.424985+00:00",
+      "sha256": "c46e8c738b8e9c71cc20b158fb892b229e96467698b035293587bf454bbce80e"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\_probe_ascii.py",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 611,
+      "mtime": "2026-09-13T12:06:53.977311+00:00",
+      "sha256": "f57723aca374e4f7deff9624f6d898e891e86af5b0c8498db5b340b5f634c709"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\_restore_verify.py",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 1933,
+      "mtime": "2026-09-13T11:49:15.565039+00:00",
+      "sha256": "6acc57a759b63087deb5cff75dfa4666d8d03b49676200803f57c041aab1ae20"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\api-smoke.json",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 12405,
+      "mtime": "2026-09-13T12:06:34.097432+00:00",
+      "sha256": "f04861e9b3504c0102adddfd7772341aeca3e53fa792ab8a4710e39d2503e9ed"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\baseline-20260913_193836.md",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 11855,
+      "mtime": "2026-09-13T11:49:59.570926+00:00",
+      "sha256": "f3f6a06bd6f87acf1d588da861d92ecf1e781337a0ab08e5cbd5dec578202ab9"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\baseline-facts.json",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 11514,
+      "mtime": "2026-09-13T11:45:47.043031+00:00",
+      "sha256": "2285a4d20d7318b5539b01968277b788e403da7fb2971e4a98f22a7f5d388574"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\baseline-git-log.txt",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 447,
+      "mtime": "2026-09-13T11:49:15.157741+00:00",
+      "sha256": "48956a4678da446711dd7bbb8a76b4f9947d1dc853e7d6c372048d8246cc0855"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\baseline-git-status.txt",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 3057,
+      "mtime": "2026-09-13T11:49:14.870247+00:00",
+      "sha256": "51b6fcc4616f9024db45710d9a109d7df9dc54125feb1bd8ac2bc9e2bd1d4d48"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\baseline-restore-verification.json",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 912,
+      "mtime": "2026-09-13T11:49:39.275022+00:00",
+      "sha256": "af95e81c927bac1508630a2fbdbbe93cc79d47d98943dc7752afe3ed36463d04"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\independence-check.json",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 2304868,
+      "mtime": "2026-09-13T12:13:12.736665+00:00",
+      "sha256": "0d59e4d97aebd6f686ae481bd04cebe3f1f1a1afdd9754f8f1ab03fc22705879"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\outputs\\handoff\\latency-sample.json",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 4893,
+      "mtime": "2026-09-13T12:08:52.340917+00:00",
+      "sha256": "4b1664268391775386de8d23a6190cad5fc0c18d13cb36f4ecb4790c355cbac9"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\docs\\研发计划-2026Q4.md",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 24223,
+      "mtime": "2026-09-13T04:36:22.636066+00:00",
+      "sha256": "252c070e1da5208c6b479ce2e1d88c298139a3e55da4c5204f368e9bf6319d6e"
+    },
+    {
+      "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\docs\\里程碑-M0-研究候选排名.md",
+      "exists": true,
+      "is_dir": false,
+      "size_bytes": 2004,
+      "mtime": "2026-09-13T04:49:47.145480+00:00",
+      "sha256": "6543ec47c8b5d2b850d0bbd40a6dc6178034636d6a434a165369aed638d6c230"
+    }
+  ],
+  "new_files_created_by_p0_01": [
+    "work\\ps_search\\_probe_db.py",
+    "work\\ps_search\\_probe_db2.py",
+    "work\\ps_search\\make_legacy_manifest.py",
+    "work\\ps_search\\sent_factor_core.py",
+    "work\\ps_search\\sent_factor_v2.py",
+    "work\\ps_search\\tests\\conftest.py",
+    "work\\ps_search\\tests\\test_sent_factor_v2.py"
+  ],
+  "db": {
+    "path": "E:\\workbuddy work\\2026-09-09-15-34-54\\a-stock-platform\\backend\\a_stock.db",
+    "exists": true,
+    "is_dir": false,
+    "size_bytes": 2682593280,
+    "mtime": "2026-09-12T17:28:13.708989+00:00"
+  }
+}

@@ -451,6 +451,19 @@ export default function IndicatorsPage() {
             <div>
               K 线 {data.count} 根 · 数据源{" "}
               <span className="text-slate-300">{data.source}</span>
+              {" · 复权口径 "}
+              <span
+                className={
+                  data.bars_adjust === "qfq" ? "text-emerald-400" : "text-amber-400"
+                }
+                title={
+                  data.bars_adjust === "qfq"
+                    ? "前复权：除权除息跳空已还原，与实时扫描/回测同口径"
+                    : "不复权：本地缺少前复权日线时回退到该口径，除权日会有跳空"
+                }
+              >
+                {data.bars_adjust_label ?? data.bars_adjust}
+              </span>
             </div>
             <div>
               区间 {data.dates[0] ?? "—"} ~ {data.dates[data.dates.length - 1] ?? "—"}

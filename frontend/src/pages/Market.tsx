@@ -184,7 +184,9 @@ export default function MarketPage() {
   const [symbolInput, setSymbolInput] = useState("600519");
   const [symbol, setSymbol] = useState("600519");
   // 东财板块与成分股都是分页返回，默认条数太小会让人误以为「只有这么多」，
-  // 这里给用户一个显式的条数选择（后端单次上限 500）。
+  // 这里给用户一个显式的条数选择（后端单次上限 1000，与上方 BOARD_LIMIT_OPTIONS
+  // 注释一致；东财单页 100 由后端自动翻页。此前这里误写 500，已按
+  // backend/app/api/market.py 的 Query(le=1000) 更正）。
   const [boardLimit, setBoardLimit] = useState(100);
   const [memberLimit, setMemberLimit] = useState(50);
 

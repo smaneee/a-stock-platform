@@ -408,10 +408,24 @@ def _is_st_name(name: str) -> bool:
 
 
 def _is_delisted_name(name: str) -> bool:
-    """根据名称判断是否已退市（A 股惯例是「退」字 + 公司简称）。"""
+    """根据名称判断是否已退市。
+
+    A 股退市证券的简称有三种写法，缺一种就会把退市股留在股票池里：
+    - 「退市XX」/「退XX」：老三板平移写法（名称以「退」开头）
+    - 「XX退」：退市整理期写法（2020 年后主流，如「国华退」「康得退」）
+    - 「PTXX」：特别转让（1999-2002），现存 PT 全部已退市
+    """
     if not name:
         return False
-    return "退市" in name or name.startswith("退")
+    normalized = name.strip().upper()
+    if not normalized:
+        return False
+    return (
+        "退市" in normalized
+        or normalized.startswith("退")
+        or normalized.endswith("退")
+        or normalized.startswith("PT")
+    )
 
 
 class AkshareUniverseProvider(UniverseProvider):

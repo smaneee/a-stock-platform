@@ -1,0 +1,19 @@
+﻿northbound 2026-09-11 行数 = 6
+恒为 null 的字段: ['fund_inflow', 'quota_balance']
+通道: ['南向资金合计', '港股通(沪)', '港股通(深)', '深股通', '北向资金合计', '沪股通']
+   南向资金合计 deal= 95492700000.0 buy= 49961860000.0 sell= 45530840000.0 net= 4431020000.0 fund_inflow= None quota= None
+   港股通(沪) deal= 57310650000.0 buy= 30251280000.0 sell= 27059370000.0 net= 3191910000.0 fund_inflow= None quota= None
+   港股通(深) deal= 38182050000.0 buy= 19710580000.0 sell= 18471470000.0 net= 1239110000.0 fund_inflow= None quota= None
+   深股通 deal= 149063550000.0 buy= None sell= None net= None fund_inflow= None quota= None
+   北向资金合计 deal= 291319640000.0 buy= None sell= None net= None fund_inflow= None quota= None
+   沪股通 deal= 142256090000.0 buy= None sell= None net= None fund_inflow= None quota= None
+
+/ HTTP 200 len 727
+index.html 引用资源: ['/assets/index-wZlFnCnz.js', '/assets/query-JdmEMXXV.js', '/assets/react-DtNsdKuD.js', '/assets/charts-BbA45-cQ.js', '/assets/index-L3xdVHJh.css']
+  /assets/index-wZlFnCnz.js                    HTTP 200 len=170302
+  /assets/query-JdmEMXXV.js                    HTTP 200 len=49104
+  /assets/react-DtNsdKuD.js                    HTTP 200 len=156589
+  /assets/charts-BbA45-cQ.js                   HTTP 200 len=406802
+
+/market/session HTTP 200 {"day":"2026-09-13","is_trading_day":false,"last_trading_day":"2026-09-11","next_trading_day":"2026-09-14","calendar_total":1504,"server_time":"2026-09-13T20:41:48+08:00","timezone":"Asia/Shanghai (UTC+8, 无夏令时)","phase":"non_trading_day","phase_label":"今日休市","phase_note":"周末/节假日休市；最新行情为上一交易日收盘，候选只能标
+WROTE E:\workbuddy work\2026-09-09-15-34-54\a-stock-platform\work\probe_extra.json

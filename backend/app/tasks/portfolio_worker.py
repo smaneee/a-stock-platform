@@ -10,18 +10,26 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
+from dataclasses import replace
+from datetime import date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from app.database.models import PortfolioBacktest
+from app.backtest.execution import ExecutionConfig
+from app.config import get_settings
+from app.database.models import LimitUpSentiment, PortfolioBacktest
 from app.database.session import SessionLocal
-from app.history.quality import QualityReport
+from app.history.limit_reference import attach_unadjusted_previous_close
 from app.history.service import HistoricalDataService, HistoryResult
 from app.observability.metrics import metrics
 from app.portfolio.config import PortfolioConfig
 from app.portfolio.engine import PortfolioBacktestEngine
+from app.portfolio.sentiment import (
+    SentimentGate,
+    SentimentGateConfig,
+    SentimentSnapshot,
+)
 from app.strategies import registry
 from app.tasks.status import (
     CANCELLED,
@@ -35,6 +43,27 @@ from app.time_utils import utc_now
 logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL_SECONDS = 1.0
+
+# 任务行里成本字段为 NULL 时的兜底（迁移前的老行理论上可能为 NULL）
+_DEFAULT_EXECUTION = ExecutionConfig()
+
+
+def _iso_dates(values) -> list[str]:
+    """把 missing_dates 统一成 ISO 字符串。
+
+    DataQualityChecker 产出的是 ``datetime.date`` 对象，直接塞进任务结果会让
+    ``json.dumps`` 抛 "Object of type date is not JSON serializable"，
+    把「基准缺了哪些交易日」这条真正的失败原因整条吞掉。
+    """
+    result: list[str] = []
+    for value in values or ():
+        if isinstance(value, datetime):
+            result.append(value.date().isoformat())
+        elif isinstance(value, date):
+            result.append(value.isoformat())
+        else:
+            result.append(str(value))
+    return result
 
 
 class PortfolioBacktestWorker:
@@ -157,21 +186,38 @@ class PortfolioBacktestWorker:
             )
             histories: dict[str, HistoryResult] = {}
             benchmark_history: list = []
+            benchmark_result: HistoryResult | None = None
             total = len(symbols) + (1 if benchmark_symbol else 0)
             done = 0
+            # D6：策略/收益用前复权，涨跌停判断用未复权昨收（两者不可混用）。
+            # get_settings 的 portfolio_bars_adjust 可切回 none（一键回退）。
+            bars_adjust = (get_settings().portfolio_bars_adjust or "qfq").lower()
+            limit_reference_missing = 0
             for sym in symbols:
-                histories[sym] = await history_svc.get_history(
-                    sym, task.start_time, task.end_time
+                result = await history_svc.get_history(
+                    sym, task.start_time, task.end_time, adjust=bars_adjust
                 )
+                if bars_adjust != "none":
+                    # 另取未复权序列，仅用于还原昨收；取不到就保持 0（执行层跳过涨跌停）
+                    reference = await history_svc.get_history(
+                        sym, task.start_time, task.end_time, adjust="none"
+                    )
+                    merged, missing = attach_unadjusted_previous_close(
+                        result.bars, reference.bars
+                    )
+                    limit_reference_missing += missing
+                    # HistoryResult 是 dataclass（不是 pydantic 模型），用 replace 而不是 model_copy
+                    result = replace(result, bars=merged)
+                histories[sym] = result
                 done += 1
                 task.progress = int(done / max(total, 1) * 50)
                 db.commit()
 
             if benchmark_symbol:
-                bench_data = await history_svc.get_history(
+                benchmark_result = await history_svc.get_history(
                     benchmark_symbol, task.start_time, task.end_time
                 )
-                benchmark_history = bench_data.bars
+                benchmark_history = benchmark_result.bars
                 done += 1
                 task.progress = int(done / max(total, 1) * 50)
                 db.commit()
@@ -197,12 +243,14 @@ class PortfolioBacktestWorker:
                 else:
                     exclusion_reasons[sym] = reason
 
-            # 基准完整性（独立校验，使用真实 HistoryResult）
+            # 基准完整性（独立校验）。必须用真实的 HistoryResult：只有它带着
+            # 交易日历算出的 expected_count，_wrap_history 出来的空报告会让
+            # 「区间以节假日开头」的合法基准被 span 兜底规则误杀。
             bench_reason = None
             if benchmark_symbol:
                 bench_reason = self._check_history_completeness(
                     benchmark_symbol,
-                    _wrap_history(benchmark_history, None),
+                    benchmark_result,
                     task.start_time,
                     task.end_time,
                 )
@@ -245,12 +293,34 @@ class PortfolioBacktestWorker:
                 raise ValueError(f"策略不存在: {task.strategy_name}")
             strategies_map = {s: strategy_obj for s in valid_histories.keys()}
 
-            # 4) 组合回测配置
+            # 4) 组合回测配置：成本/滑点必须用任务里提交的参数，
+            #    否则 API 上的 commission_rate / slippage 会被静默忽略。
+            #    D5 的参与率上限同样来自 config_json（旧任务缺字段则用默认值）。
+            exec_cfg = config_dict.get("execution")
+            if not isinstance(exec_cfg, dict):
+                exec_cfg = {}
             portfolio_config = PortfolioConfig(
                 initial_cash=float(task.initial_cash),
                 max_single_position=float(task.max_single_position),
                 max_total_position=float(task.max_total_position),
                 risk_free_rate=config_dict.get("risk_free_rate", 0.02),
+                bars_adjust=bars_adjust,
+                execution=ExecutionConfig(
+                    commission_rate=float(
+                        task.commission_rate
+                        if task.commission_rate is not None
+                        else _DEFAULT_EXECUTION.commission_rate
+                    ),
+                    slippage=float(
+                        task.slippage
+                        if task.slippage is not None
+                        else _DEFAULT_EXECUTION.slippage
+                    ),
+                    max_participation_rate=float(
+                        exec_cfg.get("max_participation_rate", 0.0) or 0.0
+                    ),
+                    allow_partial_fill=bool(exec_cfg.get("allow_partial_fill", True)),
+                ),
             )
 
             engine = PortfolioBacktestEngine(
@@ -258,6 +328,9 @@ class PortfolioBacktestWorker:
                 weights=weights,
                 config=portfolio_config,
                 benchmark=benchmark_history,
+                sentiment=self._build_sentiment_gate(
+                    db, config_dict, task.start_time.date(), task.end_time.date()
+                ),
             )
 
             # CPU 密集 → 线程池
@@ -274,6 +347,17 @@ class PortfolioBacktestWorker:
             result_dict["executed_symbols"] = list(valid_histories.keys())
             result_dict["excluded_symbols"] = list(exclusion_reasons.keys())
             result_dict["exclusion_reasons"] = exclusion_reasons
+            # D6：昨收还原诊断。>0 表示有 K 线的日期在未复权序列里找不到，
+            # 这些日子执行层会跳过涨跌停判断（宁可漏判，不可错判）。
+            result_dict["limit_reference_missing"] = int(limit_reference_missing)
+            result_dict["limit_reference_complete"] = (
+                bars_adjust == "none" or limit_reference_missing == 0
+            )
+            if bars_adjust != "none" and limit_reference_missing:
+                result_dict["limit_reference_note"] = (
+                    f"有 {limit_reference_missing} 根 K 线未能对齐未复权昨收，"
+                    "对应交易日的涨跌停判断已跳过（其余交易日正常）。"
+                )
 
             task.progress = 100
             task.status = SUCCEEDED
@@ -296,6 +380,51 @@ class PortfolioBacktestWorker:
             db.close()
 
     @staticmethod
+    def _build_sentiment_gate(
+        db, config_dict: dict, start: date, end: date
+    ) -> SentimentGate | None:
+        """按任务配置构建市场情绪闸门。
+
+        - 未配置或未启用时返回 None（回测行为完全不变）。
+        - 启用但区间内一条情绪数据都没有时**直接报错**，避免静默产出一份
+          看起来有闸门、实际没生效的回测结果。
+        - 只有区间内部分交易日缺数据时交给闸门按 ``on_missing`` 处理。
+        """
+        raw = config_dict.get("sentiment_gate")
+        if not isinstance(raw, dict):
+            return None
+        known = set(SentimentGateConfig.__dataclass_fields__)
+        gate_config = SentimentGateConfig(
+            **{key: value for key, value in raw.items() if key in known}
+        )
+        if not gate_config.enabled:
+            return None
+
+        rows = db.scalars(
+            select(LimitUpSentiment)
+            .where(LimitUpSentiment.trade_date >= start)
+            .where(LimitUpSentiment.trade_date <= end)
+            .order_by(LimitUpSentiment.trade_date)
+        ).all()
+        if not rows:
+            raise ValueError(
+                "回测区间内没有涨停情绪数据，无法启用市场情绪闸门；请先调用 "
+                "POST /api/market/limit-up/sentiment/backfill 回补历史情绪"
+            )
+        snapshots = [
+            SentimentSnapshot(
+                trade_date=row.trade_date,
+                limit_up_count=row.limit_up_count,
+                broken_board_count=row.broken_board_count,
+                seal_rate=row.seal_rate,
+                broken_rate=row.broken_rate,
+                max_streak=row.max_streak,
+            )
+            for row in rows
+        ]
+        return SentimentGate(gate_config, snapshots)
+
+    @staticmethod
     def _check_history_completeness(
         symbol: str,
         result: "HistoryResult | None",
@@ -316,14 +445,14 @@ class PortfolioBacktestWorker:
         if not result.bars:
             return {
                 "reason": "empty_bars",
-                "missing_dates": list(result.quality.missing_dates),
+                "missing_dates": _iso_dates(result.quality.missing_dates),
                 "source": result.source,
                 "is_complete": result.is_complete,
             }
         if not result.is_complete:
             return {
                 "reason": "incomplete",
-                "missing_dates": list(result.quality.missing_dates),
+                "missing_dates": _iso_dates(result.quality.missing_dates),
                 "source": result.source,
             }
         dates = sorted(
@@ -352,22 +481,30 @@ class PortfolioBacktestWorker:
                 "requested_end": end_time.date().isoformat(),
                 "source": result.source,
             }
-        # 跨度必须 ≥ 1 天的请求跨度（防止缓存污染导致 range 不足）
-        requested_span_days = (end_time.date() - start_time.date()).days
-        if requested_span_days > 1:
-            actual_span_days = (last - first).days
-            if actual_span_days < requested_span_days - 1:
-                return {
-                    "reason": "range_too_short",
-                    "missing_dates": [],
-                    "actual_span_days": actual_span_days,
-                    "requested_span_days": requested_span_days,
-                    "source": result.source,
-                }
+        # 跨度粗校验仅作为「交易日历不可用」时的兜底。
+        #
+        # expected_count > 0 说明 DataQualityChecker 已经按交易日历逐日核对了
+        # 缺口（missing_dates 为空 + actual_count 达标），此时再拿自然日跨度
+        # 比较会把「请求区间以节假日开头/结尾」的正常数据误判为不完整：
+        # 例如 2025-10-01 起（国庆休市至 10-08）的第一根 bar 必然是 10-09，
+        # 自然日跨度天然比请求跨度少 8 天。
+        expected_count = int(getattr(result.quality, "expected_count", 0) or 0)
+        if expected_count <= 0:
+            requested_span_days = (end_time.date() - start_time.date()).days
+            if requested_span_days > 1:
+                actual_span_days = (last - first).days
+                if actual_span_days < requested_span_days - 1:
+                    return {
+                        "reason": "range_too_short",
+                        "missing_dates": [],
+                        "actual_span_days": actual_span_days,
+                        "requested_span_days": requested_span_days,
+                        "source": result.source,
+                    }
         if result.quality.missing_dates:
             return {
                 "reason": "missing_dates",
-                "missing_dates": list(result.quality.missing_dates),
+                "missing_dates": _iso_dates(result.quality.missing_dates),
                 "source": result.source,
             }
         return None
@@ -389,14 +526,3 @@ class PortfolioBacktestWorker:
 def recover_stale_portfolio_tasks() -> int:
     """启动时恢复遗留 PortfolioBacktest running 任务。"""
     return PortfolioBacktestWorker()._recover_stale_tasks()
-
-
-def _wrap_history(bars: list, source: str | None = None) -> HistoryResult:
-    """把单纯的 bars 列表包成 HistoryResult，便于复用完整性校验逻辑。"""
-    return HistoryResult(
-        bars=bars or [],
-        source=source or "cache",
-        data_updated_at=None,
-        is_complete=bool(bars),
-        quality=QualityReport(total=len(bars or [])),
-    )

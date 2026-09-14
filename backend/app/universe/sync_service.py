@@ -20,7 +20,7 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Sequence
 
 from sqlalchemy import select
@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database.models import DataSourceHealth, Security
+from app.market_rules.calendar import TradingCalendar
 from app.market_rules.security_master import SecurityMasterService
 from app.time_utils import utc_now
 from app.universe.providers import (
@@ -217,6 +218,7 @@ class UniverseSyncService:
                             "trading_day 无法确定：调用方未传 + records 也没带 as_of_date "
                             "+ synced_at.date() 也为空",
                         )
+                    td = self._normalize_snapshot_day(td)
                     snap = snap_svc.get_or_create_snapshot(
                         trading_day=td,
                         source_provider=provider.source_id,
@@ -256,6 +258,26 @@ class UniverseSyncService:
         raise AllProvidersFailedError(
             f"全部 {len(self._providers)} 个 provider 都失败：{attempted}"
         )
+
+    def _normalize_snapshot_day(self, day: date) -> date:
+        """把快照交易日归一到「不晚于该日的最近交易日」。
+
+        东方财富与 mock 这类「只有当前名单」的数据源会把 ``as_of_date`` 填成
+        抓取当天，于是周末/节假日点同步就会写出「快照日 = 非交易日」的脏数据
+        （实测 2026-09-12 周六落过一个），选股与回测按快照日对齐时会错位。
+        交易日历为空或查询异常时原样返回 —— 归一失败不能把同步整个搞挂。
+        """
+        try:
+            calendar = TradingCalendar(self._db)
+            if calendar.is_empty():
+                return day
+            normalized = calendar.last_trading_day_on_or_before(day)
+            if normalized != day:
+                logger.info("快照交易日归一：%s → %s（非交易日）", day, normalized)
+            return normalized
+        except Exception as exc:  # noqa: BLE001 - 日历不可用不能阻断同步
+            logger.warning("快照交易日归一失败，沿用 %s：%s", day, exc)
+            return day
 
     async def _fetch_with_retry(self, provider: UniverseProvider) -> list[SecurityRecord]:
         last_error: Exception | None = None

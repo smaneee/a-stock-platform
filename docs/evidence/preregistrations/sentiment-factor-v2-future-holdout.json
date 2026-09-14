@@ -1,0 +1,39 @@
+{
+  "experiment_id": "sentiment-factor-v2-future-holdout",
+  "hypothesis": "涨停板情绪因子（封板率/连板高度）在可用时点之后对次日到 k 日收益具有稳健预测力",
+  "strategy_version": "sentiment-derived-daily-high-close-v1",
+  "data_cutoff": "2026-09-11",
+  "universe_scope": "沪深京全 A（derived 口径覆盖率 5200~5341）",
+  "primary_horizon_days": 5,
+  "primary_benchmark": "equal_weight",
+  "costs": {
+    "commission_rate": 0.0003,
+    "min_commission": 5.0,
+    "stamp_tax_rate": 0.0005,
+    "transfer_fee_rate": 1e-05,
+    "slippage_bps": 5.0
+  },
+  "risk_budget": {
+    "max_weight_pct": 20.0,
+    "max_total_position_pct": 80.0,
+    "max_daily_loss_pct": 3.0,
+    "max_total_drawdown_pct": 15.0
+  },
+  "decision_criteria": {
+    "net_excess_ci_lower_gt": 0.0,
+    "ci_method": "block_bootstrap",
+    "min_holdout_trading_days": 60,
+    "min_alignment_days": 120,
+    "notes": "eastmoney 与 derived 分源验证；可对齐天数不足 120 时直接判为样本不足"
+  },
+  "planned_trials": 48,
+  "multiple_comparison": "benjamini_hochberg",
+  "holdout_definition": "自 2026-09-15 起累积的情绪序列（derived 每日回算 + eastmoney 每日实抓），累计满 60 个前向交易日后只揭盲一次",
+  "prior_results_status": "P0-01 修正口径后的结果（最强名义 ρ=0.1788，块自助 b>=5 全部跨零）已查看，只能作为研究资料；结论维持「不确定」",
+  "registration_rationale": "把「可用时点之后」「来源分离」「块自助区间」写进判据，避免事后挑选持有期或来源",
+  "frozen_hash": "5fb826d51e428d5a3ddfd5d8d2a67613ff73a06ad40d4c390d2f039401e2bebe",
+  "unblinded_at": null,
+  "unblind_count": 0,
+  "notes_history": [],
+  "integrity_ok": true
+}

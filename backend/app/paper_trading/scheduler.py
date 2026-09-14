@@ -93,6 +93,18 @@ class SettlementScheduler:
             logger.info(
                 "日终结算完成：交易日=%s，账户数=%d", today_cn, len(results)
             )
+            # 前向观察计时：结算成功后把当天计入（幂等；未登记起点时不做任何事）
+            from app.paper_trading.forward import ForwardObservationService
+
+            forward = ForwardObservationService(db).count_day(today_cn)
+            if forward.get("counted"):
+                logger.info(
+                    "前向观察 +1：%s/%s",
+                    forward.get("trading_days_counted"),
+                    forward.get("target_trading_days"),
+                )
+            else:
+                logger.info("前向观察未计数：%s", forward.get("reason"))
         finally:
             db.close()
 

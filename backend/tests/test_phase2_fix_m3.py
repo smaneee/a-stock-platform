@@ -213,6 +213,48 @@ class TestPortfolioBacktestAPI:
             assert "id" in t
             assert "status" in t
 
+    def test_create_persists_d5_participation_config(self, client):
+        """D5：参与率上限必须真的落进 config_json 并在回显里出现（不能被静默忽略）。"""
+        resp = client.post(
+            "/api/portfolio-backtests",
+            json=_payload(
+                idempotency_key="d5-cap",
+                max_participation_rate=0.01,
+                allow_partial_fill=False,
+            ),
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["execution"] == {
+            "max_participation_rate": 0.01,
+            "allow_partial_fill": False,
+        }
+        detail = client.get(f"/api/portfolio-backtests/{body['id']}").json()
+        assert detail["execution"]["max_participation_rate"] == 0.01
+        assert detail["execution"]["allow_partial_fill"] is False
+
+    def test_execution_defaults_are_backward_compatible(self, client):
+        """不传 D5 参数时回显默认值（0=不限制），老任务行缺字段也不报错。"""
+        body = client.post(
+            "/api/portfolio-backtests", json=_payload(idempotency_key="d5-default")
+        ).json()
+        assert body["execution"] == {
+            "max_participation_rate": 0.0,
+            "allow_partial_fill": True,
+        }
+
+    def test_participation_rate_must_be_a_ratio(self, client):
+        """参与率是 0~1 的比例：1.5 / 负数都必须被拒绝，避免被当成百分数误用。"""
+        for bad in (1.5, -0.1):
+            resp = client.post(
+                "/api/portfolio-backtests",
+                json=_payload(
+                    idempotency_key=f"d5-bad-{bad}",
+                    max_participation_rate=bad,
+                ),
+            )
+            assert resp.status_code == 422, bad
+
 
 class TestPortfolioBacktestWorkerLifecycle:
     """PortfolioBacktestWorker 启动恢复遗留任务为 queued。"""

@@ -5,7 +5,8 @@
 
 历史数据生成规则：
 - daily：每个交易日生成一根 K 线（含周末/节假日跳过逻辑）
-- minute：每分钟生成一根 K 线（仅在交易日 9:30-15:00）
+- 分钟级周期（1m/5m/15m/30m/60m）：每分钟生成一根 K 线，只在连续竞价时段
+  （9:30-11:30 / 13:00-15:00），午休不产生 K 线，分时曲线的形状与真实一致
 - 缓存键包含 symbol+period+start_time+end_time，避免短区间缓存污染长区间请求
 - OHLC 自洽：low <= open/close <= high
 - amount = close * volume
@@ -25,6 +26,15 @@ from app.time_utils import utc_now
 # A 股交易日简化判定：周一至周五，无视节假日
 def _is_weekday(d: date) -> bool:
     return d.weekday() < 5
+
+
+# 分钟级周期命名与真实数据源（东财 / 通达信）保持一致
+MINUTE_PERIODS = frozenset({"1m", "5m", "15m", "30m", "60m", "minute"})
+
+
+def _is_session(when: time) -> bool:
+    """连续竞价时段：9:30-11:30 / 13:00-15:00，午休不产生 K 线。"""
+    return time(9, 30) <= when <= time(11, 30) or time(13, 0) <= when <= time(15, 0)
 
 
 def _trading_days(start: date, end: date) -> list[date]:
@@ -144,11 +154,9 @@ class MockProvider(MarketDataProvider):
         end_time: datetime,
     ) -> list[QuoteData]:
         """生成历史 K 线数据。"""
-        if period == "daily":
-            return self._generate_daily_history(symbol, start_time, end_time)
-        if period == "minute":
+        if period in MINUTE_PERIODS:
             return self._generate_minute_history(symbol, start_time, end_time)
-        # 其它 period 暂按 daily 处理
+        # daily 与其它日线级别周期（周/月/未知）都按日线生成
         return self._generate_daily_history(symbol, start_time, end_time)
 
     def _generate_daily_history(
@@ -208,7 +216,7 @@ class MockProvider(MarketDataProvider):
         cur = start_time
         seen_dt: set[datetime] = set()
         while cur <= end_time:
-            if _is_weekday(cur.date()) and time(9, 30) <= cur.time() <= time(15, 0):
+            if _is_weekday(cur.date()) and _is_session(cur.time()):
                 if cur not in seen_dt:
                     seen_dt.add(cur)
                     change = rng.uniform(-0.005, 0.005)

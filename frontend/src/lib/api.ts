@@ -10,9 +10,11 @@ import type {
   BoardKind,
   BoardListResponse,
   BoardMemberResponse,
+  BenchmarkIndexListResponse,
   DatacenterCatalogResponse,
   DatacenterQueryResponse,
   DragonTigerSeatsResponse,
+  EvidenceResponse,
   FundFlowResponse,
   HealthDetail,
   MetricsResponse,
@@ -31,7 +33,10 @@ import type {
   AssetPoint,
   SelectionResult,
   SelectionEvaluationSummary,
+  ScreenerResponse,
+  ValidationEnvelope,
   HistoryIngestTask,
+  QfqBackfillStatus,
   DailyPipelineRun,
   DailyPipelineSchedule,
   LiveRebalancePlan,
@@ -42,14 +47,19 @@ import type {
   LimitUpSentimentResponse,
   LimitUpCaptureRequest,
   LimitUpCaptureResponse,
+  LimitUpSentimentBackfillRequest,
+  LimitUpSentimentBackfillResponse,
   IndicatorCatalogResponse,
   IndicatorResponse,
+  IntradaySeries,
+  MarketSessionResponse,
   MarketProvidersResponse,
   UniverseMembersResponse,
   UniverseSnapshotSummary,
   UniverseStatusResponse,
   UniverseSyncResponse,
 } from "./types";
+import { authHeaders, getToken, setToken } from "./auth";
 
 const BASE = "/api";
 
@@ -74,17 +84,26 @@ async function request<T>(
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...authHeaders(),
     ...((init?.headers as Record<string, string>) ?? {}),
   };
 
   const resp = await fetch(url, { ...init, headers });
   if (!resp.ok) {
     let detail = `HTTP ${resp.status}`;
+    let code: string | undefined;
     try {
-      const body = (await resp.json()) as { detail?: string };
+      const body = (await resp.json()) as { detail?: string; code?: string };
       if (body.detail) detail = body.detail;
+      code = body.code;
     } catch {
       // 非 JSON 响应保持默认
+    }
+    // 令牌缺失/过期：清掉本地令牌，让 AuthGate 回到登录页
+    if (resp.status === 401) {
+      if (code === "auth_required" || !getToken()) {
+        notifyUnauthorized();
+      }
     }
     throw new ApiError(resp.status, detail);
   }
@@ -92,6 +111,12 @@ async function request<T>(
 }
 
 export { ApiError };
+
+/** 令牌失效通知：交由 AuthGate 决定是否回到登录页。 */
+function notifyUnauthorized(): void {
+  setToken(null);
+  window.dispatchEvent(new Event("astock:unauthorized"));
+}
 
 // ---------- 健康检查 ----------
 
@@ -144,6 +169,15 @@ export const cancelHistoryIngest = (taskId: number) =>
     method: "POST",
   });
 
+export const fetchQfqBackfillStatus = () =>
+  request<QfqBackfillStatus>("/history-adjust");
+
+export const startQfqBackfill = (symbols?: string[]) =>
+  request<QfqBackfillStatus>("/history-adjust", {
+    method: "POST",
+    params: symbols && symbols.length ? { symbols: symbols.join(",") } : undefined,
+  });
+
 export const createDailyPipelineRun = (body: {
   trading_day: string;
   paper_account_id?: number | null;
@@ -174,6 +208,12 @@ export const fetchBatchQuotes = (symbols: string[]) =>
   request<{ quotes: QuoteData[] }>("/quotes/batch", {
     method: "POST",
     body: JSON.stringify({ symbols }),
+  });
+
+/** 当日分时曲线：实时分钟线 + 数据源 1 分钟分时补齐。 */
+export const fetchIntraday = (symbol: string, limit = 600) =>
+  request<IntradaySeries>(`/quotes/${encodeURIComponent(symbol)}/intraday`, {
+    params: { limit },
   });
 
 // ---------- 自选股 ----------
@@ -405,6 +445,9 @@ export const listBoardConstituents = (boardCode: string, limit = 50) =>
     params: { limit },
   });
 
+export const listBenchmarkIndices = () =>
+  request<BenchmarkIndexListResponse>("/market/indices");
+
 export const listBoardFundFlow = (
   kind: BoardKind,
   limit = 50,
@@ -498,6 +541,20 @@ export const captureLimitUpSentiment = (body: LimitUpCaptureRequest) =>
     body: JSON.stringify(body),
   });
 
+/**
+ * 用本地不复权日线 + 涨跌停规则离线回算历史情绪。
+ *
+ * 上游东财只保留最近若干个交易日，历史曲线靠每日累积太慢；这个接口可以
+ * 一次性把整段历史补齐（`source=derived`），且不会覆盖东财实抓的行。
+ */
+export const backfillLimitUpSentiment = (
+  body: LimitUpSentimentBackfillRequest,
+) =>
+  request<LimitUpSentimentBackfillResponse>(
+    "/market/limit-up/sentiment/backfill",
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
 // ---------- 技术指标 ----------
 
 /** 指标目录：可用序列（key + 中文名）、支持的周期与 limit 边界。 */
@@ -514,11 +571,20 @@ export const fetchIndicators = (
     params: { period, limit },
   });
 
+// ---------- 策略证据（P1-01） ----------
+
+/** 策略证据全量：状态、数据截止日、样本、结果、限制、证据来源。 */
+export const fetchEvidence = () => request<EvidenceResponse>("/evidence");
+
 // ---------- 股票池（universe） ----------
 
 /** 股票池同步状态：数据源健康 + 最近快照日期。 */
 export const fetchUniverseStatus = () =>
   request<UniverseStatusResponse>("/universe/status");
+
+/** 今天是不是交易日 + 最近/下一交易日（用于休市提示，不参与股票池筛选）。 */
+export const fetchMarketSession = () =>
+  request<MarketSessionResponse>("/market/session");
 
 /** 触发一次股票池同步（成功后会落库当日快照）。 */
 export const syncUniverse = () =>
@@ -547,3 +613,69 @@ export const listUniverseMembers = (
 /** 已注册的数据源（按优先级）及其实时可用性。 */
 export const fetchMarketProviders = () =>
   request<MarketProvidersResponse>("/market/providers");
+
+// ---------- 实时研究候选排序 ----------
+
+export interface RealtimePicksParams {
+  top_n?: number;
+  refine_pool?: number;
+  lookback_days?: number;
+  exclude_st?: boolean;
+  min_amount_20?: number;
+  min_triggers?: number;
+  risk_budget_pct?: number;
+  max_weight_pct?: number;
+}
+
+/**
+ * 全市场实时扫描：返回研究候选排序和后端证据门禁。
+ *
+ * ``evidence.recommendation_allowed`` 是不可由前端放宽的安全契约；当前规则未满足
+ * 独立样本外发布门槛时，任何分数、价格区间和风险预算都不得表述为买入建议。
+ */
+export const fetchRealtimePicks = (params: RealtimePicksParams = {}) => {
+  const query: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) {
+      query[key] = value as string | number | boolean;
+    }
+  }
+  return request<ScreenerResponse>("/realtime/picks", { params: query });
+};
+
+export interface PicksValidationParams {
+  eval_days?: number;
+  horizons?: string;
+  primary_horizon?: number;
+  top_n?: number;
+  min_amount_20?: number;
+  min_triggers?: number;
+  commission_rate?: number;
+  stamp_tax_rate?: number;
+  slippage_bps?: number;
+  control?: "none" | "random" | "worst";
+}
+
+/** 读取样本外验证的状态与最近一次报告（报告在内存里，后端重启后需重算）。 */
+export const fetchPicksValidation = () =>
+  request<ValidationEnvelope>("/realtime/picks/validation");
+
+/**
+ * 启动一次样本外验证：把雷达规则放到历史上逐日重放。
+ *
+ * 计算在后端线程里跑（60 个评估日约 100 秒），接口立即返回 202 与任务状态，
+ * 调用方需要轮询 ``fetchPicksValidation``。``control="random"`` 是脚手架自检，
+ * 其超额收益应接近 0。
+ */
+export const startPicksValidation = (params: PicksValidationParams = {}) => {
+  const query: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) {
+      query[key] = value as string | number | boolean;
+    }
+  }
+  return request<ValidationEnvelope>("/realtime/picks/validation", {
+    method: "POST",
+    params: query,
+  });
+};

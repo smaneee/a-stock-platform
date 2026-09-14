@@ -1,0 +1,45 @@
+﻿margin page2 vs page3: n=500/500 交集=500 完全相同=True
+
+[未知板块代码] HTTP 503 堆栈泄漏=False
+  {"detail":"东方财富数据源暂不可用: Server disconnected without sending a response."}
+
+[空板块代码] HTTP 422 堆栈泄漏=False
+  {"detail":"板块代码不合法: 'XX'（应形如 BK0475）"}
+
+[page=0] HTTP 422 堆栈泄漏=False
+  {"detail":[{"type":"greater_than_equal","loc":["query","page"],"msg":"Input should be greater than or equal to 1","input":"0","ctx":{"ge":1}}]}
+
+[page=201] HTTP 422 堆栈泄漏=False
+  {"detail":[{"type":"less_than_equal","loc":["query","page"],"msg":"Input should be less than or equal to 200","input":"201","ctx":{"le":200}}]}
+
+[page=99999] HTTP 422 堆栈泄漏=False
+  {"detail":[{"type":"less_than_equal","loc":["query","page"],"msg":"Input should be less than or equal to 200","input":"99999","ctx":{"le":200}}]}
+
+[不存在的股票代码(龙虎榜)] HTTP 200 堆栈泄漏=False
+  {"dataset":"dragon-tiger","label":"龙虎榜","total":0,"page":1,"count":0,"rows":[]}
+
+[未来日期] HTTP 200 堆栈泄漏=False
+  {"dataset":"dragon-tiger","label":"龙虎榜","total":0,"page":1,"count":0,"rows":[]}
+
+[非法日期 2026-13-45] HTTP 503 堆栈泄漏=False
+  {"detail":"东方财富数据源暂不可用: datacenter.eastmoney.com 未返回所需数据"}
+
+[非法月份 2026-02-30] HTTP 503 堆栈泄漏=False
+  {"detail":"东方财富数据源暂不可用: datacenter.eastmoney.com 未返回所需数据"}
+
+[不存在的池 trade_date 未来] HTTP 200 堆栈泄漏=False
+  {"pool":"limit-up","label":"涨停股池","trade_date":"2099-01-01","total":40,"page":1,"count":5,"items":[{"symbol":"000993","name":"闽东电力","price":13.88,"change_pct":9.984151840209961,"amount":664912544.0,"turnover_rate":10.468605995178223,"seal_a…
+
+[不存在的 pool 大小写] HTTP 200 堆栈泄漏=False
+  {"pool":"limit-up","label":"涨停股池","trade_date":"2026-09-11","total":40,"page":1,"count":5,"items":[{"symbol":"000993","name":"闽东电力","price":13.88,"change_pct":9.984151840209961,"amount":664912544.0,"turnover_rate":10.468605995178223,"seal_a…
+
+[数据集名大小写] HTTP 200 堆栈泄漏=False
+  {"dataset":"dragon-tiger","label":"龙虎榜","total":268118,"page":1,"count":5,"rows":[{"trade_date":"2026-09-11","symbol":"300808","name":"久量股份","close":20.28,"change_pct":-18.3246,"turnover_rate":11.3081,"market":"深交所创业板","billboard_buy_amount…
+
+[板块 kind 大写] HTTP 200 堆栈泄漏=False
+  {"kind":"INDUSTRY","count":5,"items":[{"code":"BK1592","name":"通信线缆及配套","kind":"INDUSTRY","index_value":27073.48,"change_pct":5.84,"change_amount":1493.62,"volume":1115654700.0,"amount":50462477548.0,"amplitude":8.37,"turnover_rate":10.23,"…
+
+[seats 不存在的日期] HTTP 200 堆栈泄漏=False
+  {"symbol":"300808","trade_date":"2099-01-01","buy":[],"sell":[]}
+
+WROTE E:\workbuddy work\2026-09-09-15-34-54\a-stock-platform\work\probe_edges.json

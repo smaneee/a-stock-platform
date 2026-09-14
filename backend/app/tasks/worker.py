@@ -12,13 +12,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import replace
 
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from app.backtest.engine import BacktestEngine
+from app.config import get_settings
 from app.database.models import Backtest
 from app.database.session import SessionLocal
+from app.history.limit_reference import attach_unadjusted_previous_close
 from app.history.service import HistoricalDataService
 from app.observability.metrics import metrics
 from app.strategies import registry
@@ -144,11 +147,29 @@ class BacktestWorker:
             history_svc = HistoricalDataService(
                 db, provider_manager=self._provider_manager
             )
+            # D6：策略/收益用前复权，涨跌停判断用未复权昨收（两者不可混用）。
+            # backtest_bars_adjust 设为 none 可一键回退到改造前的行为。
+            bars_adjust = (get_settings().backtest_bars_adjust or "qfq").lower()
             history = await history_svc.get_history(
                 backtest.symbol,
                 backtest.start_time,
                 backtest.end_time,
+                adjust=bars_adjust,
             )
+            limit_reference_missing = 0
+            if bars_adjust != "none":
+                # 另取未复权序列，仅用于还原昨收；取不到就保持 0（执行层跳过涨跌停）
+                reference = await history_svc.get_history(
+                    backtest.symbol,
+                    backtest.start_time,
+                    backtest.end_time,
+                    adjust="none",
+                )
+                merged, limit_reference_missing = attach_unadjusted_previous_close(
+                    history.bars, reference.bars
+                )
+                # HistoryResult 是 dataclass（不是 pydantic 模型），用 replace
+                history = replace(history, bars=merged)
 
             # 2) 取消检查（历史数据获取可能耗时）
             db.refresh(backtest)
@@ -168,7 +189,11 @@ class BacktestWorker:
             strategy = registry.get_strategy(backtest.strategy_name)
             if strategy is None:
                 raise ValueError(f"策略不存在: {backtest.strategy_name}")
-            engine = BacktestEngine(strategy=strategy, initial_cash=float(backtest.initial_cash))
+            engine = BacktestEngine(
+                strategy=strategy,
+                initial_cash=float(backtest.initial_cash),
+                bars_adjust=bars_adjust,
+            )
             result_obj = await asyncio.to_thread(engine.run, history.bars)
 
             # 4) 再次取消检查
@@ -176,9 +201,21 @@ class BacktestWorker:
             if backtest.status == CANCELLED:
                 return
 
+            result_dict = result_obj.to_dict()
+            # D6：昨收还原诊断（>0 表示对应交易日的涨跌停判断已跳过）
+            result_dict["limit_reference_missing"] = int(limit_reference_missing)
+            result_dict["limit_reference_complete"] = (
+                bars_adjust == "none" or limit_reference_missing == 0
+            )
+            if bars_adjust != "none" and limit_reference_missing:
+                result_dict["limit_reference_note"] = (
+                    f"有 {limit_reference_missing} 根 K 线未能对齐未复权昨收，"
+                    "对应交易日的涨跌停判断已跳过（其余交易日正常）。"
+                )
+
             backtest.progress = 100
             backtest.status = SUCCEEDED
-            backtest.result = json.dumps(result_obj.to_dict(), ensure_ascii=False)
+            backtest.result = json.dumps(result_dict, ensure_ascii=False)
             backtest.finished_at = utc_now()
             db.commit()
             metrics.record_task_result(SUCCEEDED)

@@ -39,6 +39,7 @@ ENV/
 
 # 缓存与日志
 *.log
+*.log.*
 logs/
 .cache/
 *.cache
@@ -72,3 +73,6 @@ Thumbs.db
 .coverage
 htmlcov/
 .tox/
+
+# pytest 临时目录（自动生成，含假的 node_modules 结构，不入库）
+work/tmp/

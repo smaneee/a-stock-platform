@@ -1,0 +1,84 @@
+﻿=== 数据中心：声明 vs 实测 ===
+dragon-tiger           declared=20 actual=20 missing=[] extra=[]
+block-trade            declared=14 actual=14 missing=[] extra=[]
+margin                 declared=17 actual=17 missing=[] extra=[]
+northbound             declared=18 actual=18 missing=[] extra=[]
+org-survey             declared=12 actual=12 missing=[] extra=[]
+holder-number          declared=12 actual=12 missing=[] extra=[]
+restricted-release     declared=11 actual=11 missing=[] extra=[]
+earnings-forecast      declared=15 actual=15 missing=[] extra=[]
+dividend               declared=16 actual=16 missing=[] extra=[]
+executive-hold         declared=14 actual=14 missing=[] extra=[]
+pledge                 declared=11 actual=11 missing=[] extra=[]
+convertible-bond       declared=17 actual=17 missing=[] extra=[]
+
+=== 涨停池：声明 vs 实测 ===
+limit-up               declared=15 actual=15 missing=[] extra=[]
+limit-down             declared=15 actual=15 missing=[] extra=[]
+broken-board           declared=15 actual=15 missing=[] extra=[]
+strong                 declared=15 actual=15 missing=[] extra=[]
+sub-new                declared=14 actual=14 missing=[] extra=[]
+
+=== 时效/覆盖 (实测) ===
+dc.dragon-tiger            n= 20 trade_date: min=2026-09-11 max=2026-09-11 distinct=1
+dc.block-trade             n= 20 trade_date: min=2026-09-11 max=2026-09-11 distinct=1
+dc.margin                  n= 20 trade_date: min=2026-09-11 max=2026-09-11 distinct=1
+dc.northbound              n= 20 trade_date: min=2026-09-08 max=2026-09-11 distinct=4
+dc.org-survey              n= 20 notice_date: min=2026-09-12 max=2026-09-13 distinct=2
+dc.holder-number           n= 20 end_date: min=2026-06-30 max=2026-08-31 distinct=5
+dc.restricted-release      n= 20 free_date: min=2031-01-20 max=2035-10-29 distinct=20
+dc.earnings-forecast       n= 20 notice_date: min=2026-09-10 max=2026-09-14 distinct=2
+dc.dividend                n= 20 notice_date: min=2026-09-11 max=2026-09-14 distinct=3
+dc.executive-hold          n= 20 change_date: min=2026-09-10 max=2026-09-11 distinct=2
+dc.pledge                  n= 20 trade_date: min=2026-09-11 max=2026-09-11 distinct=1
+
+=== 各接口耗时 (ms) ===
+catalog.datacenter                 HTTP 200      9ms
+catalog.limitup                    HTTP 200      2ms
+catalog.indices                    HTTP 200      3ms
+dc.dragon-tiger                    HTTP 200    355ms
+dc.block-trade                     HTTP 200    789ms
+dc.margin                          HTTP 200   5064ms
+dc.northbound                      HTTP 200     81ms
+dc.org-survey                      HTTP 200    171ms
+dc.holder-number                   HTTP 200    113ms
+dc.restricted-release              HTTP 200     81ms
+dc.earnings-forecast               HTTP 200    451ms
+dc.dividend                        HTTP 200     92ms
+dc.executive-hold                  HTTP 200    191ms
+dc.pledge                          HTTP 200    663ms
+dc.convertible-bond                HTTP 200    324ms
+dc.dragon-tiger-seats              HTTP 200    254ms
+boards.industry                    HTTP 200    834ms
+boards.concept                     HTTP 200     66ms
+boards.region                      HTTP 200     70ms
+constituents.industry              HTTP 200     77ms
+constituents.concept               HTTP 200     59ms
+constituents.region                HTTP 200     58ms
+fundflow.boards.industry           HTTP 200     50ms
+fundflow.boards.concept            HTTP 200     48ms
+fundflow.boards.region             HTTP 200     59ms
+fundflow.stocks                    HTTP 200     46ms
+fundflow.history.600519            HTTP 200    152ms
+lu.limit-up                        HTTP 200    205ms
+lu.limit-down                      HTTP 200     64ms
+lu.broken-board                    HTTP 200     55ms
+lu.strong                          HTTP 200     42ms
+lu.sub-new                         HTTP 200     53ms
+quote.600519                       HTTP 200     68ms
+quote.000001                       HTTP 200     49ms
+quote.430047                       HTTP 200    243ms
+quote.688981                       HTTP 200     66ms
+quote.batch                        HTTP 422     13ms
+err.no-such-dataset                HTTP 422     14ms
+err.bad-date                       HTTP 503    658ms
+err.bad-date-fmt                   HTTP 422      3ms
+err.huge-limit                     HTTP 422      3ms
+err.zero-limit                     HTTP 422     13ms
+err.bad-symbol                     HTTP 200    103ms
+err.malformed-symbol               HTTP 422      3ms
+err.bad-board-kind                 HTTP 422     14ms
+err.bad-pool                       HTTP 422      3ms
+err.bad-seats-symbol               HTTP 422      4ms
+err.bad-quote                      HTTP 422      2ms
+err.bad-fundflow-symbol            HTTP 422      3ms

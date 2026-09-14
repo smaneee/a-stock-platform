@@ -19,6 +19,13 @@ class RiskLimits:
     min_commission: float = 5.0  # 最低佣金（元）
     commission_rate: float = 0.0003  # 佣金费率
     stamp_tax_rate: float = 0.0005  # 印花税（仅卖出）
+    #: 滑点比例（单边）。默认与回测引擎的 `ExecutionConfig.slippage` **保持同一数值**：
+    #: 模拟盘与回测用两套成交假设，会让「模拟盘业绩 vs 回测业绩」无法比较，
+    #: 而模拟盘无滑点属**系统性偏乐观**（P1-02 登记缺口）。可用 RISK_SLIPPAGE=0 关掉。
+    slippage: float = 0.0005
+    #: 过户费费率（**双边**，沪深京均收）。同样与回测 `ExecutionConfig.transfer_fee_rate`
+    #: 保持同值；模拟盘此前完全不计，属成本低估（P1-02 登记缺口）。
+    transfer_fee_rate: float = 0.00001
 
 
 DEFAULT_LIMITS = RiskLimits()

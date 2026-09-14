@@ -304,7 +304,7 @@ export default function PaperTradingPage() {
           </div>
 
           {/* 持仓 */}
-          <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden">
+          <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto">
             <div className="px-4 py-2 border-b border-slate-800">
               <h2 className="font-medium">持仓</h2>
             </div>
@@ -366,7 +366,7 @@ export default function PaperTradingPage() {
           </div>
 
           {/* 成交记录 */}
-          <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden">
+          <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto">
             <div className="px-4 py-2 border-b border-slate-800">
               <h2 className="font-medium">成交记录</h2>
             </div>
@@ -436,7 +436,7 @@ export default function PaperTradingPage() {
           </div>
 
           {/* 委托单 */}
-          <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden">
+          <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto">
             <div className="px-4 py-2 border-b border-slate-800">
               <h2 className="font-medium">委托单</h2>
             </div>

@@ -18,17 +18,21 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.database.models import LimitUpPoolMember, LimitUpSentiment
+from app.database.models import LimitUpPoolMember, LimitUpSentiment, TradingDate
 from app.market_data.eastmoney_limit_up import (
     BEIJING,
     EastmoneyLimitUpService,
 )
+from app.market_rules.calendar import TradingCalendar
 from app.time_utils import utc_now
 
 logger = logging.getLogger(__name__)
+
+#: 东财实抓口径的算法版本（封板资金/封板时间/连板数来自上游榜单）
+EASTMONEY_ALGORITHM_VERSION = "eastmoney-push2ex-v1"
 
 # 情绪池 key -> 汇总行上的计数字段
 POOL_COUNT_COLUMNS: dict[str, str] = {
@@ -88,13 +92,87 @@ class LimitUpSentimentStore:
         self._db = db
         self._service = service
 
+    # ──────────────── 交易日对齐 ────────────────
+
+    def _resolve_trade_date(self, requested: date | None) -> date:
+        """把请求日期对齐到交易日。
+
+        上游涨停池在非交易日仍会返回「最近一个交易日」的数据。如果直接拿
+        自然日落库，周六 / 周日 / 节假日各会写出一条与前一交易日完全相同的
+        幽灵点，把封板率曲线污染成锯齿。日历可用时统一回退到
+        ``last_trading_day_on_or_before``；日历为空时保持原样（不阻断抓取）。
+        """
+        anchor = requested or datetime.now(BEIJING).date()
+        calendar = TradingCalendar(self._db)
+        if calendar.is_empty():
+            return anchor
+        try:
+            return calendar.last_trading_day_on_or_before(anchor)
+        except ValueError:
+            # 日历覆盖不到该日期（过早 / 过晚），按原样处理
+            return anchor
+
+    def _trading_days_between(self, start: date, end: date) -> list[date]:
+        """区间内的交易日；日历不可用时退化为「跳过周末」。"""
+        calendar = TradingCalendar(self._db)
+        if not calendar.is_empty():
+            days = calendar.trading_days_in_range(start, end)
+            if days:
+                return sorted(days)
+        return [
+            start + timedelta(days=offset)
+            for offset in range((end - start).days + 1)
+            if (start + timedelta(days=offset)).weekday() < 5
+        ]
+
+    def prune_non_trading_days(self) -> list[date]:
+        """删除落在交易日历覆盖区间内、却不是交易日的情绪行。
+
+        用于自愈早期 ``capture()`` 用自然日当 trade_date 留下的幽灵行。只在
+        日历可用时执行，并且只清理日历**覆盖区间之内**的日期，避免误删日历
+        尚未同步的历史区间。返回被清理的日期列表。
+        """
+        calendar = TradingCalendar(self._db)
+        if calendar.is_empty():
+            return []
+        cal_min, cal_max = self._db.execute(
+            select(func.min(TradingDate.trade_date), func.max(TradingDate.trade_date))
+        ).one()
+        if cal_min is None or cal_max is None:
+            return []
+
+        trading_days = calendar.trading_days_in_range(cal_min, cal_max)
+        candidates = self._db.scalars(
+            select(LimitUpSentiment.trade_date).where(
+                LimitUpSentiment.trade_date >= cal_min,
+                LimitUpSentiment.trade_date <= cal_max,
+            )
+        ).all()
+        stale = sorted(d for d in candidates if d not in trading_days)
+        if not stale:
+            return []
+
+        self._db.execute(
+            delete(LimitUpPoolMember).where(LimitUpPoolMember.trade_date.in_(stale))
+        )
+        self._db.execute(
+            delete(LimitUpSentiment).where(LimitUpSentiment.trade_date.in_(stale))
+        )
+        self._db.commit()
+        logger.info("清理非交易日情绪行 %d 条: %s", len(stale), stale)
+        return stale
+
     async def capture(self, trade_date: date | None = None) -> CaptureResult | None:
         """抓取指定交易日（默认北京时间的今天）的情绪池并落库。
 
-        当天全部池都没有数据时返回 ``None``（非交易日或超出上游保留窗口），
-        不写入空行，避免污染情绪曲线。
+        当天全部池都没有数据时返回 ``None``（超出上游保留窗口），不写入空行，
+        避免污染情绪曲线。非交易日会自动对齐到最近一个交易日，因此周末 /
+        节假日调用不会新增幽灵行。
         """
-        target = trade_date or datetime.now(BEIJING).date()
+        # 自愈历史遗留的幽灵行（旧版本用自然日落库留下的非交易日记录）。
+        # 放在抓取之前：即使上游暂时不可用，情绪曲线也能先被修正。
+        self.prune_non_trading_days()
+        target = self._resolve_trade_date(trade_date)
         results: dict[str, list[dict[str, Any]]] = {}
         counts: dict[str, int] = {}
         for pool in POOL_COUNT_COLUMNS:
@@ -103,7 +181,7 @@ class LimitUpSentimentStore:
             counts[pool] = max(result.total, len(result.items))
 
         if not any(counts.values()):
-            logger.info("情绪池 %s 无数据（非交易日或超出上游保留窗口），跳过落库", target)
+            logger.info("情绪池 %s 无数据（超出上游保留窗口），跳过落库", target)
             return None
 
         limit_up_items = results.get("limit-up", [])
@@ -134,6 +212,15 @@ class LimitUpSentimentStore:
         )
         row.source = "eastmoney"
         row.captured_at = utc_now()
+        # P0-03：东财实抓同样登记样本面与算法版本，否则与 derived 无法区分口径
+        covered = {
+            str(item.get("symbol") or "").strip()
+            for items in results.values()
+            for item in items
+        }
+        covered.discard("")
+        row.coverage_symbols = len(covered)
+        row.algorithm_version = EASTMONEY_ALGORITHM_VERSION
 
         member_count = 0
         for pool, items in results.items():
@@ -159,13 +246,14 @@ class LimitUpSentimentStore:
     async def backfill(
         self, days: int = 20, *, end: date | None = None, delay: float = 0.4
     ) -> list[CaptureResult]:
-        """回补最近 ``days`` 个自然日；上游没有数据的日期自动跳过。"""
-        last = end or datetime.now(BEIJING).date()
+        """回补最近 ``days`` 个自然日内的**交易日**；上游没有数据的日期自动跳过。
+
+        目标日期来自交易日历，周末与节假日都不会发请求，也不会写出与前一
+        交易日重复的幽灵行。
+        """
+        last = self._resolve_trade_date(end)
         captured: list[CaptureResult] = []
-        for offset in range(days, -1, -1):
-            day = last - timedelta(days=offset)
-            if day.weekday() >= 5:  # 周末必定没有情绪池数据，省掉请求
-                continue
+        for day in self._trading_days_between(last - timedelta(days=days), last):
             result = await self.capture(day)
             if result is not None:
                 captured.append(result)

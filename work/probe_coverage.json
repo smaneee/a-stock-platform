@@ -1,0 +1,293 @@
+{
+ "dc.dragon-tiger": {
+  "status": 200,
+  "ms": 353,
+  "total": 268118,
+  "n": 500,
+  "markets": {
+   "SZ": 238,
+   "BJ": 57,
+   "SH": 205
+  },
+  "date_field": "trade_date",
+  "date_min": "2026-09-02",
+  "date_max": "2026-09-11"
+ },
+ "dc.block-trade": {
+  "status": 200,
+  "ms": 726,
+  "total": 681569,
+  "n": 500,
+  "markets": {
+   "SH": 200,
+   "SZ": 256,
+   "BJ": 11,
+   "其他": 33
+  },
+  "date_field": "trade_date",
+  "date_min": "2026-09-07",
+  "date_max": "2026-09-11"
+ },
+ "dc.margin": {
+  "status": 200,
+  "ms": 5257,
+  "total": 6822021,
+  "n": 500,
+  "markets": {
+   "其他": 96,
+   "SH": 404
+  },
+  "date_field": "trade_date",
+  "date_min": "2026-09-11",
+  "date_max": "2026-09-11"
+ },
+ "dc.northbound": {
+  "status": 200,
+  "ms": 166,
+  "total": 15449,
+  "n": 500,
+  "markets": {
+   "其他": 500
+  },
+  "date_field": "trade_date",
+  "date_min": "2026-05-14",
+  "date_max": "2026-09-11"
+ },
+ "dc.org-survey": {
+  "status": 200,
+  "ms": 231,
+  "total": 286909,
+  "n": 500,
+  "markets": {
+   "SZ": 111,
+   "SH": 374,
+   "BJ": 15
+  },
+  "date_field": "notice_date",
+  "date_min": "2026-09-11",
+  "date_max": "2026-09-13"
+ },
+ "dc.holder-number": {
+  "status": 200,
+  "ms": 164,
+  "total": 5557,
+  "n": 500,
+  "markets": {
+   "SH": 248,
+   "SZ": 252
+  },
+  "date_field": "end_date",
+  "date_min": "2014-06-30",
+  "date_max": "2026-09-10"
+ },
+ "dc.restricted-release": {
+  "status": 200,
+  "ms": 133,
+  "total": 31497,
+  "n": 500,
+  "markets": {
+   "SH": 243,
+   "SZ": 225,
+   "BJ": 32
+  },
+  "date_field": "free_date",
+  "date_min": "2028-10-09",
+  "date_max": "2035-10-29"
+ },
+ "dc.earnings-forecast": {
+  "status": 200,
+  "ms": 735,
+  "total": 190920,
+  "n": 500,
+  "markets": {
+   "SH": 243,
+   "SZ": 181,
+   "BJ": 76
+  },
+  "date_field": "notice_date",
+  "date_min": "2026-07-16",
+  "date_max": "2026-09-14"
+ },
+ "dc.dividend": {
+  "status": 200,
+  "ms": 152,
+  "total": 56973,
+  "n": 500,
+  "markets": {
+   "SH": 261,
+   "SZ": 226,
+   "BJ": 13
+  },
+  "date_field": "notice_date",
+  "date_min": "2026-08-26",
+  "date_max": "2026-09-14"
+ },
+ "dc.executive-hold": {
+  "status": 200,
+  "ms": 263,
+  "total": 171740,
+  "n": 500,
+  "markets": {
+   "SH": 197,
+   "BJ": 87,
+   "SZ": 216
+  },
+  "date_field": "change_date",
+  "date_min": "2026-08-27",
+  "date_max": "2026-09-11"
+ },
+ "dc.pledge": {
+  "status": 200,
+  "ms": 883,
+  "total": 1633259,
+  "n": 500,
+  "markets": {
+   "SZ": 263,
+   "SH": 237
+  },
+  "date_field": "trade_date",
+  "date_min": "2026-09-11",
+  "date_max": "2026-09-11"
+ },
+ "dc.convertible-bond": {
+  "status": 200,
+  "ms": 225,
+  "total": 1052,
+  "n": 500,
+  "markets": {
+   "BJ": 5,
+   "SH": 237,
+   "SZ": 258
+  },
+  "date_field": "listing_date",
+  "date_min": "2021-04-27",
+  "date_max": "2026-09-09"
+ },
+ "lu.limit-up": {
+  "status": 200,
+  "ms": 236,
+  "trade_date": "2026-09-11",
+  "total": 40,
+  "n": 40,
+  "markets": {
+   "SZ": 18,
+   "SH": 22
+  }
+ },
+ "lu.limit-down": {
+  "status": 200,
+  "ms": 44,
+  "trade_date": "2026-09-11",
+  "total": 21,
+  "n": 21,
+  "markets": {
+   "SZ": 13,
+   "SH": 8
+  }
+ },
+ "lu.broken-board": {
+  "status": 200,
+  "ms": 41,
+  "trade_date": "2026-09-11",
+  "total": 18,
+  "n": 18,
+  "markets": {
+   "SH": 9,
+   "SZ": 9
+  }
+ },
+ "lu.strong": {
+  "status": 200,
+  "ms": 59,
+  "trade_date": "2026-09-11",
+  "total": 90,
+  "n": 90,
+  "markets": {
+   "BJ": 2,
+   "SZ": 47,
+   "SH": 41
+  }
+ },
+ "lu.sub-new": {
+  "status": 200,
+  "ms": 58,
+  "trade_date": "2026-09-11",
+  "total": 159,
+  "n": 159,
+  "markets": {
+   "SH": 47,
+   "BJ": 70,
+   "SZ": 42
+  }
+ },
+ "boards.industry": {
+  "status": 200,
+  "ms": 765,
+  "n": 496
+ },
+ "boards.concept": {
+  "status": 200,
+  "ms": 320,
+  "n": 504
+ },
+ "boards.region": {
+  "status": 200,
+  "ms": 57,
+  "n": 31
+ },
+ "constituents.BK1592": {
+  "status": 200,
+  "ms": 53,
+  "n": 13,
+  "markets": {
+   "SZ": 5,
+   "SH": 7,
+   "BJ": 1
+  }
+ },
+ "constituents.BK0976": {
+  "status": 200,
+  "ms": 311,
+  "n": 30,
+  "markets": {
+   "SZ": 23,
+   "SH": 6,
+   "BJ": 1
+  }
+ },
+ "constituents.BK0153": {
+  "status": 200,
+  "ms": 536,
+  "n": 905,
+  "markets": {
+   "BJ": 40,
+   "SH": 179,
+   "SZ": 686
+  }
+ },
+ "ff.boards.industry": {
+  "status": 200,
+  "ms": 246,
+  "n": 496
+ },
+ "ff.boards.concept": {
+  "status": 200,
+  "ms": 298,
+  "n": 504
+ },
+ "ff.boards.region": {
+  "status": 200,
+  "ms": 72,
+  "n": 31
+ },
+ "ff.stocks": {
+  "status": 200,
+  "ms": 488,
+  "n": 1000,
+  "markets": {
+   "SZ": 528,
+   "SH": 453,
+   "BJ": 19
+  }
+ }
+}

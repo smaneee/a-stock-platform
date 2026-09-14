@@ -1,0 +1,292 @@
+{
+  "schema_version": "1.0",
+  "artifact_updated_at": "2026-09-14",
+  "disclaimer": "本文件中的所有结论仅用于研究，不构成投资建议。任何条目都不得被手工隐藏或改写状态以通过展示；修改必须连同证据来源一起更新，并由 backend/tests/test_evidence_contract.py 校验。",
+  "status_vocabulary": {
+    "unverified": "未验证",
+    "in_progress": "验证中",
+    "failed_oos": "未通过样本外验证",
+    "inconclusive": "不确定（样本或口径不足）",
+    "passed_oos": "通过样本外门槛"
+  },
+  "production_gate": {
+    "live_trading_enabled": false,
+    "reason": "实盘开关默认关闭（REAL_TRADING_ENABLED=false）；买点雷达与情绪因子均未通过样本外门槛。",
+    "requirements_for_small_live_pilot": [
+      "多折样本外净超额置信区间下界高于零（含成本与滑点压力测试）",
+      "连续 60 个交易日模拟盘对账无未解释差异",
+      "风控拦截、订单状态机、异常停机、审计日志、备份恢复全部演练通过",
+      "仅使用券商授权的本地 QMT 能力，不使用东方财富账号密码",
+      "试点资金/单笔/单日损失/总回撤上限与人工审批人已明确"
+    ]
+  },
+  "items": [
+    {
+      "id": "buy-point-radar",
+      "name": "实时买点雷达（首页研究候选排名）",
+      "status": "failed_oos",
+      "production_ready": false,
+      "data_cutoff": "2026-09-11",
+      "bars_adjust": "qfq",
+      "sample": {
+        "folds": 6,
+        "horizon_days": 3,
+        "universe_size": 5550,
+        "note": "6 折滚动样本外留出段"
+      },
+      "result": {
+        "mean_excess_pct": -0.39,
+        "folds_positive": 1,
+        "folds_total": 6,
+        "weighted_variant_mean_excess_pct": -0.714
+      },
+      "reproducible_on_this_machine": false,
+      "evidence_source": "docs/研发计划-2026Q4.md §1.2（历史会话结论）",
+      "limitations": [
+        "原始验证产物 work/ps_search/wf_summary.json 与 work/ps_search/sent_factor.py 在本机不存在（已检索项目全树、上级目录与基线备份），-0.390% / -0.714% 无法在本机复现，只能作为历史文献保留",
+        "训练段调权重后留出段为 -0.714%，存在明确过拟合迹象",
+        "平均 t 值不是合并显著性检验；30 次随机对照的最大值不是正式显著性临界值",
+        "同池等权基准只衡量池内排序能力，不含预先选定的市场基准"
+      ],
+      "failure_reason": "样本外超额为负，未达到小额实盘试点的准入门槛。",
+      "ui_rule": "首页只能显示『研究候选排名 / 模型观察区间 / 模型风险预算上限』，禁止出现『建议买入』『最好』『保证收益』等表述。"
+    },
+    {
+      "id": "sentiment-factor",
+      "name": "市场情绪因子（封板率 / 连板高度）",
+      "status": "inconclusive",
+      "production_ready": false,
+      "data_cutoff": "2026-09-11",
+      "bars_adjust": "qfq",
+      "sample": {
+        "derived_days": 226,
+        "derived_range": [
+          "2025-09-15",
+          "2026-08-21"
+        ],
+        "eastmoney_days": 15,
+        "eastmoney_range": [
+          "2026-08-24",
+          "2026-09-11"
+        ],
+        "train_days": 113,
+        "holdout_days": "52~56",
+        "min_alignment_days_required": 120
+      },
+      "result": {
+        "best_nominal_rho": 0.1788,
+        "best_nominal_naive_p": 0.007,
+        "best_nominal_metric": "derived/qfq/k=5 max_streak",
+        "block_bootstrap_ci_crosses_zero": true,
+        "block_lengths_tested": [
+          1,
+          5,
+          10,
+          20
+        ],
+        "seal_rate_k1_rho": -0.0449,
+        "seal_rate_k1_naive_p": 0.502
+      },
+      "reproducible_on_this_machine": true,
+      "evidence_source": "outputs/handoff/p0-01-sentiment-report.md；work/ps_search/out/sentiment-v2-20260913-202916.json",
+      "limitations": [
+        "修正排序、并列秩、可用时点与来源分离后，没有任何一条结果支持可交易预测力",
+        "最强名义结果在块自助 b>=5 的置信区间全部跨零；仅 b=1（等价 i.i.d.，正是旧脚本的错误）才排除零",
+        "eastmoney 段可对齐仅 10~14 天，低于 120 天阈值 → 样本不足",
+        "48 组检验未做多重比较校正",
+        "全部 241 行的 captured_at 都是 2026-09-12，DB 观察可用时间不等于历史发布时点"
+      ],
+      "failure_reason": "样本不足且不稳健，无法确认可交易预测力；不得据此调整仓位。",
+      "ui_rule": "情绪闸门（仓位缩放）保持默认关闭，且必须显示『当前未通过验证』。"
+    },
+    {
+      "id": "portfolio-backtest-engine",
+      "name": "组合回测执行引擎（账户净值与成交约束）",
+      "status": "in_progress",
+      "production_ready": false,
+      "data_cutoff": "2026-09-11",
+      "bars_adjust": "qfq",
+      "sample": {
+        "bars_scanned_for_limit_events": 1256475,
+        "window_start": "2025-10-01"
+      },
+      "result": {
+        "nav_mechanics_verified": true,
+        "limit_event_definition": "按 MarketRuleEngine 的真实分板块板价（主板10%/创业板与科创板20%/北交所30%/ST5%，价格 0.01 元取整）",
+        "limit_up_one_word_bars": 1171,
+        "limit_down_one_word_bars": 724,
+        "close_at_limit_bars": 17266,
+        "close_at_limit_ratio": 0.01374,
+        "limit_event_approx_reported": {
+          "note": "报告首版用近似阈值 ±9.5% 得到的历史数字，保留以便审计；引用影响面请用上面的真实板价口径",
+          "threshold": 0.095,
+          "limit_up_one_word_bars": 953,
+          "limit_down_one_word_bars": 377,
+          "close_at_limit_bars": 23837
+        },
+        "bars_adjust_coverage": "组合回测 / 单标的回测 / 实时扫描 / 指标接口均优先前复权",
+        "limit_judgement_reference": "unadjusted_previous_close",
+        "capacity_aum_upper_bound": "min(成交日净值 × 容量倍数)",
+        "real_data_check": "000001 同期未复权 +2.712% vs 前复权 +11.714%"
+      },
+      "reproducible_on_this_machine": true,
+      "evidence_source": "outputs/handoff/p0-05-backtest-realism.md；backend/tests/test_backtest_realism.py",
+      "limitations": [
+        "收益口径已是前复权（除权跳空不再计入收益），但组合回测与单标的回测是两条独立取数链路，历史结果仍须按 bars_adjust 字段区分后才可引用",
+        "容量已建模并可换算规模上界，但该上界建立在「无市场冲击」假设上，是上界不是承诺；整笔被拒的委托不在成交列表里，真实上限可能更低",
+        "历史股票池只有 2 份快照（幸存者偏差未解决），跨期结论仍带此风险",
+        "真实成交冲击、集合竞价成交概率、盘中流动性衰减均未建模"
+      ],
+      "failure_reason": "工程侧已修复 4 类严重缺陷并补齐 D5~D10（基准分列 / 口径标注 / 尾部风险 / 部分成交与容量 / 实验预登记），引擎可信；但**策略层面没有任何一条通过样本外门槛**，叠加幸存者偏差，仍不能用于策略晋级或实盘。",
+      "ui_rule": "D6 口径切换（未复权 → 前复权）使此前所有组合回测与单标的回测结果作废，必须重跑；引用任何结果前先看 bars_adjust / bars_adjust_label。"
+    },
+    {
+      "id": "indicator-suite",
+      "name": "技术指标套件（MA/EMA/MACD/RSI/量比/振幅/BOLL/KDJ/ATR/OBV/CCI/WR）",
+      "status": "in_progress",
+      "production_ready": false,
+      "data_cutoff": "2026-09-11",
+      "bars_adjust": "qfq",
+      "sample": {
+        "tests": 113,
+        "reference_impl_max_rel_error": 1.38e-15
+      },
+      "result": {
+        "ma_ema_rsi_macd_boll_verified": true,
+        "atr_seed_mismatch_pct": 6.95,
+        "rsi_missing_bar_returns_100": true,
+        "bars_adjust_policy": "本地缓存优先 qfq，缺失或落后于未复权时回退 none；响应带 bars_adjust 字段"
+      },
+      "reproducible_on_this_machine": true,
+      "evidence_source": "outputs/handoff/indicator-verification.md；backend/tests/test_indicators_verification.py",
+      "limitations": [
+        "缺失值传播不一致：指数平滑型指标（EMA/RSI/MACD/ATR）在缺失根沿用上一状态而非 NaN，其中 RSI 会在缺失当天直接输出 100.0",
+        "ATR 首个有效值种子口径与文档不符（实现是 pandas 指数平滑种子，与「等价于 SMA(TR,N,1)」的表述实测差 6.95%）",
+        "指标口径虽已与扫描/回测对齐，但两者用的是不同取数链路（指标读缓存、扫描走缓存+实时行情合并），除权日以外的极端情形未做逐日一致性核验"
+      ],
+      "failure_reason": "指标公式本身经独立参考实现核对一致，但缺失值语义与 ATR 种子口径未定稿，需研发决策后才能标为通过。",
+      "ui_rule": "指标页必须写明复权口径、周期与数据截止时间。"
+    },
+    {
+      "id": "universe-point-in-time",
+      "name": "历史股票池快照（point-in-time）",
+      "status": "unverified",
+      "production_ready": false,
+      "data_cutoff": "2026-09-11",
+      "sample": {
+        "snapshot_count": 2,
+        "snapshot_days": [
+          "2021-06-30",
+          "2026-09-11"
+        ],
+        "latest_total": 5913,
+        "latest_included": 5550,
+        "latest_excluded": 363,
+        "by_exchange_included": {
+          "SH": 2311,
+          "SZ": 2896,
+          "BJ": 343
+        }
+      },
+      "result": {
+        "usable_for_history": false
+      },
+      "reproducible_on_this_machine": true,
+      "evidence_source": "outputs/quality/data-quality-20260913.md；scripts/data_quality_report.py",
+      "limitations": [
+        "只有 2 份快照，无法构造 point-in-time 历史股票池，幸存者偏差未解决",
+        "historical_bars 是当前 5580 只标的的快照，跨期回测一律带幸存者偏差风险"
+      ],
+      "failure_reason": "覆盖不足：按研发计划第 5.2 节，缺必要市场时必须拒绝生成『完整历史快照』。",
+      "ui_rule": "任何跨期回测结论必须并列显示『幸存者偏差未解决』。"
+    },
+    {
+      "id": "eastmoney-datacenter",
+      "name": "东方财富数据中心与情绪池",
+      "status": "in_progress",
+      "production_ready": false,
+      "data_cutoff": "2026-09-11",
+      "sample": {
+        "datasets": 17,
+        "fields_matched": "12 个数据集 + 5 个情绪池字段 100% 一致"
+      },
+      "result": {
+        "passed": 13,
+        "partial": 12,
+        "failed": 0,
+        "unverified": 4,
+        "fixed_after_audit": [
+          "EM-01 融资融券分页不可用（重叠 499/500）",
+          "EM-02 未来 trade_date 冒名顶替",
+          "EM-03 非法日期误报 503",
+          "EM-07 限售解禁无『最近将解禁』视角"
+        ]
+      },
+      "reproducible_on_this_machine": true,
+      "evidence_source": "outputs/handoff/eastmoney-feature-matrix.md；outputs/handoff/em01-margin-paging.json",
+      "limitations": [
+        "EM-04~06 恒空字段（沪深港通 fund_inflow/quota_balance、分红送配 bonus_ratio、龙虎榜 10/20 日涨跌幅）属上游口径约束",
+        "EM-09 龙虎榜席位 12 个字段前端只渲染 4 个",
+        "未取得该端点的官方文档；盘中时效与上游限流阈值未核实",
+        "授权风险：已核实《东方财富用户服务协议》第六条 2 限制未经交易所书面同意复制行情数据或用于开发衍生品，项目内未见书面授权"
+      ],
+      "failure_reason": "功能可用但授权状态未核实，且部分字段恒空；只能内部研究，不得再分发。",
+      "ui_rule": "数据缺失时显示『—』而不是 0，并保留来源与更新时间。"
+    },
+    {
+      "id": "paper-trading-loop",
+      "name": "模拟盘每日闭环与前向观察",
+      "status": "unverified",
+      "production_ready": false,
+      "data_cutoff": null,
+      "sample": {
+        "forward_trading_days_accumulated": 0,
+        "accounts": 2,
+        "positions": 21,
+        "orders": 33,
+        "trades": 27,
+        "rebalance_plans": 2,
+        "daily_settlements": 6
+      },
+      "result": {
+        "days_required": 60,
+        "days_accumulated": 0,
+        "closure_verified": true,
+        "closed_loop_orders_filled": 10,
+        "closed_loop_reconciliation_unexplained_diff": 0.0,
+        "freeze_tag": "2026-09-14-paper-costs-v2",
+        "freeze_tag_history": [
+          {
+            "tag": "2026-09-13-paper-guards-v1",
+            "started_on": "2026-09-13",
+            "trading_days_counted": 0,
+            "note": "可成交性护栏（涨跌停/停牌）+ T+1 结算口径；因 2026-09-14 接入滑点属成交逻辑变更而停用，计数为 0，未损失观察日"
+          },
+          {
+            "tag": "2026-09-14-paper-costs-v1",
+            "started_on": "2026-09-14",
+            "trading_days_counted": 0,
+            "note": "接入滑点（RISK_SLIPPAGE=5bp，与回测同值）+ 冻结额按含滑点上限价计提；因同日再接入过户费而停用，计数为 0"
+          },
+          {
+            "tag": "2026-09-14-paper-costs-v2",
+            "started_on": "2026-09-14",
+            "trading_days_counted": 0,
+            "first_countable_day": "2026-09-15",
+            "note": "接入过户费（RISK_TRANSFER_FEE_RATE=0.001% 双边，与回测同值）+ paper_trades.transfer_fee 列（迁移 0023）+ 冻结额覆盖过户费；当前冻结标签。起点登记为变更当天，而计数规则是「严格晚于起点」，故当天不计入、首个可计日为下一个交易日 2026-09-15（15:30 日终结算时自动 +1）—— 这是刻意保守的读法（新逻辑当日中午才生效），已由两条测试固化"
+          }
+        ]
+      },
+      "reproducible_on_this_machine": true,
+      "evidence_source": "backend/a_stock.db（paper_accounts=2 / paper_positions=21 / paper_orders=33 / paper_trades=27 / paper_rebalance_plans=2 / daily_settlements=6；forward_observations 计数=0，含新旧两个冻结标签）；outputs/handoff/_paper_counts.py、_register_freeze_tag.py 可复核",
+      "limitations": [
+        "闭环已跑通（10/10 成交、对账未解释差异 0.00），但前向交易日只计「严格晚于起点、已收盘（≥15:00）、为交易日」的日期，当前 0/60",
+        "工程闭环冻结后才开始累计；成交逻辑重大修改后必须重新计时（2026-09-14 因接入滑点与过户费已重新计时两次，旧标签计数均为 0，未损失观察日）",
+        "模拟盘已与回测对齐**滑点与过户费**；**部分成交仍未建模**（回测有参与率上限、模拟盘一次性全额成交），成交假设尚未完全对齐",
+        "模拟盘成交按行情价格即时撮合，未模拟排队与部分成交的市场微观结构"
+      ],
+      "failure_reason": "前向观察窗口刚开始（当前冻结标签 2026-09-14-paper-costs-v1），累计 0/60 —— 样本量不足，不能对策略是否有效下任何结论。",
+      "ui_rule": "不得用历史重放代替前向观察，也不得用开发截止日期倒推达标。"
+    }
+  ]
+}

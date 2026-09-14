@@ -26,6 +26,8 @@ class BacktestResult:
     trade_count: int = 0
     equity_curve: list[float] = field(default_factory=list)
     trades: list[dict] = field(default_factory=list)
+    #: 本次实际使用的日线复权口径（D6）。必须如实透出，否则结果会被按错口径引用。
+    bars_adjust: str = "none"
 
     def to_dict(self) -> dict:
         return {
@@ -38,6 +40,9 @@ class BacktestResult:
             "trade_count": self.trade_count,
             "equity_curve": self.equity_curve,
             "trades": self.trades,
+            # 收益口径标注（D6/D8）：单标的回测此前完全没有口径标注，
+            # 与组合回测口径不一致时无法从结果里看出来。
+            **metrics.return_convention_meta(self.bars_adjust),
         }
 
 
@@ -50,16 +55,19 @@ class BacktestEngine:
         initial_cash: float = 100_000.0,
         config: ExecutionConfig | None = None,
         analysis_window: int = 300,
+        bars_adjust: str = "none",
     ):
         self.strategy = strategy
         self.initial_cash = initial_cash
         self.simulator = ExecutionSimulator(config)
         self.analysis_window = max(60, analysis_window)
+        # 只用于在结果里如实标注口径（取数由调用方按同一配置完成）
+        self.bars_adjust = (bars_adjust or "none").lower()
 
     def run(self, history: list[QuoteData]) -> BacktestResult:
         """运行回测，返回结果。"""
         if not history:
-            return BacktestResult()
+            return BacktestResult(bars_adjust=self.bars_adjust)
 
         history = sorted(history, key=lambda item: item.market_time or item.received_at)
 
@@ -101,7 +109,9 @@ class BacktestEngine:
             equity_curve.append(total_asset)
             previous_trading_date = trading_date
 
-        result = BacktestResult(equity_curve=equity_curve, trades=trades)
+        result = BacktestResult(
+            equity_curve=equity_curve, trades=trades, bars_adjust=self.bars_adjust
+        )
         result.trade_count = len(trades)
 
         final_asset = equity_curve[-1] if equity_curve else self.initial_cash
@@ -138,7 +148,8 @@ class BacktestEngine:
                     value * self.simulator.config.commission_rate,
                     self.simulator.config.min_commission,
                 )
-                if value + commission <= cash:
+                transfer_fee = value * self.simulator.config.transfer_fee_rate
+                if value + commission + transfer_fee <= cash:
                     break
                 affordable -= 100
             if affordable < 100:
@@ -148,7 +159,7 @@ class BacktestEngine:
             if not result.filled:
                 return cash, position, available_position, today_bought, avg_cost, realized
 
-            cost = result.price * result.quantity + result.commission
+            cost = result.price * result.quantity + result.commission + result.transfer_fee
             cash -= cost
             new_quantity = position + result.quantity
             avg_cost = (avg_cost * position + cost) / new_quantity if new_quantity else 0.0
@@ -163,6 +174,8 @@ class BacktestEngine:
                     "price": result.price,
                     "quantity": result.quantity,
                     "commission": result.commission,
+                    "stamp_tax": 0.0,
+                    "transfer_fee": result.transfer_fee,
                     "pnl": 0.0,
                 }
             )
@@ -176,9 +189,19 @@ class BacktestEngine:
             if not result.filled:
                 return cash, position, available_position, today_bought, avg_cost, realized
 
-            proceeds = result.price * result.quantity - result.commission - result.stamp_tax
+            proceeds = (
+                result.price * result.quantity
+                - result.commission
+                - result.stamp_tax
+                - result.transfer_fee
+            )
             cash += proceeds
-            pnl = (result.price - avg_cost) * result.quantity - result.commission - result.stamp_tax
+            pnl = (
+                (result.price - avg_cost) * result.quantity
+                - result.commission
+                - result.stamp_tax
+                - result.transfer_fee
+            )
             position -= result.quantity
             available_position -= result.quantity
             if position == 0:
@@ -193,6 +216,7 @@ class BacktestEngine:
                     "quantity": result.quantity,
                     "commission": result.commission,
                     "stamp_tax": result.stamp_tax,
+                    "transfer_fee": result.transfer_fee,
                     "pnl": pnl,
                 }
             )

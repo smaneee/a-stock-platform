@@ -1,0 +1,41 @@
+{
+ "northbound": {
+  "rows": 6,
+  "always_null": [
+   "fund_inflow",
+   "quota_balance"
+  ],
+  "channels": [
+   "南向资金合计",
+   "港股通(沪)",
+   "港股通(深)",
+   "深股通",
+   "北向资金合计",
+   "沪股通"
+  ]
+ },
+ "index_refs": [
+  "/assets/index-wZlFnCnz.js",
+  "/assets/query-JdmEMXXV.js",
+  "/assets/react-DtNsdKuD.js",
+  "/assets/charts-BbA45-cQ.js",
+  "/assets/index-L3xdVHJh.css"
+ ],
+ "asset:/assets/index-wZlFnCnz.js": {
+  "status": 200,
+  "len": 170302
+ },
+ "asset:/assets/query-JdmEMXXV.js": {
+  "status": 200,
+  "len": 49104
+ },
+ "asset:/assets/react-DtNsdKuD.js": {
+  "status": 200,
+  "len": 156589
+ },
+ "asset:/assets/charts-BbA45-cQ.js": {
+  "status": 200,
+  "len": 406802
+ },
+ "session": "{\"day\":\"2026-09-13\",\"is_trading_day\":false,\"last_trading_day\":\"2026-09-11\",\"next_trading_day\":\"2026-09-14\",\"calendar_total\":1504,\"server_time\":\"2026-09-13T20:41:48+08:00\",\"timezone\":\"Asia/Shanghai (UTC+8, 无夏令时)\",\"phase\":\"non_trading_day\",\"phase_label\":\"今日休市\",\"phase_note\":\"周末/节假日休市；最新行情为上一交易日收盘，候选只能标为下一交易日研究候选。\",\"is_open\":false,\"orders_accepted\":false,\"tradable_now\":false,\"candidates_are\":\"下一交易日（2026-09-14）研究候选\",\"universe\":{\"snapshot_day\":\"2026-09-11\",\"total\":5913,\"included\":5550,\"excluded\":363,\"st_count\":323,\"by_trading_status\":{\"active\":5553,\"delisted\":339,\"pending_listing\":9,\"suspended\":12},\"note\":\"included=通过排除规则的在册标的，不等于此刻可下单；能否成交看 tradable_now。\"},\"account_permissions\":{\"live_trading_enabled\":false,\"live_trading_reason\":\"实盘开关默认关闭（REAL_TRADING_ENABLED=false），当前只能研究与模拟\",\"paper_trading_available\":true,\"research_only_disclaimer\":\"所有分析、选股与回测结果仅用于研究，不构成投资建议。\"}}"
+}

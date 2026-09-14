@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 
 import {
   addWatchlistSymbol,
@@ -179,7 +180,8 @@ export default function WatchlistPage() {
             </button>
           </form>
           <p className="text-xs text-slate-500 mt-2">
-            代码格式：沪市 60/68 开头，深市 00/30 开头，北交所 8 开头
+            代码格式：沪市 60/68 开头，深市 00/30 开头，北交所 43/8x/920 开头
+            （920 为北交所新代码段，如 920819）
           </p>
         </div>
       )}
@@ -196,7 +198,7 @@ export default function WatchlistPage() {
           {watchlists.map((wl) => (
             <div
               key={wl.id}
-              className="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden"
+              className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto"
             >
               <div className="px-4 py-2 border-b border-slate-800 flex items-center justify-between">
                 <h3 className="font-medium">{wl.name}</h3>
@@ -262,7 +264,13 @@ export default function WatchlistPage() {
                               ? new Date(quote.market_time).toLocaleTimeString()
                               : "—"}
                           </td>
-                          <td className="px-4 py-2 text-right">
+                          <td className="px-4 py-2 text-right space-x-3">
+                            <Link
+                              to={`/intraday?symbol=${s.symbol}`}
+                              className="text-xs text-slate-500 hover:text-sky-400"
+                            >
+                              分时
+                            </Link>
                             <button
                               onClick={() =>
                                 removeSymbolMutation.mutate({

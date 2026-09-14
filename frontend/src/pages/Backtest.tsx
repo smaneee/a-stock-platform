@@ -248,6 +248,37 @@ export default function BacktestPage() {
                 />
               </div>
 
+              {/* 结果口径（D6/D8）：单标的结果也必须自报口径，否则无法与组合结果并列引用 */}
+              <div className="mt-3 rounded border border-slate-800 bg-slate-950/60 p-3 text-xs space-y-1">
+                <div className="font-medium text-slate-300">结果口径（引用前必读）</div>
+                <div className="text-slate-400">
+                  复权口径：
+                  <span className="text-slate-200">
+                    {result.result.bars_adjust_label ??
+                      result.result.bars_adjust ??
+                      "未标注（旧任务）"}
+                  </span>
+                  {result.result.limit_reference === "unadjusted_previous_close" && (
+                    <>
+                      {" ｜ 涨跌停判定基准："}
+                      <span className="text-slate-200">未复权昨收</span>
+                    </>
+                  )}
+                  {typeof result.result.limit_reference_missing === "number" &&
+                    result.result.limit_reference_missing > 0 && (
+                      <span className="ml-2 text-amber-400">
+                        ⚠ 有 {result.result.limit_reference_missing} 根 K 线未能对齐未复权昨收，
+                        对应交易日已跳过涨跌停判断
+                      </span>
+                    )}
+                </div>
+                {result.result.return_convention_note && (
+                  <div className="text-slate-500">
+                    {result.result.return_convention_note}
+                  </div>
+                )}
+              </div>
+
               {result.result.equity_curve.length > 0 && (
                 <div className="h-64 bg-slate-950 rounded p-2">
                   <ResponsiveContainer width="100%" height="100%">
@@ -288,7 +319,8 @@ export default function BacktestPage() {
                   <summary className="cursor-pointer text-slate-400">
                     成交记录（{result.result.trades.length} 笔）
                   </summary>
-                  <table className="w-full text-xs mt-2">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs mt-2">
                     <thead className="text-slate-500">
                       <tr>
                         <th className="text-left">时间</th>
@@ -340,7 +372,8 @@ export default function BacktestPage() {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                    </table>
+                  </div>
                 </details>
               )}
             </>

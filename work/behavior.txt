@@ -1,0 +1,32 @@
+﻿[PASS] filter.dragon-tiger symbol=300808            HTTP 200 n=18 全部 symbol=300808
+[PASS] filter.holder-number symbol=000725           HTTP 200 n=1 全部 symbol=000725
+[PASS] filter.dragon-tiger date=2026-09-11          HTTP 200 n=20 trade_date 唯一值=['2026-09-11']
+[PASS] filter.northbound date_from/date_to          HTTP 200 n=20 区间内日期=['2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11']
+[PASS] page.dragon-tiger page=2 limit=5             HTTP 200 page=2 limit=5 返回 n=5
+[PASS] page.内容不重复 page1=['300808', '301176', '300563', '300290', '301520'] page2=['002059', '002790', '000523', '002201', '002514']
+[PASS] order.restricted-release asc（最早解禁优先）         HTTP 200 n=10 free_date 首/末=2010-01-04/2010-01-11 升序=True
+[PASS] order.restricted-release default desc        HTTP 200 默认desc 首/末=2035-10-29/2032-06-17（远端未来解禁优先）
+[PASS] limit-up trade_date=2026-09-11               HTTP 200 trade_date=2026-09-11 n=20
+[PASS] limit-up trade_date=2026-06-01（超保留窗口）        HTTP 200 trade_date=2026-06-01 n=0（上游保留窗口之外）
+[PASS] limit-up trade_date=2026-08-28（保留窗口内）        HTTP 200 trade_date=2026-08-28 n=20
+[PASS] semantics.limit-up change_pct 全为正（百分数）       HTTP 200 n=20 全为正值 min=9.966 max=19.983
+[PASS] semantics.limit-down change_pct 全为负（百分数）     HTTP 200 n=20 全为负值 min=-10.090 max=-9.905
+[PASS] semantics.northbound 沪+深=291319640000 == 合计=291319640000（单位:元）
+  northbound 样例行: [{"trade_date": "2026-09-11", "mutual_type": "006", "channel": "南向资金合计", "deal_amount": 95492700000.0, "buy_amount": 49961860000.0, "sell_amount": 45530840000.0, "net_deal_amount": 4431020000.0, "fund_inflow": null, "accum_deal_amount": 5502255340000.0, "deal_num": 2228864.0, "hold_market_cap": 1200
+  northbound 空值计数: {"trade_date": 0, "mutual_type": 0, "channel": 0, "deal_amount": 0, "buy_amount": 3, "sell_amount": 3, "net_deal_amount": 3, "fund_inflow": 6, "accum_deal_amount": 3, "deal_num": 0, "hold_market_cap": 2, "quota_balance": 6, "quota_balance_text": 0, "index_close": 0, "index_change_pct": 0, "lead_symbol": 0, "lead_name": 0, "lead_change_pct": 0}
+[PASS] reject.convertible-bond 传 date（无日期列）         HTTP 422 422 detail='数据集 convertible-bond 不支持按日期过滤'
+[PASS] reject.holder-number 传不支持的 symbol？           HTTP 200 n=5 symbols=['600642']
+[INFO] bound.limit-up limit=200               HTTP 200 n=40 ms=48
+[INFO] bound.limit-up limit=201               HTTP 422 n=0 ms=13
+[INFO] bound.datacenter limit=500             HTTP 200 n=500 ms=249
+[INFO] bound.boards limit=1000                HTTP 200 n=496 ms=465
+[INFO] bound.boards limit=1001                HTTP 422 n=0 ms=3
+[INFO] bound.constituents limit=1000          HTTP 200 n=13 ms=69
+[INFO] coverage.boards.industry               HTTP 200 n=496 市场分布={'?': 496}
+[INFO] coverage.boards.concept                HTTP 200 n=504 市场分布={'?': 504}
+[INFO] coverage.boards.region                 HTTP 200 n=31 市场分布={'?': 31}
+[INFO] coverage.fundflow.stocks               HTTP 200 n=1000 市场分布={'SZ': 528, 'SH': 453, 'BJ': 19}
+[INFO] frontend /            HTTP 200 len=727
+[INFO] frontend /assets      HTTP 200 len=727
+
+WROTE E:\workbuddy work\2026-09-09-15-34-54\a-stock-platform\work\probe_behavior.json

@@ -337,6 +337,15 @@ def _delete_temp_db_unconditional(errors: list[str]) -> None:
             errors.append(f"无条件删除临时 DB 失败: {exc}")
 
 
+def port_in_use(port: int) -> bool:
+    """127.0.0.1:port 是否已被占用。"""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
 def verify_no_residue(errors: list[str]) -> None:
     """E2E 结束后确认端口释放 + 进程退出 + 临时 DB 已删除。"""
     import socket
@@ -671,7 +680,27 @@ async def run_checks(res: SmokeResult) -> None:
 
         await verify_ws_subscription("600000", res)
 
-        # 11. 前端可达
+        # 11. 实时分时曲线：路由 + 组装 + 序列化
+        try:
+            r = await client.get(
+                f"{BACKEND}/api/quotes/600000/intraday", params={"limit": 600}
+            )
+            payload = r.json() if r.status_code == 200 else {}
+            points = payload.get("points") or []
+            stats = payload.get("stats") or {}
+            res.check(
+                "实时分时 /quotes/600000/intraday",
+                r.status_code == 200
+                and len(points) >= 1
+                and "volume" in stats
+                and bool(payload.get("trade_date")),
+                f"HTTP {r.status_code} points={len(points)} "
+                f"date={payload.get('trade_date')}",
+            )
+        except Exception as exc:
+            res.check("实时分时 /quotes/600000/intraday", False, str(exc))
+
+        # 12. 前端可达
         try:
             r = await client.get(FRONTEND)
             res.check("前端页面可达", r.status_code == 200, f"HTTP {r.status_code}")
@@ -699,6 +728,19 @@ async def main_managed() -> int:
         raise RuntimeError("E2E 拒绝使用 a_stock.db，必须使用专用临时 DB")
     if TEMP_DB_PATH.startswith(str(A_STOCK_DB)):
         raise RuntimeError(f"E2E 临时 DB 路径 {TEMP_DB_PATH} 与 a_stock.db 冲突")
+
+    # 前置检查：managed 模式要独占端口。端口被占时自己的后端会绑定失败，
+    # 后续所有请求都会打到别人正在跑的服务上，失败信息完全对不上真实原因。
+    busy_ports = [port for port in (8000, 5173) if port_in_use(port)]
+    if busy_ports:
+        listed = " / ".join(str(port) for port in busy_ports)
+        print(
+            f"\n[中止] 端口 {listed} 已被占用，managed 模式需要独占它们。\n"
+            "  先停掉正在运行的服务再重跑：\n"
+            "    powershell -ExecutionPolicy Bypass -File scripts\\stop_all.ps1\n"
+            f"  或者直接打已启动的服务（E2E_MODE=external，数据会写进它自己的库）。"
+        )
+        return 1
 
     res = SmokeResult()
     backend: subprocess.Popen | None = None

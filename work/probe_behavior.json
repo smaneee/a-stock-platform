@@ -1,0 +1,228 @@
+{
+ "filter.dragon-tiger symbol=300808": {
+  "path": "/api/market/datacenter/dragon-tiger?symbol=300808&limit=20",
+  "status": 200,
+  "ms": 295,
+  "ok": true,
+  "note": "n=18 全部 symbol=300808",
+  "total": 18
+ },
+ "filter.holder-number symbol=000725": {
+  "path": "/api/market/datacenter/holder-number?symbol=000725&limit=20",
+  "status": 200,
+  "ms": 125,
+  "ok": true,
+  "note": "n=1 全部 symbol=000725",
+  "total": 1
+ },
+ "filter.dragon-tiger date=2026-09-11": {
+  "path": "/api/market/datacenter/dragon-tiger?date=2026-09-11&limit=20",
+  "status": 200,
+  "ms": 101,
+  "ok": true,
+  "note": "n=20 trade_date 唯一值=['2026-09-11']",
+  "total": 68
+ },
+ "filter.northbound date_from/date_to": {
+  "path": "/api/market/datacenter/northbound?date_from=2026-09-08&date_to=2026-09-11&limit=20",
+  "status": 200,
+  "ms": 87,
+  "ok": true,
+  "note": "n=20 区间内日期=['2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11']",
+  "total": 24
+ },
+ "page.dragon-tiger page=2 limit=5": {
+  "path": "/api/market/datacenter/dragon-tiger?page=2&limit=5",
+  "status": 200,
+  "ms": 104,
+  "ok": true,
+  "note": "page=2 limit=5 返回 n=5",
+  "total": 268118
+ },
+ "page.distinct": {
+  "ok": true,
+  "page1": [
+   "300808",
+   "301176",
+   "300563",
+   "300290",
+   "301520"
+  ],
+  "page2": [
+   "002059",
+   "002790",
+   "000523",
+   "002201",
+   "002514"
+  ]
+ },
+ "order.restricted-release asc（最早解禁优先）": {
+  "path": "/api/market/datacenter/restricted-release?order=asc&limit=10",
+  "status": 200,
+  "ms": 102,
+  "ok": true,
+  "note": "n=10 free_date 首/末=2010-01-04/2010-01-11 升序=True",
+  "total": 31497
+ },
+ "order.restricted-release default desc": {
+  "path": "/api/market/datacenter/restricted-release?limit=10",
+  "status": 200,
+  "ms": 70,
+  "ok": true,
+  "note": "默认desc 首/末=2035-10-29/2032-06-17（远端未来解禁优先）",
+  "total": 31497
+ },
+ "limit-up trade_date=2026-09-11": {
+  "path": "/api/market/limit-up/limit-up?trade_date=2026-09-11&limit=20",
+  "status": 200,
+  "ms": 157,
+  "ok": true,
+  "note": "trade_date=2026-09-11 n=20",
+  "total": 40
+ },
+ "limit-up trade_date=2026-06-01（超保留窗口）": {
+  "path": "/api/market/limit-up/limit-up?trade_date=2026-06-01&limit=20",
+  "status": 200,
+  "ms": 41,
+  "ok": true,
+  "note": "trade_date=2026-06-01 n=0（上游保留窗口之外）",
+  "total": 0
+ },
+ "limit-up trade_date=2026-08-28（保留窗口内）": {
+  "path": "/api/market/limit-up/limit-up?trade_date=2026-08-28&limit=20",
+  "status": 200,
+  "ms": 112,
+  "ok": true,
+  "note": "trade_date=2026-08-28 n=20",
+  "total": 82
+ },
+ "semantics.limit-up change_pct 全为正（百分数）": {
+  "path": "/api/market/limit-up/limit-up?limit=20",
+  "status": 200,
+  "ms": 60,
+  "ok": true,
+  "note": "n=20 全为正值 min=9.966 max=19.983",
+  "total": 40
+ },
+ "semantics.limit-down change_pct 全为负（百分数）": {
+  "path": "/api/market/limit-up/limit-down?limit=20",
+  "status": 200,
+  "ms": 53,
+  "ok": true,
+  "note": "n=20 全为负值 min=-10.090 max=-9.905",
+  "total": 21
+ },
+ "semantics.northbound_sum": {
+  "ok": true,
+  "hushen": 291319640000.0,
+  "total": 291319640000.0
+ },
+ "semantics.northbound_nulls": {
+  "trade_date": 0,
+  "mutual_type": 0,
+  "channel": 0,
+  "deal_amount": 0,
+  "buy_amount": 3,
+  "sell_amount": 3,
+  "net_deal_amount": 3,
+  "fund_inflow": 6,
+  "accum_deal_amount": 3,
+  "deal_num": 0,
+  "hold_market_cap": 2,
+  "quota_balance": 6,
+  "quota_balance_text": 0,
+  "index_close": 0,
+  "index_change_pct": 0,
+  "lead_symbol": 0,
+  "lead_name": 0,
+  "lead_change_pct": 0
+ },
+ "reject.convertible-bond 传 date（无日期列）": {
+  "path": "/api/market/datacenter/convertible-bond?date=2026-09-11&limit=5",
+  "status": 422,
+  "ms": 2,
+  "ok": true,
+  "note": "422 detail='数据集 convertible-bond 不支持按日期过滤'",
+  "total": null
+ },
+ "reject.holder-number 传不支持的 symbol？": {
+  "path": "/api/market/datacenter/org-survey?symbol=600642&limit=5",
+  "status": 200,
+  "ms": 140,
+  "ok": true,
+  "note": "n=5 symbols=['600642']",
+  "total": 14
+ },
+ "bound.limit-up limit=200": {
+  "status": 200,
+  "n": 40,
+  "ms": 48
+ },
+ "bound.limit-up limit=201": {
+  "status": 422,
+  "n": 0,
+  "ms": 13
+ },
+ "bound.datacenter limit=500": {
+  "status": 200,
+  "n": 500,
+  "ms": 249
+ },
+ "bound.boards limit=1000": {
+  "status": 200,
+  "n": 496,
+  "ms": 465
+ },
+ "bound.boards limit=1001": {
+  "status": 422,
+  "n": 0,
+  "ms": 3
+ },
+ "bound.constituents limit=1000": {
+  "status": 200,
+  "n": 13,
+  "ms": 69
+ },
+ "coverage.boards.industry": {
+  "status": 200,
+  "n": 496,
+  "markets": {
+   "?": 496
+  },
+  "ms": 283
+ },
+ "coverage.boards.concept": {
+  "status": 200,
+  "n": 504,
+  "markets": {
+   "?": 504
+  },
+  "ms": 643
+ },
+ "coverage.boards.region": {
+  "status": 200,
+  "n": 31,
+  "markets": {
+   "?": 31
+  },
+  "ms": 57
+ },
+ "coverage.fundflow.stocks": {
+  "status": 200,
+  "n": 1000,
+  "markets": {
+   "SZ": 528,
+   "SH": 453,
+   "BJ": 19
+  },
+  "ms": 812
+ },
+ "frontend/": {
+  "status": 200,
+  "len": 727
+ },
+ "frontend/assets": {
+  "status": 200,
+  "len": 727
+ }
+}

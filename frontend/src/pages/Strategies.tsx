@@ -22,7 +22,7 @@ export default function StrategiesPage() {
     <div className="max-w-4xl space-y-6">
       <h1 className="text-2xl font-semibold">策略管理</h1>
 
-      <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden">
+      <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto">
         {isLoading ? (
           <div className="text-slate-500 text-center py-8">加载中...</div>
         ) : (

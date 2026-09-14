@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -41,7 +41,28 @@ from app.universe.exclusion import (
 )
 from app.time_utils import utc_now
 
+if TYPE_CHECKING:  # 避免与 providers 形成导入环
+    from app.universe.providers import SecurityRecord
+
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _DaySecurity:
+    """把「某日实际在场的一条记录」伪装成 Security，供 ExclusionEngine 判定。
+
+    只做属性读取，**不写入 session**：历史状态绝不能落进 securities 主数据表。
+    """
+
+    symbol: str
+    name: str
+    exchange: str
+    board: str
+    sector: str | None
+    is_st: bool
+    listing_date: date | None
+    delisted_date: date | None
+    trading_status: str
 
 
 class SnapshotConflictError(Exception):
@@ -115,7 +136,8 @@ class UniverseSnapshotService:
             source_synced_at: 主数据拉取时间（UTC）
             as_of_date: Provider 拉数据的截止日（ProviderError 必传；point-in-time 校验用）
             total_count_hint: 拉取记录数（用于冲突检测；None 时不校验 total_count）
-            force_overwrite: True → 冲突时静默覆盖；False → 抛 SnapshotConflictError
+            force_overwrite: True → 冲突时原地刷新这一天（保留 snapshot.id，
+                重建成员行）；False → 抛 SnapshotConflictError
 
         Raises:
             InvalidTradingDayError: trading_day > as_of_date+1 或 trading_day 太早
@@ -133,6 +155,8 @@ class UniverseSnapshotService:
             .scalars()
             .first()
         )
+        # 已有快照走原地刷新（保住 id），没有才新建；两条路径最后都落到 snap
+        snap: UniverseSnapshot | None = None
         if existing is not None:
             # ───── 同 day 冲突检测 ─────
             same_source = existing.source_provider == source_provider
@@ -154,9 +178,12 @@ class UniverseSnapshotService:
                     f"synced_at={existing.source_synced_at}, total={existing.total_count}) vs "
                     f"new=(provider={source_provider}, synced_at={source_synced_at}, "
                     f"total={total_count_hint})；调用 force_overwrite=True 显式覆盖，"
-                    "或调用 delete_snapshot(trading_day) 先清空"
+                    "或先人工处理这一天的快照"
                 )
-            # force_overwrite：先删旧的，递归创建新的
+            # force_overwrite：**原地刷新**，必须保住 snapshot.id。
+            # selection_runs / 历史入库批次都用 snapshot_id 引用这一行，外键是
+            # ON DELETE NO ACTION：原来 delete+insert 的写法在同一天重复同步时
+            # 会 IntegrityError（实测「同步股票池」第二次点 → HTTP 500）。
             logger.warning(
                 "snapshot trading_day=%s 强制覆盖：existing=(p=%s, t=%s) vs new=(p=%s, t=%s)",
                 trading_day,
@@ -165,8 +192,12 @@ class UniverseSnapshotService:
                 source_provider,
                 total_count_hint,
             )
-            self._db.delete(existing)
-            self._db.flush()
+            self._db.query(UniverseMember).filter(
+                UniverseMember.snapshot_id == existing.id
+            ).delete(synchronize_session=False)
+            existing.source_provider = source_provider
+            existing.source_synced_at = source_synced_at
+            snap = existing
 
         # 收集所有当前 Security
         all_securities: list[Security] = list(
@@ -181,15 +212,17 @@ class UniverseSnapshotService:
         engine = ExclusionEngine(self._db, include_st=self._include_st)
         decisions = engine.evaluate(all_securities, as_of=trading_day)
 
-        snap = UniverseSnapshot(
-            trading_day=trading_day,
-            total_count=len(all_securities),
-            included_count=0,  # 后填
-            excluded_count=0,  # 后填
-            source_provider=source_provider,
-            source_synced_at=source_synced_at,
-        )
-        self._db.add(snap)
+        if snap is None:
+            snap = UniverseSnapshot(
+                trading_day=trading_day,
+                total_count=0,  # 后填
+                included_count=0,  # 后填
+                excluded_count=0,  # 后填
+                source_provider=source_provider,
+                source_synced_at=source_synced_at,
+            )
+            self._db.add(snap)
+        snap.total_count = len(all_securities)
         self._db.flush()  # 拿到 snap.id；不 commit
 
         included = 0
@@ -251,6 +284,142 @@ class UniverseSnapshotService:
         snap.included_count = included
         snap.excluded_count = excluded
         # 注意：这里不 commit。调用方在 sync 顶层统一 commit / rollback
+        self._db.flush()
+        self._db.refresh(snap)
+        return snap
+
+    def get_or_create_snapshot_from_records(
+        self,
+        *,
+        records: Sequence["SecurityRecord"],
+        trading_day: date,
+        source_provider: str,
+        source_synced_at: datetime | None = None,
+        as_of_date: date | None = None,
+        force_overwrite: bool = True,
+    ) -> UniverseSnapshot:
+        """用「某日实际在场清单」落一份 point-in-time 快照（历史回补专用）。
+
+        与 ``get_or_create_snapshot`` 的**唯一但关键**区别：成员只来自 ``records``，
+        而不是当前 ``securities`` 全表。这是历史快照能消除幸存者偏差的前提：
+
+        - 当天还没上市的标的不会出现（否则是未来函数）；
+        - 当天存在、后来退市的标的会出现（否则被幸存者偏差剔除）。
+
+        对 ``securities`` 表**只补缺、不覆盖**：已存在的标的一律保持当前主数据，
+        历史状态（尤其 ``trading_status``）只写进 ``universe_members`` 这一行，
+        绝不回头污染生产选股用的主数据。
+        """
+        if not records:
+            raise SnapshotConflictError("records 为空：拒绝用空清单覆盖股票池快照")
+
+        effective_as_of = as_of_date or next(
+            (r.as_of_date for r in records if r.as_of_date is not None), None
+        )
+        self._validate_trading_day(trading_day, effective_as_of)
+
+        # ── 1) securities 只补缺（历史退市标的可能从没进过主数据表） ──
+        from app.market_rules.security_master import SecurityMasterService
+
+        master = SecurityMasterService(self._db)
+        for rec in records:
+            if self._db.get(Security, rec.symbol) is None:
+                master.ensure(
+                    symbol=rec.symbol,
+                    name=rec.name,
+                    is_st=rec.is_st,
+                    listing_date=rec.listing_date,
+                    source=source_provider,
+                    exchange=rec.exchange,
+                    delisted_date=rec.delisted_date,
+                    trading_status=rec.trading_status,
+                    sector=rec.sector,
+                    board=rec.board,
+                )
+        self._db.flush()
+
+        # ── 2) 快照行：已存在则原地刷新（保住 id，外键引用不失效） ──
+        snap = (
+            self._db.execute(
+                select(UniverseSnapshot).where(
+                    UniverseSnapshot.trading_day == trading_day
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if snap is not None:
+            if not force_overwrite:
+                raise SnapshotConflictError(
+                    f"trading_day={trading_day} 已有 snapshot(id={snap.id})，"
+                    "需要显式 force_overwrite=True 才允许重建成员"
+                )
+            self._db.query(UniverseMember).filter(
+                UniverseMember.snapshot_id == snap.id
+            ).delete(synchronize_session=False)
+        else:
+            snap = UniverseSnapshot(
+                trading_day=trading_day,
+                total_count=0,
+                included_count=0,
+                excluded_count=0,
+                source_provider=source_provider,
+                source_synced_at=source_synced_at,
+            )
+            self._db.add(snap)
+        snap.source_provider = source_provider
+        snap.source_synced_at = source_synced_at
+        snap.total_count = len(records)
+        self._db.flush()
+
+        # ── 3) 用「当日状态」判定入选，而不是 Security 表的当前状态 ──
+        day_view = [
+            _DaySecurity(
+                symbol=rec.symbol,
+                name=rec.name,
+                exchange=rec.exchange,
+                board=rec.board,
+                sector=rec.sector,
+                is_st=bool(rec.is_st),
+                listing_date=rec.listing_date,
+                delisted_date=rec.delisted_date,
+                trading_status=rec.trading_status or "active",
+            )
+            for rec in records
+        ]
+        engine = ExclusionEngine(self._db, include_st=self._include_st)
+        included = 0
+        excluded = 0
+        for rank, dec in enumerate(engine.evaluate(day_view, as_of=trading_day)):
+            rec = records[rank]
+            is_included = dec.reason is None
+            self._db.add(
+                UniverseMember(
+                    snapshot_id=snap.id,
+                    symbol=rec.symbol,
+                    security_id=rec.symbol,
+                    is_included=is_included,
+                    exclude_reason=dec.reason,
+                    sort_rank=rank,
+                    name=rec.name,
+                    exchange=rec.exchange,
+                    board=rec.board,
+                    sector=rec.sector,
+                    is_st=bool(rec.is_st),
+                    listing_date=rec.listing_date,
+                    delisted_date=rec.delisted_date,
+                    trading_status=rec.trading_status or "active",
+                    audit_reason="listing_date_unknown"
+                    if rec.listing_date is None
+                    else None,
+                )
+            )
+            included += 1 if is_included else 0
+            excluded += 0 if is_included else 1
+
+        snap.included_count = included
+        snap.excluded_count = excluded
+        # 不 commit：事务边界由调用方控制
         self._db.flush()
         self._db.refresh(snap)
         return snap

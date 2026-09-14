@@ -29,6 +29,7 @@
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
@@ -62,6 +63,9 @@ MAX_PLAUSIBLE_PRICE = 10_000.0
 BEIJING = timezone(timedelta(hours=8))
 
 _YES_NO = {"1": "是", "0": "否", "是": "是", "否": "否"}
+
+
+logger = logging.getLogger(__name__)
 
 
 class EastmoneyLimitUpError(RuntimeError):
@@ -429,13 +433,25 @@ class EastmoneyLimitUpService:
         if not isinstance(rows, list):
             raise EastmoneyLimitUpError(f"{spec.path} 返回了非预期的数据结构")
         total = data.get("tc")
+        # 关键：trade_date 必须以上游实际返回的 qdate 为准。
+        # 旧实现直接回显调用方传入的日期，导致请求 2099-01-01 时会拿到最新快照
+        # 却标记成 2099-01-01（未来函数风险，实测 40/40 与 2026-09-11 相同）。
+        upstream_date = _ymd(data.get("qdate"))
+        # 上游可能给出 0 / 空串等占位值，这类值不算「有效日期」，此时才退回请求日期
+        if not upstream_date or len(upstream_date) != 10 or upstream_date.count("-") != 2:
+            upstream_date = None
+        requested = trade_date.strftime("%Y-%m-%d") if trade_date is not None else None
+        effective_date = upstream_date or requested or ""
+        if requested and upstream_date and requested != upstream_date:
+            logger.warning(
+                "%s 请求日期 %s 与上游实际返回日期 %s 不一致，按上游日期标记",
+                spec.path,
+                requested,
+                upstream_date,
+            )
         return LimitUpResult(
             pool=spec,
-            trade_date=(
-                trade_date.strftime("%Y-%m-%d")
-                if trade_date is not None
-                else _ymd(data.get("qdate"))
-            ),
+            trade_date=effective_date,
             total=total if isinstance(total, int) else len(rows),
             page=page,
             items=_parse_pool(spec, rows),

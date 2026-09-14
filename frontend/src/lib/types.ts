@@ -75,6 +75,18 @@ export interface BacktestResult {
   trade_count: number;
   equity_curve: number[];
   trades: BacktestTrade[];
+  /* ---- D6/D8 收益口径（引用结果前必看） ---- */
+  return_convention?: string;
+  return_convention_note?: string;
+  dividends_modeled?: boolean;
+  bars_adjust?: string;
+  bars_adjust_label?: string;
+  limit_reference?: string;
+  costs_included?: boolean;
+  /* ---- D6 昨收对齐诊断 ---- */
+  limit_reference_missing?: number;
+  limit_reference_complete?: boolean;
+  limit_reference_note?: string;
 }
 
 export type BacktestStatus =
@@ -124,7 +136,53 @@ export interface PortfolioBacktestRequest {
   commission_rate?: number;
   slippage?: number;
   risk_free_rate?: number;
+  /** D5 单日成交量参与率上限；0=不限制（默认，保持历史行为） */
+  max_participation_rate?: number;
+  /** 超出参与率上限时是否按可成交量部分成交（false 则整笔拒绝） */
+  allow_partial_fill?: boolean;
   idempotency_key?: string | null;
+  sentiment_gate?: SentimentGateConfig | null;
+}
+
+/** 涨停板市场情绪闸门参数。 */
+export interface SentimentGateConfig {
+  enabled: boolean;
+  /** 使用信号日之前第 N 个交易日的情绪（>=1，避免未来函数） */
+  lag_days: number;
+  min_seal_rate: number | null;
+  max_broken_rate: number | null;
+  min_max_streak: number | null;
+  min_limit_up_count: number | null;
+  on_missing: "allow" | "block";
+  scale_exposure: boolean;
+  min_exposure: number;
+}
+
+/** 单个信号日的闸门判定。 */
+export interface SentimentGateDay {
+  date: string;
+  sentiment_date: string | null;
+  allowed: boolean;
+  exposure: number;
+  seal_rate: number | null;
+  broken_rate: number | null;
+  max_streak: number | null;
+  limit_up_count: number | null;
+  reasons: string[];
+}
+
+/** 闸门在本轮回测里的作用汇总。 */
+export interface PortfolioSentimentSummary {
+  config: SentimentGateConfig;
+  series_days: number;
+  total_days: number;
+  allowed_days: number;
+  blocked_days: number;
+  missing_days: string[];
+  buy_signals: number;
+  blocked_buy_signals: number;
+  average_buy_exposure: number;
+  days: SentimentGateDay[];
 }
 
 export interface PortfolioBacktestResult {
@@ -147,6 +205,56 @@ export interface PortfolioBacktestResult {
   benchmark_curve: number[];
   dates: string[];
   trades: BacktestTrade[];
+  sentiment?: PortfolioSentimentSummary | null;
+  /* ---- D9 尾部风险 ---- */
+  volatility?: number;
+  var_95?: number;
+  cvar_95?: number;
+  max_drawdown_duration?: number;
+  worst_day_return?: number;
+  /* ---- D7 基准分列 ---- */
+  equal_weight_curve?: number[];
+  cash_curve?: number[];
+  equal_weight_return?: number;
+  cash_return?: number;
+  excess_vs_equal_weight?: number;
+  excess_vs_cash?: number;
+  benchmark_labels?: Record<string, string>;
+  /* ---- D5 容量 ---- */
+  min_capacity_multiple?: number | null;
+  partial_fill_count?: number;
+  /** 容量→规模换算：不超容量的账户规模上界（未启用参与率上限时为 null） */
+  capacity?: {
+    max_aum: number;
+    basis: string;
+    considered_trades: number;
+    assumptions: string[];
+    binding_trade: {
+      date: string;
+      symbol: string | null;
+      side: string | null;
+      quantity: number | null;
+      capacity_multiple: number;
+      account_equity_on_that_day: number;
+    };
+  } | null;
+  /* ---- D8/D6 收益口径 ---- */
+  return_convention?: string;
+  return_convention_note?: string;
+  dividends_modeled?: boolean;
+  bars_adjust?: string;
+  bars_adjust_label?: string;
+  limit_reference?: string;
+  costs_included?: boolean;
+  /* ---- D6 昨收还原诊断 ---- */
+  limit_reference_missing?: number;
+  limit_reference_complete?: boolean;
+  limit_reference_note?: string;
+  /* ---- 审计：请求 / 执行 / 排除 ---- */
+  requested_symbols?: string[];
+  executed_symbols?: string[];
+  excluded_symbols?: string[];
+  exclusion_reasons?: Record<string, unknown>;
 }
 
 export type PortfolioBacktestStatus =
@@ -172,6 +280,9 @@ export interface PortfolioBacktestResponse {
   started_at: string | null;
   finished_at: string | null;
   created_at: string;
+  sentiment_gate?: SentimentGateConfig | null;
+  /** D5 成交配置回显（参与率上限 / 是否允许部分成交） */
+  execution?: { max_participation_rate: number; allow_partial_fill: boolean };
 }
 
 export interface PaperAccount {
@@ -412,6 +523,38 @@ export interface HistoryIngestTask {
   completed_at: string | null;
 }
 
+/** 前复权回填的一次汇总结果。 */
+export interface QfqBackfillReport {
+  started_at: string;
+  finished_at: string;
+  elapsed_seconds: number;
+  period: string;
+  source_adjust: string;
+  target_adjust: string;
+  symbols_total: number;
+  symbols_ok: number;
+  symbols_empty: number;
+  symbols_failed: number;
+  rows_written: number;
+  events_applied: number;
+  unresolved_count: number;
+  unresolved_symbols: Record<string, number>;
+  failure_count: number;
+  failures: Record<string, string>;
+}
+
+/** 前复权回填任务状态（前端轮询用）。 */
+export interface QfqBackfillStatus {
+  /** idle / running / done / failed */
+  state: string;
+  progress: { done: number; total: number };
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  has_report: boolean;
+  report: QfqBackfillReport | null;
+}
+
 export interface DailyPipelineRun {
   id: number;
   trading_day: string;
@@ -525,6 +668,18 @@ export interface BoardListResponse {
   items: BoardQuote[];
 }
 
+export interface BenchmarkIndex {
+  symbol: string; // 规范代码，如 sh000300
+  code: string; // 6 位代码
+  name: string; // 中文简称
+}
+
+export interface BenchmarkIndexListResponse {
+  count: number;
+  default: string;
+  items: BenchmarkIndex[];
+}
+
 export interface BoardMemberResponse {
   board_code: string;
   count: number;
@@ -548,10 +703,13 @@ export interface DatacenterFieldInfo {
   key: string;
   title: string;
   kind: string;
+  /** 字段口径说明：例如「上游当前恒为空」——用于解释「—」不是抓取失败 */
+  note?: string;
 }
 
 /** 东方财富数据中心：一个数据集的自描述信息。 */
 export interface DatacenterDatasetInfo {
+  /** 数据集 key；`dragon-tiger-seats` 是席位字段清单（挂在 dragon-tiger 行上） */
   key: string;
   label: string;
   description: string;
@@ -567,6 +725,50 @@ export interface DatacenterCatalogResponse {
 
 /** 数据中心一行（列名由数据集声明决定）。 */
 export type DatacenterRow = Record<string, string | number | null>;
+
+/** 策略证据条目（P1-01）。状态一律以后端 `status_vocabulary` 为准。 */
+export interface EvidenceItem {
+  id: string;
+  name: string;
+  status: "unverified" | "in_progress" | "failed_oos" | "inconclusive" | "passed_oos";
+  production_ready: boolean;
+  data_cutoff: string | null;
+  bars_adjust?: string | null;
+  sample: Record<string, unknown>;
+  result: Record<string, unknown>;
+  reproducible_on_this_machine: boolean;
+  evidence_source: string;
+  limitations: string[];
+  failure_reason?: string | null;
+  ui_rule: string;
+}
+
+export interface EvidenceSummary {
+  total: number;
+  by_status: Record<string, number>;
+  production_ready_count: number;
+  negative_or_uncertain: string[];
+  artifact_updated_at?: string | null;
+  schema_version?: string | null;
+}
+
+export interface EvidenceProductionGate {
+  live_trading_enabled: boolean;
+  reason: string;
+  requirements_for_small_live_pilot: string[];
+}
+
+export interface EvidenceResponse {
+  schema_version: string;
+  artifact_updated_at: string | null;
+  disclaimer: string;
+  status_vocabulary: Record<string, string>;
+  production_gate: EvidenceProductionGate;
+  summary: EvidenceSummary;
+  items: EvidenceItem[];
+  live: Record<string, unknown>;
+  source_file: string;
+}
 
 export interface DatacenterQueryResponse {
   dataset: string;
@@ -658,6 +860,52 @@ export interface LimitUpCaptureResponse {
   items: LimitUpSentimentRow[];
 }
 
+/** 用本地日线离线回算历史情绪（POST /api/market/limit-up/sentiment/backfill）。 */
+export interface LimitUpSentimentBackfillRequest {
+  start?: string | null;
+  end?: string | null;
+  coverage_floor?: number;
+  include_st?: boolean;
+  overwrite_derived?: boolean;
+  dry_run?: boolean;
+}
+
+export interface LimitUpSentimentBackfillItem {
+  trade_date: string;
+  limit_up_count: number;
+  limit_down_count: number;
+  broken_board_count: number;
+  coverage_symbols: number;
+  seal_rate: number | null;
+  broken_rate: number | null;
+  max_streak: number;
+  first_board_count: number;
+  streak_2_count: number;
+  streak_3_count: number;
+  streak_4_count: number;
+  streak_5plus_count: number;
+}
+
+export interface LimitUpSentimentBackfillResponse {
+  start: string;
+  end: string;
+  symbols: number;
+  bars_scanned: number;
+  inserted: number;
+  updated: number;
+  skipped_existing: number;
+  skipped_low_coverage: number;
+  deleted_stale: number;
+  coverage_floor: number;
+  include_st: boolean;
+  overwrite_derived: boolean;
+  dry_run: boolean;
+  days: number;
+  low_coverage_days: string[];
+  stale_days: string[];
+  items: LimitUpSentimentBackfillItem[];
+}
+
 /** 技术指标目录：可用序列与周期（GET /api/indicators）。 */
 export interface IndicatorSeriesInfo {
   key: string;
@@ -687,6 +935,10 @@ export interface IndicatorResponse {
   series: Record<string, Array<number | null>>;
   /** 每条序列最后一个有效值 */
   latest: Record<string, number | null>;
+  /** 本次参与计算的日线复权口径：qfq（前复权，本地缓存优先）/ none */
+  bars_adjust: string;
+  /** 复权口径中文标签 */
+  bars_adjust_label: string;
 }
 
 // ---------- 股票池（universe） ----------
@@ -716,6 +968,15 @@ export interface UniverseProviderHealth {
 export interface UniverseStatusResponse {
   provider_health: UniverseProviderHealth[];
   latest_snapshot_date: string | null;
+}
+
+/** GET /api/market/session：今天是不是交易日（与股票池「可交易」无关）。 */
+export interface MarketSessionResponse {
+  day: string;
+  is_trading_day: boolean;
+  last_trading_day: string;
+  next_trading_day: string | null;
+  calendar_total: number;
 }
 
 /** POST /api/universe/sync 的结果。 */
@@ -759,4 +1020,275 @@ export interface UniverseMembersResponse {
 export interface MarketProvidersResponse {
   providers: string[];
   status: Record<string, boolean>;
+}
+
+// ---------- 当日分时曲线 ----------
+
+/** 分时曲线上的一个点（同一分钟一个）。 */
+export interface IntradayPoint {
+  /** ISO 本地时间，例如 2026-09-11T09:31:00 */
+  time: string;
+  price: number;
+  /** 该分钟成交量（股） */
+  volume: number;
+  /** 该分钟成交额（元） */
+  amount: number;
+}
+
+export interface IntradayStats {
+  open: number;
+  high: number;
+  low: number;
+  last: number;
+  previous_close: number;
+  change: number;
+  change_pct: number;
+  /** 当日累计成交量（股） */
+  volume: number;
+  /** 当日累计成交额（元） */
+  amount: number;
+}
+
+/** GET /api/quotes/{symbol}/intraday */
+export interface IntradaySeries {
+  symbol: string;
+  name: string;
+  /** 该曲线对应的交易日（非交易日返回最近一个有数据的交易日） */
+  trade_date: string;
+  /** live=实时缓存 / baseline=数据源分时 / merged=两者合并 / empty=无数据 */
+  source: "live" | "baseline" | "merged" | "empty";
+  /** 该标的当前是否有实时分钟线在刷新 */
+  is_live: boolean;
+  stats: IntradayStats;
+  points: IntradayPoint[];
+}
+
+// ---------- 实时研究候选排序 ----------
+
+/** 单条研究候选（GET /api/realtime/picks）。 */
+export interface ScreenerPick {
+  rank: number;
+  symbol: string;
+  name: string;
+  exchange: string;
+  board: string;
+  /** 板块中文名（main/gem/star/bse） */
+  board_label: string;
+  price: number;
+  previous_close: number;
+  change_pct: number;
+  /** 触发器权重和（0~100），命中即给满权重，历史口径不变 */
+  score: number;
+  /** 连续强度分（0~100）= Σ 命中权重 × 连续强度；**排名主键**，用它区分同样命中数 */
+  strength_score: number;
+  triggers: string[];
+  /** 触发条件的中文说明 */
+  reasons: string[];
+  risk_flags: string[];
+  risk_labels: string[];
+  /** 模型观察价格区间（不是挂单建议） */
+  entry_low: number;
+  entry_high: number;
+  stop_loss: number;
+  target_price: number;
+  risk_reward: number;
+  /** 模型风险预算上限（占总资金 %，不是仓位建议） */
+  suggested_weight_pct: number;
+  atr14: number;
+  atr_pct: number;
+  ma20: number;
+  ma60: number;
+  momentum_20: number;
+  momentum_60: number;
+  volatility_20: number;
+  amount_20: number;
+  volume_ratio: number;
+  rsi14: number;
+  kdj_k: number;
+  kdj_d: number;
+  macd_hist: number;
+  boll_upper: number;
+  boll_lower: number;
+  bar_count: number;
+  last_bar_date: string;
+  /** 该候选的行情是否带来了当日 K 线 */
+  live: boolean;
+}
+
+/** 扫描时点的市场情绪读数（涨停板情绪因子）。 */
+export interface ScreenerSentiment {
+  available: boolean;
+  sentiment_date: string | null;
+  seal_rate: number | null;
+  broken_rate: number | null;
+  max_streak: number | null;
+  limit_up_count: number | null;
+  exposure: number;
+  /** strong / healthy / neutral / weak / unknown */
+  stance: string;
+  label: string;
+  note: string;
+}
+
+/** 本次扫描实际生效的参数。 */
+export interface ScreenerConfigView {
+  top_n: number;
+  lookback_days: number;
+  refine_pool: number;
+  exclude_st: boolean;
+  min_amount_20: number;
+  min_price: number;
+  max_price: number;
+  min_change_pct: number;
+  max_change_pct: number;
+  min_triggers: number;
+  stop_atr_multiple: number;
+  target_atr_multiple: number;
+  risk_budget_pct: number;
+  max_weight_pct: number;
+  sentiment_lag_days: number;
+  scale_exposure_by_sentiment: boolean;
+}
+
+export type ResearchEvidenceStatus =
+  | "not_validated"
+  | "validation_running"
+  | "validation_failed"
+  | "not_passed"
+  | "insufficient_evidence";
+
+/** 当前候选排序的证据门禁；前端不得自行放宽。 */
+export interface ResearchEvidence {
+  status: ResearchEvidenceStatus;
+  label: string;
+  recommendation_allowed: boolean;
+  summary: string;
+  validation_task_state: string;
+  report_generated_at: string | null;
+  primary_horizon: number | null;
+  mean_excess_pct: number | null;
+  evidence_source: string;
+}
+
+/** GET /api/realtime/picks */
+export interface ScreenerResponse {
+  /** 行情所属交易日（最近交易日） */
+  session_day: string;
+  /** 买点评估所针对的交易日 */
+  signal_day: string;
+  bars_last_day: string | null;
+  /** 本地日线复权口径：qfq（前复权）/ none（不复权） */
+  bars_adjust: string;
+  live: boolean;
+  /** 扫描完成时间（UTC，历史字段，UI 请改用 generated_at_cst） */
+  generated_at: string;
+  /** 扫描完成时间（北京时间 ISO8601，带 +08:00） */
+  generated_at_cst?: string;
+  /** 时间基准说明 */
+  timezone?: string;
+  /** 行情覆盖率 = quoted / universe_size */
+  coverage_ratio?: number;
+  /** 覆盖率是否足以支撑候选排序结论；false 时不得作为研究依据 */
+  coverage_ok?: boolean;
+  scan_seconds: number;
+  universe_size: number;
+  quoted: number;
+  screened: number;
+  refined: number;
+  picks: ScreenerPick[];
+  sentiment: ScreenerSentiment;
+  evidence: ResearchEvidence;
+  notes: string[];
+  config: ScreenerConfigView;
+}
+
+// ---------- 研究候选排序样本外验证（walk-forward） ----------
+
+/** 单个持有期的样本外统计。 */
+export interface ValidationHorizonStat {
+  /** 持有交易日数 */
+  horizon: number;
+  observations: number;
+  /** 扣成本后平均收益（%） */
+  mean_net_pct: number;
+  median_net_pct: number;
+  /** 扣成本后收益为正的比例 */
+  hit_rate: number;
+  mean_benchmark_pct: number;
+  /** 平均超额收益（%，候选 − 同池等权基准） */
+  mean_excess_pct: number;
+  excess_daily_mean_pct: number;
+  /** 按日度超额序列算的单样本 t（窗口重叠会偏高） */
+  excess_t_stat: number;
+  excess_days: number;
+  max_excess_drawdown_pct: number;
+}
+
+/** 按命中分数分层的超额收益（主口径持有期）。 */
+export interface ValidationBucketStat {
+  label: string;
+  observations: number;
+  mean_excess_pct: number;
+  hit_rate: number;
+}
+
+/** 单个评估日的记录。 */
+export interface ValidationDailyRecord {
+  signal_day: string;
+  eligible: number;
+  picks: number;
+  tradable: number;
+  symbols: string[];
+  net_pct: number | null;
+  benchmark_pct: number | null;
+  excess_pct: number | null;
+}
+
+export interface ValidationCosts {
+  commission_rate: number;
+  stamp_tax_rate: number;
+  slippage_bps: number;
+  round_trip_pct: number;
+}
+
+/** GET/POST /api/realtime/picks/validation 的 report 字段。 */
+export interface ValidationReport {
+  generated_at: string;
+  first_signal_day: string | null;
+  last_signal_day: string | null;
+  evaluation_days: number;
+  universe_size: number;
+  /** 本次使用的日线复权口径：qfq（前复权）/ none（不复权） */
+  bars_adjust: string;
+  bars_first_day: string | null;
+  bars_last_day: string | null;
+  elapsed_seconds: number;
+  /** none = 按打分选股；random / worst = 对照组 */
+  control: string;
+  /** 主口径持有期 */
+  primary_horizon: number;
+  horizons: ValidationHorizonStat[];
+  score_buckets: ValidationBucketStat[];
+  daily: ValidationDailyRecord[];
+  skipped_not_tradable: number;
+  skipped_no_outcome: number;
+  costs: ValidationCosts;
+  caveats: string[];
+  notes: string[];
+}
+
+export interface ValidationStatus {
+  /** idle / running / done / failed */
+  state: string;
+  progress: { done: number; total: number };
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  has_report: boolean;
+  report_generated_at: string | null;
+}
+
+export interface ValidationEnvelope {
+  status: ValidationStatus;
+  report: ValidationReport | null;
 }

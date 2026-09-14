@@ -44,7 +44,22 @@ logger = logging.getLogger(__name__)
 CLIST_PATH = "/api/qt/clist/get"
 # 沪深京 A 股（不含 B 股 / 基金 / 债券，但会带出北交所可转债，需再过滤）
 ALL_A_SHARES_FS = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048"
-_FIELDS = "f12,f13,f14,f26,f100"
+_FIELDS = "f12,f13,f14,f26,f100,f292"
+
+# 东财 clist 的 f292 = 上市状态码。全量 5913 行实测只出现 4 个取值，且都用
+# 通达信日线交叉验证过（正常股最后一根日线 = 最近交易日；停牌股停在停牌前一天的
+# 收盘价；退市 / 待上市整段无日线）：
+#   13 = 正常交易
+#    6 = 停牌（含停牌重组）
+#    7 = 已退市
+#    9 = 待上市（无上市日期，如刚过会、尚未挂牌的新代码）
+# 未列出的取值一律按 active 处理，不猜。
+_STATUS_BY_F292: dict[int, str] = {
+    13: "active",
+    6: "suspended",
+    7: "delisted",
+    9: "pending_listing",
+}
 
 # 单页上限实测 100（传更大也只返回 100 行）
 _MAX_PAGE_SIZE = 100
@@ -71,6 +86,30 @@ def is_bond_row(code: str, name: str) -> bool:
     if code.startswith(("81", "82")):
         return True
     return "债" in name or name.endswith("转")
+
+
+def _as_status_code(raw: object) -> int | None:
+    """f292 可能是 int 也可能是字符串；取不到数值时返回 None。"""
+    try:
+        return int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def resolve_trading_status(raw_status: object, name: str) -> str:
+    """把东财 f292 映射成 ``Security.trading_status``。
+
+    名称启发式优先（「退市…」/「…退」/「PT…」），f292 兜底 —— 退市整理期的
+    股票名称一定带「退」，而 f292 偶尔晚一拍才更新。
+    修复前只用名称判断，导致 339 只 f292=7 的老退市股（如 000005 ST星源 /
+    600625 PT水仙）落进股票池并显示「可交易」。
+    """
+    if _is_delisted_name(name):
+        return "delisted"
+    code = _as_status_code(raw_status)
+    if code is None:
+        return "active"
+    return _STATUS_BY_F292.get(code, "active")
 
 
 class EastmoneyUniverseProvider(UniverseProvider):
@@ -208,7 +247,7 @@ class EastmoneyUniverseProvider(UniverseProvider):
                     exchange=exchange,
                     board=_infer_board(code, exchange),
                     listing_date=_parse_date(row.get("f26")),
-                    trading_status="delisted" if _is_delisted_name(name) else "active",
+                    trading_status=resolve_trading_status(row.get("f292"), name),
                     is_st=_is_st_name(name),
                     sector=sector or None,
                     as_of_date=as_of_date,

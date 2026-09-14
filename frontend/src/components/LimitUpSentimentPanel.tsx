@@ -20,7 +20,11 @@ import {
   YAxis,
 } from "recharts";
 
-import { captureLimitUpSentiment, fetchLimitUpSentiment } from "../lib/api";
+import {
+  backfillLimitUpSentiment,
+  captureLimitUpSentiment,
+  fetchLimitUpSentiment,
+} from "../lib/api";
 import type { LimitUpSentimentRow } from "../lib/types";
 
 const SEAL = "#38bdf8";
@@ -37,6 +41,13 @@ const tooltipStyle = {
 };
 
 const BACKFILL_OPTIONS = [10, 20, 30];
+
+// 离线回算的自然日跨度；0 表示用本地日线的全部历史
+const OFFLINE_OPTIONS = [
+  { label: "最近 1 年", days: 365 },
+  { label: "最近 2 年", days: 730 },
+  { label: "全部本地日线", days: 0 },
+];
 
 interface ChartPoint {
   date: string;
@@ -83,6 +94,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 export default function LimitUpSentimentPanel() {
   const [days, setDays] = useState(20);
+  const [offlineDays, setOfflineDays] = useState(365);
   const queryClient = useQueryClient();
 
   const curve = useQuery({
@@ -103,10 +115,30 @@ export default function LimitUpSentimentPanel() {
     },
   });
 
+  const offline = useMutation({
+    mutationFn: (rangeDays: number) => {
+      if (rangeDays <= 0) {
+        // 不传 start：由后端取本地日线的最早一天
+        return backfillLimitUpSentiment({ overwrite_derived: true });
+      }
+      const start = new Date();
+      start.setDate(start.getDate() - rangeDays);
+      return backfillLimitUpSentiment({
+        start: start.toISOString().slice(0, 10),
+        overwrite_derived: true,
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["market", "limit-up-sentiment"],
+      });
+    },
+  });
+
   const rows = curve.data?.items ?? [];
   const points = toPoints(rows);
   const latest = curve.data?.latest ?? null;
-  const error = curve.error ?? capture.error;
+  const error = curve.error ?? capture.error ?? offline.error;
 
   return (
     <div className="space-y-4">
@@ -143,6 +175,41 @@ export default function LimitUpSentimentPanel() {
             {capture.isPending ? "抓取中…" : `回补最近 ${days} 天`}
           </button>
         </div>
+        <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 pt-3">
+          <span className="text-xs text-slate-400">
+            离线回算：用本地日线 + 涨跌停规则重算历史，不依赖东财（东财只留最近若干个交易日）
+          </span>
+          <select
+            value={offlineDays}
+            onChange={(event) => setOfflineDays(Number(event.target.value))}
+            className="ml-auto bg-slate-950 border border-slate-800 rounded px-2 py-1 text-sm text-slate-300"
+          >
+            {OFFLINE_OPTIONS.map((option) => (
+              <option key={option.days} value={option.days}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => offline.mutate(offlineDays)}
+            disabled={offline.isPending}
+            className="px-3 py-1.5 rounded text-sm bg-amber-500/20 text-amber-200 border border-amber-500/40 disabled:opacity-40"
+          >
+            {offline.isPending ? "回算中（约 20 秒）…" : "回算历史曲线"}
+          </button>
+        </div>
+        {offline.data && !offline.isPending && (
+          <div className="text-xs text-emerald-300">
+            回算完成：{offline.data.start} ~ {offline.data.end}，共{" "}
+            {offline.data.days} 个交易日（新增 {offline.data.inserted}、更新{" "}
+            {offline.data.updated}、保留东财 {offline.data.skipped_existing}、
+            清理陈旧 {offline.data.deleted_stale}），样本面 ≥{" "}
+            {offline.data.coverage_floor} 只
+            {offline.data.low_coverage_days.length > 0 &&
+              `；${offline.data.low_coverage_days.length} 个交易日样本不足已跳过`}
+          </div>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <Stat label="最新交易日" value={latest?.trade_date ?? "—"} />
           <Stat label="涨停家数" value={latest ? String(latest.limit_up_count) : "—"} />
@@ -174,8 +241,9 @@ export default function LimitUpSentimentPanel() {
         <div className={`${panel} p-6 text-sm text-slate-400 space-y-2`}>
           <div>本地还没有情绪数据。</div>
           <div className="text-slate-500">
-            东财涨停板接口只保留最近若干个交易日，过期即无法回补；点击上方
-            「回补最近 {days} 天」即可立即生成曲线，之后每个交易日收盘后会自动累积。
+            东财涨停板接口只保留最近若干个交易日，过期即无法回补。想立刻拿到完整
+            曲线，点上方「回算历史曲线」用本地日线离线补齐即可（东财实抓的日子会
+            原样保留）；之后每个交易日收盘后也会自动累积。
           </div>
         </div>
       )}

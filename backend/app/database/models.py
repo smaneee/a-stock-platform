@@ -174,6 +174,11 @@ class PaperTrade(Base):
     price: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
     commission: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
     stamp_tax: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
+    #: 过户费（沪深京均按成交额双边收取，费率见 RiskLimits.transfer_fee_rate）。
+    #: 2026-09-14 新增：此前模拟盘不计过户费，与回测引擎（0.001% 双边）不一致。
+    transfer_fee: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4), default=0, server_default="0"
+    )
     realized_pnl: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
     signal_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     executed_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
@@ -356,7 +361,7 @@ class Security(Base):
     is_st: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     listing_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     delisted_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    # trading_status: active / suspended / delisted
+    # trading_status: active / suspended / delisted / pending_listing（待上市）
     trading_status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="active"
     )
@@ -658,7 +663,9 @@ class LimitUpSentiment(Base):
     - 封板率 ``seal_rate`` 衡量资金承接强度（涨停被封住 vs 被砸开）
     - 连板高度 ``max_streak`` 与梯队分布衡量赚钱效应与情绪周期位置
 
-    上游只保留最近若干个交易日，历史靠每日定时任务累积，无法任意回补。
+    上游榜单只保留最近若干个交易日，历史靠每日定时任务累积。整段历史可由
+    :mod:`app.market_data.sentiment_backfill` 用本地不复权日线离线回算补齐
+    （``source='derived'``），回算口径与样本面见该模块说明。
     """
 
     __tablename__ = "limit_up_sentiment"
@@ -673,6 +680,10 @@ class LimitUpSentiment(Base):
     seal_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     # 炸板率 = 炸板家数 / (涨停家数 + 炸板家数)
     broken_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # 当日纳入统计的标的数（回算口径）；东财实时榜单口径为 NULL
+    coverage_symbols: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 算法版本：区分东财实抓与本地日线回算，缺版本号的历史不可跨来源比较（0021）
+    algorithm_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     max_streak: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     first_board_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     streak_2_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -729,3 +740,106 @@ class LimitUpPoolMember(Base):
     captured_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utc_now
     )
+
+
+class ForwardObservation(Base):
+    """前向模拟观察计时（P1-02）。
+
+    为什么需要独立载体：研发计划要求「工程冻结后累计前向模拟交易日；重大成交逻辑
+    修改后重新计时。实盘试点不设倒推日期。」而全仓检索确认原本**没有任何表或字段
+    记录前向交易日**，只能靠口头说明，无法审计。
+
+    设计约束：
+
+    * 一个 ``freeze_tag`` 一行（唯一），代表一次工程冻结；改了成交/风控逻辑就换 tag，
+      旧 tag 的历史保留，不覆盖、不清零；
+    * 只统计 ``started_on`` 之后、**已经过去**的交易日，且同一交易日只计一次；
+    * 达到 ``target_trading_days`` 只表示「观察天数够」，不等于策略通过（仍需
+      §2 的样本外与对账门槛）。
+    """
+
+    __tablename__ = "forward_observations"
+    __table_args__ = (
+        UniqueConstraint("freeze_tag", name="uq_forward_observation_freeze_tag"),
+        Index("ix_forward_observation_started_on", "started_on"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: 工程冻结标识，例如 "2026-09-14-paper-costs-v1"（改动成交/风控逻辑时必须换新 tag）
+    freeze_tag: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: 前向计时起点：只统计**严格晚于**该日期的交易日
+    started_on: Mapped[date] = mapped_column(Date, nullable=False)
+    target_trading_days: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    trading_days_counted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_counted_day: Mapped[date | None] = mapped_column(Date, nullable=True)
+    account_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    baseline_equity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_equity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    notes: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+    @property
+    def remaining_trading_days(self) -> int:
+        return max(0, self.target_trading_days - self.trading_days_counted)
+
+    @property
+    def days_met(self) -> bool:
+        return self.trading_days_counted >= self.target_trading_days
+
+
+class FundamentalSnapshot(Base):
+    """基本面/估值快照（每标的每抓取日一行）。
+
+    为什么需要：平台原本**没有任何财务或估值数据**（全库 28 张表实测无一处存 PE/PB/ROE/
+    营收/净利润，见 `outputs/handoff/fundamentals-probe.json`），因此「企业质量」「估值」
+    「市场预期」三类分析在物理上无法进行。本表承载**已验证字段**（字段含义的验证方法写在
+    :mod:`app.fundamentals.eastmoney_fundamentals` 模块文档里：用 akshare 独立财务数据交叉核对）。
+
+    设计约束：
+
+    * 唯一键 ``(symbol, snapshot_date, source)``：同一天重复抓取是**更新**而不是追加，
+      避免同一份数据在横截面里被重复计数；
+    * ``report_date`` 单独存：财务数据有报告期滞后，分析时必须能判断时效（过期要停止判断）；
+    * 只存已验证字段 + 原始告警；未验证的接口字段不落库，宁缺毋滥。
+    """
+
+    __tablename__ = "fundamental_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol", "snapshot_date", "source", name="uq_fundamental_symbol_date_source"
+        ),
+        Index("ix_fundamental_snapshot_date", "snapshot_date"),
+        Index("ix_fundamental_report_date", "report_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(10), nullable=False)
+    name: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    #: 抓取日（北京时间），横截面按此日对齐
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    #: 财报报告期（数据时点），可为空表示上游未给
+    report_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    market_cap: Mapped[float | None] = mapped_column(Float, nullable=True)
+    float_market_cap: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pe_dynamic: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pb: Mapped[float | None] = mapped_column(Float, nullable=True)
+    roe: Mapped[float | None] = mapped_column(Float, nullable=True)
+    revenue: Mapped[float | None] = mapped_column(Float, nullable=True)
+    revenue_yoy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    net_profit_parent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    net_profit_yoy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gross_margin: Mapped[float | None] = mapped_column(Float, nullable=True)
+    net_margin: Mapped[float | None] = mapped_column(Float, nullable=True)
+    debt_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    eps_diluted: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    equity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    industry: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="eastmoney")
+    #: 自洽性告警（JSON 数组字符串），例如动态市盈率与自算值偏差过大
+    warnings: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utc_now)

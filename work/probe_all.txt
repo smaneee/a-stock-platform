@@ -1,0 +1,296 @@
+﻿### datasets: ['dragon-tiger', 'block-trade', 'margin', 'northbound', 'org-survey', 'holder-number', 'restricted-release', 'earnings-forecast', 'dividend', 'executive-hold', 'pledge', 'convertible-bond']
+### pools: ['limit-up', 'limit-down', 'broken-board', 'strong', 'sub-new']
+
+### datacenter/dragon-tiger
+  HTTP 200 355ms total=268118 count=20 rows=20
+  FIELDS: ["trade_date", "symbol", "name", "close", "change_pct", "turnover_rate", "market", "billboard_buy_amount", "billboard_sell_amount", "billboard_net_amount", "deal_amount", "accum_amount", "deal_amount_ratio", "net_amount_ratio", "change_1d_pct", "change_5d_pct", "change_10d_pct", "change_20d_pct", "reason", "interpretation"]
+   SAMPLE: {"trade_date": "2026-09-11", "symbol": "300808", "name": "久量股份", "close": 20.28, "change_pct": -18.3246, "turnover_rate": 11.3081, "market": "深交所创业板", "billboard_buy_amount": 21318934.0, "billboard_sell_amount": 52167687.0, "billboard_net_amount": -30848753.0, "deal_amount": 73486621.0, "accum_amount": 280259869.0, "deal_amount_ratio": 26.22088608769, "net_amount_ratio": -11.007195967825, "change_1d_pct": null, "change_5d_pct": null, "change_10d_pct": null, "change_20d_pct": null, "reason": "日跌幅达到15%的前5只证券", "interpretation": "2家机构卖出，成功率21.82%"}
+   SAMPLE: {"trade_date": "2026-09-11", "symbol": "301176", "name": "逸豪新材", "close": 60.6, "change_pct": 7.2756, "turnover_rate": 16.4402, "market": "深交所创业板", "billboard_buy_amount": 441863523.16, "billboard_sell_amount": 567168085.84, "billboard_net_amount": -125304562.68, "deal_amount": 1009031609.0, "accum_amount": 3246287653.0, "deal_amount_ratio": 31.082630895864, "net_amount_ratio": -3.859934056189, "change_1d_pct": null, "change_5d_pct": null, "change_10d_pct": null, "change_20d_pct": null, "reason": "连续三个交易日内，涨幅偏离值累计达到30%的证券", "interpretation": "4家机构买入，成功率6.60%"}
+   SAMPLE: {"trade_date": "2026-09-11", "symbol": "300563", "name": "神宇股份", "close": 27.92, "change_pct": 19.9828, "turnover_rate": 18.0524, "market": "深交所创业板", "billboard_buy_amount": 165843564.0, "billboard_sell_amount": 38892851.05, "billboard_net_amount": 126950712.95, "deal_amount": 204736415.05, "accum_amount": 611894701.0, "deal_amount_ratio": 33.459419523556, "net_amount_ratio": 20.747150243748, "change_1d_pct": null, "change_5d_pct": null, "change_10d_pct": null, "change_20d_pct": null, "reason": "日涨幅达到15%的前5只证券", "interpretation": "1家机构买入，成功率46.92%"}
+  MARKETS: {'SZ': 20}
+  TYPEOF: {"trade_date": "str", "symbol": "str", "name": "str", "close": "float", "change_pct": "float", "turnover_rate": "float", "market": "str", "billboard_buy_amount": "float", "billboard_sell_amount": "float", "billboard_net_amount": "float", "deal_amount": "float", "accum_amount": "float", "deal_amount_ratio": "float", "net_amount_ratio": "float", "change_1d_pct": "NoneType", "change_5d_pct": "NoneType", "change_10d_pct": "NoneType", "change_20d_pct": "NoneType", "reason": "str", "interpretation": "str"}
+
+### datacenter/block-trade
+  HTTP 200 789ms total=681569 count=20 rows=20
+  FIELDS: ["trade_date", "symbol", "name", "deal_price", "premium_ratio", "discount_ratio", "deal_volume", "deal_amount", "close", "change_pct", "trade_ratio", "free_shares_ratio", "buyer", "seller"]
+   SAMPLE: {"trade_date": "2026-09-11", "symbol": "603679", "name": "华体科技", "deal_price": 22.05, "premium_ratio": -0.150943396226, "discount_ratio": -10.0, "deal_volume": 256800.0, "deal_amount": 5662400.0, "close": 25.97, "change_pct": 6.0, "trade_ratio": 0.122708558543, "free_shares_ratio": 0.144524434329, "buyer": "粤开证券股份有限公司广州分公司", "seller": "东北证券股份有限公司深圳分公司"}
+   SAMPLE: {"trade_date": "2026-09-11", "symbol": "508017", "name": "金茂消费", "deal_price": 3.59, "premium_ratio": -0.000556792873, "discount_ratio": null, "deal_volume": 307000.0, "deal_amount": 1102700.0, "close": 3.592, "change_pct": -1.2916, "trade_ratio": null, "free_shares_ratio": null, "buyer": "中信证券股份有限公司总部(非营业场所)", "seller": "机构专用"}
+   SAMPLE: {"trade_date": "2026-09-11", "symbol": "508020", "name": "隧道REIT", "deal_price": 5.26, "premium_ratio": -0.000570017101, "discount_ratio": null, "deal_volume": 414000.0, "deal_amount": 2178900.0, "close": 5.263, "change_pct": 2.0753, "trade_ratio": null, "free_shares_ratio": null, "buyer": "机构专用", "seller": "中信证券股份有限公司总部(非营业场所)"}
+  MARKETS: {'SH': 16, '?': 4}
+  TYPEOF: {"trade_date": "str", "symbol": "str", "name": "str", "deal_price": "float", "premium_ratio": "float", "discount_ratio": "float", "deal_volume": "float", "deal_amount": "float", "close": "float", "change_pct": "float", "trade_ratio": "float", "free_shares_ratio": "float", "buyer": "str", "seller": "str"}
+
+### datacenter/margin
+  HTTP 200 5064ms total=6822021 count=20 rows=20
+  FIELDS: ["trade_date", "symbol", "name", "market", "close", "change_pct", "financing_balance", "financing_buy", "financing_repay", "financing_net_buy", "financing_balance_pct", "short_balance", "short_volume", "short_sell_volume", "short_net_sell", "margin_balance", "margin_balance_diff"]
+   SAMPLE: {"trade_date": "2026-09-11", "symbol": "563080", "name": "中证A50E", "market": "融资融券_沪证", "close": 1.347, "change_pct": -1.2463, "financing_balance": 1952361.0, "financing_buy": 308025.0, "financing_repay": 2098054.0, "financing_net_buy": -1790029.0, "financing_balance_pct": null, "short_balance": 0.0, "short_volume": 0.0, "short_sell_volume": 0.0, "short_net_sell": 0.0, "margin_balance": 1952361.0, "margin_balance_diff": 1952361.0}
+   SAMPLE: {"trade_date": "2026-09-11", "symbol": "600448", "name": "华纺股份", "market": "融资融券_沪证", "close": 2.98, "change_pct": -2.2951, "financing_balance": 278970254.0, "financing_buy": 6359733.0, "financing_repay": 3501486.0, "financing_net_buy": 2858247.0, "financing_balance_pct": 14.86364825, "short_balance": 490508.0, "short_volume": 164600.0, "short_sell_volume": 0.0, "short_net_sell": -1000.0, "margin_balance": 279460762.0, "margin_balance_diff": 278479746.0}
+   SAMPLE: {"trade_date": "2026-09-11", "symbol": "600428", "name": "中远海特", "market": "融资融券_沪证", "close": 11.25, "change_pct": -0.8811, "financing_balance": 351152385.0, "financing_buy": 40097216.0, "financing_repay": 27241044.0, "financing_net_buy": 12856172.0, "financing_balance_pct": 1.27647852, "short_balance": 5958000.0, "short_volume": 529600.0, "short_sell_volume": 73800.0, "short_net_sell": -30500.0, "margin_balance": 357110385.0, "margin_balance_diff": 345194385.0}
+  MARKETS: {'?': 8, 'SH': 12}
+  TYPEOF: {"trade_date": "str", "symbol": "str", "name": "str", "market": "str", "close": "float", "change_pct": "float", "financing_balance": "float", "financing_buy": "float", "financing_repay": "float", "financing_net_buy": "float", "financing_balance_pct": "NoneType", "short_balance": "float", "short_volume": "float", "short_sell_volume": "float", "short_net_sell": "float", "margin_balance": "float", "margin_balance_diff": "float"}
+
+### datacenter/northbound
+  HTTP 200 81ms total=15449 count=20 rows=20
+  FIELDS: ["trade_date", "mutual_type", "channel", "deal_amount", "buy_amount", "sell_amount", "net_deal_amount", "fund_inflow", "accum_deal_amount", "deal_num", "hold_market_cap", "quota_balance", "quota_balance_text", "index_close", "index_change_pct", "lead_symbol", "lead_name", "lead_change_pct"]
+   SAMPLE: {"trade_date": "2026-09-11", "mutual_type": "003", "channel": "深股通", "deal_amount": 149063550000.0, "buy_amount": null, "sell_amount": null, "net_deal_amount": null, "fund_inflow": null, "accum_deal_amount": null, "deal_num": 7523378.0, "hold_market_cap": null, "quota_balance": null, "quota_balance_text": "额度充足", "index_close": 13471.26, "index_change_pct": -1.08, "lead_symbol": "002161.SZ", "lead_name": "远望谷", "lead_change_pct": 9.99}
+   SAMPLE: {"trade_date": "2026-09-11", "mutual_type": "005", "channel": "北向资金合计", "deal_amount": 291319640000.0, "buy_amount": null, "sell_amount": null, "net_deal_amount": null, "fund_inflow": null, "accum_deal_amount": null, "deal_num": 14637752.0, "hold_market_cap": 0.0, "quota_balance": null, "quota_balance_text": "额度充足", "index_close": 3888.11, "index_change_pct": -1.18, "lead_symbol": "002161.SZ", "lead_name": "远望谷", "lead_change_pct": 9.99}
+   SAMPLE: {"trade_date": "2026-09-11", "mutual_type": "001", "channel": "沪股通", "deal_amount": 142256090000.0, "buy_amount": null, "sell_amount": null, "net_deal_amount": null, "fund_inflow": null, "accum_deal_amount": null, "deal_num": 7114374.0, "hold_market_cap": null, "quota_balance": null, "quota_balance_text": "额度充足", "index_close": 3888.11, "index_change_pct": -1.18, "lead_symbol": "600876.SH", "lead_name": "凯盛新能", "lead_change_pct": 9.99}
+  MARKETS: {'?': 20}
+  TYPEOF: {"trade_date": "str", "mutual_type": "str", "channel": "str", "deal_amount": "float", "buy_amount": "NoneType", "sell_amount": "NoneType", "net_deal_amount": "NoneType", "fund_inflow": "NoneType", "accum_deal_amount": "NoneType", "deal_num": "float", "hold_market_cap": "NoneType", "quota_balance": "NoneType", "quota_balance_text": "str", "index_close": "float", "index_change_pct": "float", "lead_symbol": "str", "lead_name": "str", "lead_change_pct": "float"}
+
+### datacenter/org-survey
+  HTTP 200 171ms total=286909 count=20 rows=20
+  FIELDS: ["notice_date", "symbol", "name", "receive_start_date", "receive_end_date", "receive_way", "receive_place", "receive_object", "org_type", "investigators", "receptionist", "receive_count"]
+   SAMPLE: {"notice_date": "2026-09-13", "symbol": "002205", "name": "国统股份", "receive_start_date": "2026-09-09", "receive_end_date": "2026-09-09", "receive_way": "业绩说明会", "receive_place": "“国统股份投资者关系”微信小程序", "receive_object": "线上参与国统股份2026年半年度网上业绩说明会的投资者", "org_type": "", "investigators": "", "receptionist": "党委副书记、董事、总经理 王出,董事、财务总监 任勇,董事会秘书 郭静,独立董事 汤洋,独立董事 李大明,独立董事 崔琪", "receive_count": 1}
+   SAMPLE: {"notice_date": "2026-09-13", "symbol": "000731", "name": "四川美丰", "receive_start_date": "2026-09-11", "receive_end_date": "2026-09-11", "receive_way": "业绩说明会,网络远程文字交流", "receive_place": "“全景路演”(https://ir.p5w.net)", "receive_object": "线上参与四川辖区2026年投资者网上集体接待日及半年度报告业绩说明会的全体投资者", "org_type": "", "investigators": "", "receptionist": "董事长、总裁 王亮,独立董事 曹麒麟,董事会秘书 王东,财务总监 李全平", "receive_count": 1}
+   SAMPLE: {"notice_date": "2026-09-12", "symbol": "600642", "name": "申能股份", "receive_start_date": "2026-09-11", "receive_end_date": "", "receive_way": "线下调研", "receive_place": "申能股份有限公司会议室", "receive_object": "国泰基金", "org_type": "基金管理公司", "investigators": "", "receptionist": "副总裁 赵恺,董事会秘书、证券部总经理 周鸣,证券部相关工作人员", "receive_count": 10}
+  MARKETS: {'SZ': 4, 'SH': 16}
+  TYPEOF: {"notice_date": "str", "symbol": "str", "name": "str", "receive_start_date": "str", "receive_end_date": "str", "receive_way": "str", "receive_place": "str", "receive_object": "str", "org_type": "str", "investigators": "str", "receptionist": "str", "receive_count": "int"}
+
+### datacenter/holder-number
+  HTTP 200 113ms total=5557 count=20 rows=20
+  FIELDS: ["symbol", "name", "end_date", "holder_num", "pre_holder_num", "holder_num_change", "holder_num_ratio", "interval_change_pct", "avg_hold_num", "avg_market_cap", "close", "change_reason"]
+   SAMPLE: {"symbol": "688825", "name": "长鑫科技", "end_date": "2026-07-27", "holder_num": 3456664, "pre_holder_num": 60, "holder_num_change": 3456604, "holder_num_ratio": 5761006.66666667, "interval_change_pct": 465.81986143, "avg_hold_num": 19348.3908407065, "avg_market_cap": 948071.15119462, "close": 49.0, "change_reason": "发行融资"}
+   SAMPLE: {"symbol": "000725", "name": "京东方A", "end_date": "2026-06-30", "holder_num": 1897586, "pre_holder_num": 971956, "holder_num_change": 925630, "holder_num_ratio": 95.233734860426, "interval_change_pct": 123.99785051, "avg_hold_num": 19156.6779777043, "avg_market_cap": 166279.964846473, "close": 8.68, "change_reason": ""}
+   SAMPLE: {"symbol": "001248", "name": "华润新能源", "end_date": "2026-07-02", "holder_num": 1634154, "pre_holder_num": 1634154, "holder_num_change": 0, "holder_num_ratio": 0.0, "interval_change_pct": 136.89416419, "avg_hold_num": 7958.56746671366, "avg_market_cap": 190607.690827792, "close": 23.95, "change_reason": ""}
+  MARKETS: {'SH': 11, 'SZ': 9}
+  TYPEOF: {"symbol": "str", "name": "str", "end_date": "str", "holder_num": "int", "pre_holder_num": "int", "holder_num_change": "int", "holder_num_ratio": "float", "interval_change_pct": "float", "avg_hold_num": "float", "avg_market_cap": "float", "close": "float", "change_reason": "str"}
+
+### datacenter/restricted-release
+  HTTP 200 81ms total=31497 count=20 rows=20
+  FIELDS: ["free_date", "symbol", "name", "free_shares_type", "current_free_shares", "lift_market_cap", "free_shares", "free_ratio", "total_ratio", "holder_num", "market_type"]
+   SAMPLE: {"free_date": "2035-10-29", "symbol": "688783", "name": "西安奕材", "free_shares_type": "首发原股东限售股份", "current_free_shares": 30267.0051, "lift_market_cap": 783915.43209, "free_shares": 403780.0, "free_ratio": 1.12558590926, "total_ratio": 0.074959148794, "holder_num": 1, "market_type": "kcb"}
+   SAMPLE: {"free_date": "2034-06-12", "symbol": "300498", "name": "温氏股份", "free_shares_type": "股权激励限售股份", "current_free_shares": 1195.6357, "lift_market_cap": 17779.102859, "free_shares": 596714.8781, "free_ratio": 0.002010864172, "total_ratio": 0.001796886689, "holder_num": 1, "market_type": "cyb"}
+   SAMPLE: {"free_date": "2034-01-20", "symbol": "603530", "name": "神马电力", "free_shares_type": "股权激励限售股份", "current_free_shares": 5.1875, "lift_market_cap": 223.16625, "free_shares": 43226.3349, "free_ratio": 0.000121355029, "total_ratio": 0.000120007861, "holder_num": 2, "market_type": "sh"}
+  MARKETS: {'SH': 14, 'SZ': 6}
+  TYPEOF: {"free_date": "str", "symbol": "str", "name": "str", "free_shares_type": "str", "current_free_shares": "float", "lift_market_cap": "float", "free_shares": "float", "free_ratio": "float", "total_ratio": "float", "holder_num": "int", "market_type": "str"}
+
+### datacenter/earnings-forecast
+  HTTP 200 451ms total=190920 count=20 rows=20
+  FIELDS: ["notice_date", "report_date", "symbol", "name", "predict_finance", "predict_type", "predict_amount_lower", "predict_amount_upper", "forecast_jz", "increase_jz", "add_amp_lower", "add_amp_upper", "preyear_same_period", "content", "reason"]
+   SAMPLE: {"notice_date": "2026-09-14", "report_date": "2026-12-31", "symbol": "601091", "name": "沈鼓集团", "predict_finance": "归属于上市公司股东的净利润", "predict_type": "略减", "predict_amount_lower": 626000000.0, "predict_amount_upper": 660000000.0, "forecast_jz": 643000000.0, "increase_jz": -13.045, "add_amp_lower": -15.34, "add_amp_upper": -10.75, "preyear_same_period": 739470000.0, "content": "预计2026年1-12月归属于上市公司股东的净利润盈利:62,600万元至66,000万元,同比上年下降:10.75%至15.34%。", "reason": ""}
+   SAMPLE: {"notice_date": "2026-09-14", "report_date": "2026-09-30", "symbol": "601091", "name": "沈鼓集团", "predict_finance": "营业收入", "predict_type": "续盈", "predict_amount_lower": 7300000000.0, "predict_amount_upper": 7700000000.0, "forecast_jz": 7500000000.0, "increase_jz": -1.35, "add_amp_lower": -3.98, "add_amp_upper": 1.28, "preyear_same_period": 7602770000.0, "content": "预计2026年1-9月营业收入:730,000万元至770,000万元,同比上年变动:-3.98%至1.28%。", "reason": "2026年1-9月,公司预计实现营业收入730,000万元至770,000万元,较2025年同期变动-3.98%至1.28%,公司整体营业收入稳定。2026年1-9月,预计实现归属于母公司所有者净利润45,600万元至55,000万元,较上年同期变动-23.83%至-8.13%;扣除非经常性损益后归属于母公司所有者净利润40
+   SAMPLE: {"notice_date": "2026-09-14", "report_date": "2026-09-30", "symbol": "601091", "name": "沈鼓集团", "predict_finance": "归属于上市公司股东的净利润", "predict_type": "略减", "predict_amount_lower": 456000000.0, "predict_amount_upper": 550000000.0, "forecast_jz": 503000000.0, "increase_jz": -15.98, "add_amp_lower": -23.83, "add_amp_upper": -8.13, "preyear_same_period": 598700000.0, "content": "预计2026年1-9月归属于上市公司股东的净利润盈利:45,600万元至55,000万元,同比上年下降:8.13%至23.83%。", "reason": "2026年1-9月,公司预计实现营业收入730,000万元至770,000万元,较2025年同期变动-3.98%至1.28%,公司整体营业收入稳定。2026年1-9月,预计实现归属于母公司所有者净利润45,600万元至55,000万元,较上年同期变动-23.83%至-8.13%;扣除非经常性
+  MARKETS: {'SH': 10, 'SZ': 6, 'BJ': 4}
+  TYPEOF: {"notice_date": "str", "report_date": "str", "symbol": "str", "name": "str", "predict_finance": "str", "predict_type": "str", "predict_amount_lower": "float", "predict_amount_upper": "float", "forecast_jz": "float", "increase_jz": "float", "add_amp_lower": "float", "add_amp_upper": "float", "preyear_same_period": "float", "content": "str", "reason": "str"}
+
+### datacenter/dividend
+  HTTP 200 92ms total=56973 count=20 rows=20
+  FIELDS: ["notice_date", "plan_notice_date", "symbol", "name", "report_date", "progress", "plan", "pretax_bonus", "bonus_ratio", "it_ratio", "dividend_ratio", "equity_record_date", "ex_dividend_date", "basic_eps", "bvps", "pnp_yoy_ratio"]
+   SAMPLE: {"notice_date": "2026-09-14", "plan_notice_date": "2026-08-28", "symbol": "603319", "name": "美湖股份", "report_date": "2026-06-30", "progress": "实施分配", "plan": "10派0.50元(含税,扣税后0.45元)", "pretax_bonus": 0.5, "bonus_ratio": null, "it_ratio": null, "dividend_ratio": 0.001768033946, "equity_record_date": "2026-09-17", "ex_dividend_date": "2026-09-18", "basic_eps": 0.16, "bvps": 7.286638811286, "pnp_yoy_ratio": -45.766303638983}
+   SAMPLE: {"notice_date": "2026-09-14", "plan_notice_date": "2026-08-28", "symbol": "600032", "name": "浙江新能", "report_date": "2026-06-30", "progress": "实施分配", "plan": "10派0.20元(含税,扣税后0.18元)", "pretax_bonus": 0.2, "bonus_ratio": null, "it_ratio": null, "dividend_ratio": 0.002688172043, "equity_record_date": "2026-09-18", "ex_dividend_date": "2026-09-21", "basic_eps": 0.0648, "bvps": 5.385860952977, "pnp_yoy_ratio": -46.542250385325}
+   SAMPLE: {"notice_date": "2026-09-14", "plan_notice_date": "2026-04-24", "symbol": "603757", "name": "大元泵业", "report_date": "2026-06-30", "progress": "实施分配", "plan": "10派1.00元(含税,扣税后0.90元)", "pretax_bonus": 1.0, "bonus_ratio": null, "it_ratio": null, "dividend_ratio": 0.001572821642, "equity_record_date": "2026-09-17", "ex_dividend_date": "2026-09-18", "basic_eps": 0.17, "bvps": 11.283141061269, "pnp_yoy_ratio": -68.767845081576}
+  MARKETS: {'SH': 13, 'SZ': 7}
+  TYPEOF: {"notice_date": "str", "plan_notice_date": "str", "symbol": "str", "name": "str", "report_date": "str", "progress": "str", "plan": "str", "pretax_bonus": "float", "bonus_ratio": "NoneType", "it_ratio": "NoneType", "dividend_ratio": "float", "equity_record_date": "str", "ex_dividend_date": "str", "basic_eps": "float", "bvps": "float", "pnp_yoy_ratio": "float"}
+
+### datacenter/executive-hold
+  HTTP 200 191ms total=171740 count=20 rows=20
+  FIELDS: ["change_date", "symbol", "name", "person_name", "position", "change_shares", "average_price", "change_amount", "change_ratio", "after_hold_num", "hold_type", "change_reason", "related_person", "relation"]
+   SAMPLE: {"change_date": "2026-09-11", "symbol": "600165", "name": "宁科生物", "person_name": "符杰", "position": "董事,高级管理人员", "change_shares": 10000.0, "average_price": 3.15, "change_amount": 31500.0, "change_ratio": 0.0006, "after_hold_num": 20000.0, "hold_type": "A股", "change_reason": "二级市场买卖", "related_person": "符杰", "relation": "本人"}
+   SAMPLE: {"change_date": "2026-09-11", "symbol": "920392", "name": "佳合科技", "person_name": "张毅", "position": "董事,高级管理人员", "change_shares": -10000.0, "average_price": 15.2, "change_amount": -152000.0, "change_ratio": 0.013, "after_hold_num": 12214000.0, "hold_type": "A股", "change_reason": "竞价交易", "related_person": "张毅", "relation": "本人"}
+   SAMPLE: {"change_date": "2026-09-11", "symbol": "920252", "name": "天宏锂电", "person_name": "周新芳", "position": "董事,高级管理人员", "change_shares": -4321.0, "average_price": 14.2, "change_amount": -61358.2, "change_ratio": 0.0042, "after_hold_num": 11661220.0, "hold_type": "A股", "change_reason": "竞价交易", "related_person": "周新芳", "relation": "本人"}
+  MARKETS: {'SH': 15, 'BJ': 5}
+  TYPEOF: {"change_date": "str", "symbol": "str", "name": "str", "person_name": "str", "position": "str", "change_shares": "float", "average_price": "float", "change_amount": "float", "change_ratio": "float", "after_hold_num": "float", "hold_type": "str", "change_reason": "str", "related_person": "str", "relation": "str"}
+
+### datacenter/pledge
+  HTTP 200 663ms total=1633259 count=20 rows=20
+  FIELDS: ["trade_date", "symbol", "name", "pledge_ratio", "pledge_shares", "pledge_deal_num", "pledge_market_cap", "unlimited_balance", "limited_balance", "industry", "stat_month"]
+   SAMPLE: {"trade_date": "2026-09-11", "symbol": "001289", "name": "龙源电力", "pledge_ratio": 0.0, "pledge_shares": 8.73, "pledge_deal_num": 1.0, "pledge_market_cap": 132.5214, "unlimited_balance": 8.73, "limited_balance": 0.0, "industry": "电力", "stat_month": "2026-09"}
+   SAMPLE: {"trade_date": "2026-09-11", "symbol": "300010", "name": "ST豆神", "pledge_ratio": 2.25, "pledge_shares": 4660.0, "pledge_deal_num": 1.0, "pledge_market_cap": 25164.0, "unlimited_balance": 0.0, "limited_balance": 4660.0, "industry": "教育", "stat_month": "2026-09"}
+   SAMPLE: {"trade_date": "2026-09-11", "symbol": "002005", "name": "德豪润达", "pledge_ratio": 2.78, "pledge_shares": 4869.35, "pledge_deal_num": 1.0, "pledge_market_cap": 11589.053, "unlimited_balance": 4869.35, "limited_balance": 0.0, "industry": "小家电", "stat_month": "2026-09"}
+  MARKETS: {'SZ': 20}
+  TYPEOF: {"trade_date": "str", "symbol": "str", "name": "str", "pledge_ratio": "float", "pledge_shares": "float", "pledge_deal_num": "float", "pledge_market_cap": "float", "unlimited_balance": "float", "limited_balance": "float", "industry": "str", "stat_month": "str"}
+
+### datacenter/convertible-bond
+  HTTP 200 324ms total=1052 count=20 rows=20
+  FIELDS: ["symbol", "name", "stock_symbol", "rating", "issue_scale", "par_value", "issue_price", "coupon_rate", "initial_transfer_price", "value_date", "listing_date", "transfer_start_date", "transfer_end_date", "expire_date", "is_convert_stock", "is_redeem", "is_sellback"]
+   SAMPLE: {"symbol": "404005", "name": "普利退债", "stock_symbol": "400266", "rating": "", "issue_scale": 8.5, "par_value": 100.0, "issue_price": 100.0, "coupon_rate": null, "initial_transfer_price": 46.22, "value_date": "2021-02-09", "listing_date": "", "transfer_start_date": "2021-08-23", "transfer_end_date": "2027-02-08", "expire_date": "2027-02-09", "is_convert_stock": "是", "is_redeem": "是", "is_sellback": "是"}
+   SAMPLE: {"symbol": "113710", "name": "四方转债", "stock_symbol": "603339", "rating": "AA", "issue_scale": 10.23395, "par_value": 100.0, "issue_price": 100.0, "coupon_rate": 0.1, "initial_transfer_price": 14.87, "value_date": "2026-09-03", "listing_date": "", "transfer_start_date": "2027-03-09", "transfer_end_date": "2032-09-02", "expire_date": "2032-09-03", "is_convert_stock": "否", "is_redeem": "是", "is_sellback": "是"}
+   SAMPLE: {"symbol": "123285", "name": "润禾转02", "stock_symbol": "300727", "rating": "A+", "issue_scale": 3.7, "par_value": 100.0, "issue_price": 100.0, "coupon_rate": 0.2, "initial_transfer_price": 31.1, "value_date": "2026-09-10", "listing_date": "", "transfer_start_date": "2027-03-16", "transfer_end_date": "2032-09-09", "expire_date": "2032-09-10", "is_convert_stock": "否", "is_redeem": "是", "is_sellback": "是"}
+  MARKETS: {'BJ': 1, 'SH': 9, 'SZ': 10}
+  TYPEOF: {"symbol": "str", "name": "str", "stock_symbol": "str", "rating": "str", "issue_scale": "float", "par_value": "float", "issue_price": "float", "coupon_rate": "NoneType", "initial_transfer_price": "float", "value_date": "str", "listing_date": "str", "transfer_start_date": "str", "transfer_end_date": "str", "expire_date": "str", "is_convert_stock": "str", "is_redeem": "str", "is_sellback": "str"}
+
+### dragon-tiger seats symbol=300808 trade_date=2026-09-11
+  HTTP 200 254ms
+  buy: n=5 fields=["trade_date", "symbol", "seat_name", "buy_amount", "sell_amount", "net_amount", "buy_ratio", "sell_ratio", "close", "change_pct", "accum_amount", "reason"]
+   SAMPLE: {"trade_date": "2026-09-11", "symbol": "300808", "seat_name": "平安证券股份有限公司北京市分公司", "buy_amount": 3169026.0, "sell_amount": 332475.0, "net_amount": 2836551.0, "buy_ratio": 0.01130745551, "sell_ratio": 0.001186309696, "close": 20.28, "change_pct": -18.3246, "accum_amount": 280259869.0, "reason": "日跌幅达到15%的前5只证券"}
+  sell: n=5 fields=["trade_date", "symbol", "seat_name", "buy_amount", "sell_amount", "net_amount", "buy_ratio", "sell_ratio", "close", "change_pct", "accum_amount", "reason"]
+   SAMPLE: {"trade_date": "2026-09-11", "symbol": "300808", "seat_name": "五矿证券有限公司广州分公司", "buy_amount": 726735.0, "sell_amount": 7045410.0, "net_amount": -6318675.0, "buy_ratio": 0.0025930755, "sell_ratio": 0.025138847118, "close": 20.28, "change_pct": -18.3246, "accum_amount": 280259869.0, "reason": "日跌幅达到15%的前5只证券"}
+
+### boards kind=industry
+  HTTP 200 834ms total=None count=20 rows=20
+  FIELDS: ["code", "name", "kind", "index_value", "change_pct", "change_amount", "volume", "amount", "amplitude", "turnover_rate", "main_net_inflow", "main_net_inflow_pct", "up_count", "down_count", "flat_count", "leader_symbol", "leader_name", "leader_change_pct"]
+   SAMPLE: {"code": "BK1592", "name": "通信线缆及配套", "kind": "industry", "index_value": 27073.48, "change_pct": 5.84, "change_amount": 1493.62, "volume": 1115654700.0, "amount": 50462477548.0, "amplitude": 8.37, "turnover_rate": 10.23, "main_net_inflow": 2671127808.0, "main_net_inflow_pct": 5.29, "up_count": 12, "down_count": 1, "flat_count": 0, "leader_symbol": "300563", "leader_name": "神宇股份", "leader_change_pct": 19.98}
+   SAMPLE: {"code": "BK1462", "name": "玻纤制造", "kind": "industry", "index_value": 16809.98, "change_pct": 4.67, "change_amount": 750.03, "volume": 828346600.0, "amount": 26316878328.0, "amplitude": 8.99, "turnover_rate": 8.59, "main_net_inflow": 261262928.0, "main_net_inflow_pct": 0.99, "up_count": 8, "down_count": 0, "flat_count": 0, "leader_symbol": "002201", "leader_name": "九鼎新材", "leader_change_pct": 10.02}
+   SAMPLE: {"code": "BK1382", "name": "地面兵装Ⅲ", "kind": "industry", "index_value": 4025.73, "change_pct": 4.48, "change_amount": 172.6, "volume": 671438300.0, "amount": 11890861509.0, "amplitude": 6.3, "turnover_rate": 7.45, "main_net_inflow": 1358255568.0, "main_net_inflow_pct": 11.42, "up_count": 12, "down_count": 0, "flat_count": 0, "leader_symbol": "600967", "leader_name": "内蒙一机", "leader_change_pct": 9.99}
+  MARKETS: {'?': 20}
+  TYPEOF: {"code": "str", "name": "str", "kind": "str", "index_value": "float", "change_pct": "float", "change_amount": "float", "volume": "float", "amount": "float", "amplitude": "float", "turnover_rate": "float", "main_net_inflow": "float", "main_net_inflow_pct": "float", "up_count": "int", "down_count": "int", "flat_count": "int", "leader_symbol": "str", "leader_name": "str", "leader_change_pct": "float"}
+
+### boards kind=concept
+  HTTP 200 66ms total=None count=20 rows=20
+  FIELDS: ["code", "name", "kind", "index_value", "change_pct", "change_amount", "volume", "amount", "amplitude", "turnover_rate", "main_net_inflow", "main_net_inflow_pct", "up_count", "down_count", "flat_count", "leader_symbol", "leader_name", "leader_change_pct"]
+   SAMPLE: {"code": "BK0976", "name": "被动元件概念", "kind": "concept", "index_value": 2505.13, "change_pct": 2.54, "change_amount": 62.09, "volume": 1176800100.0, "amount": 50484497486.0, "amplitude": 5.09, "turnover_rate": 7.72, "main_net_inflow": 3369454080.0, "main_net_inflow_pct": 6.67, "up_count": 21, "down_count": 8, "flat_count": 1, "leader_symbol": "002848", "leader_name": "高斯贝尔", "leader_change_pct": 10.04}
+   SAMPLE: {"code": "BK1716", "name": "反转股", "kind": "concept", "index_value": 605.26, "change_pct": 2.03, "change_amount": 12.04, "volume": 496476700.0, "amount": 12870128887.0, "amplitude": 4.77, "turnover_rate": 24.9, "main_net_inflow": 202118560.0, "main_net_inflow_pct": 1.57, "up_count": 5, "down_count": 4, "flat_count": 0, "leader_symbol": "000823", "leader_name": "超声电子", "leader_change_pct": 10.0}
+   SAMPLE: {"code": "BK0890", "name": "MLCC", "kind": "concept", "index_value": 4795.46, "change_pct": 1.72, "change_amount": 80.89, "volume": 1177017800.0, "amount": 52931828514.0, "amplitude": 5.28, "turnover_rate": 5.26, "main_net_inflow": 2827672576.0, "main_net_inflow_pct": 5.34, "up_count": 20, "down_count": 19, "flat_count": 0, "leader_symbol": "002585", "leader_name": "双星新材", "leader_change_pct": 10.06}
+  MARKETS: {'?': 20}
+  TYPEOF: {"code": "str", "name": "str", "kind": "str", "index_value": "float", "change_pct": "float", "change_amount": "float", "volume": "float", "amount": "float", "amplitude": "float", "turnover_rate": "float", "main_net_inflow": "float", "main_net_inflow_pct": "float", "up_count": "int", "down_count": "int", "flat_count": "int", "leader_symbol": "str", "leader_name": "str", "leader_change_pct": "float"}
+
+### boards kind=region
+  HTTP 200 70ms total=None count=20 rows=20
+  FIELDS: ["code", "name", "kind", "index_value", "change_pct", "change_amount", "volume", "amount", "amplitude", "turnover_rate", "main_net_inflow", "main_net_inflow_pct", "up_count", "down_count", "flat_count", "leader_symbol", "leader_name", "leader_change_pct"]
+   SAMPLE: {"code": "BK0153", "name": "广东板块", "kind": "region", "index_value": 43406.78, "change_pct": -1.74, "change_amount": -766.58, "volume": 17375031200.0, "amount": 362695251744.0, "amplitude": 2.62, "turnover_rate": 2.13, "main_net_inflow": -8621469952.0, "main_net_inflow_pct": -2.38, "up_count": 129, "down_count": 765, "flat_count": 11, "leader_symbol": "002161", "leader_name": "远 望 谷", "leader_change_pct": 9.99}
+   SAMPLE: {"code": "BK0157", "name": "湖北板块", "kind": "region", "index_value": 20874.84, "change_pct": -1.74, "change_amount": -369.01, "volume": 3266302700.0, "amount": 72026804065.0, "amplitude": 2.46, "turnover_rate": 2.46, "main_net_inflow": -1482806016.0, "main_net_inflow_pct": -2.06, "up_count": 25, "down_count": 129, "flat_count": 0, "leader_symbol": "600184", "leader_name": "光电股份", "leader_change_pct": 10.02}
+   SAMPLE: {"code": "BK0164", "name": "山东板块", "kind": "region", "index_value": 21033.78, "change_pct": -1.76, "change_amount": -377.54, "volume": 5817383800.0, "amount": 110770041324.0, "amplitude": 2.29, "turnover_rate": 2.12, "main_net_inflow": 1875550720.0, "main_net_inflow_pct": 1.69, "up_count": 40, "down_count": 274, "flat_count": 3, "leader_symbol": "002242", "leader_name": "九阳股份", "leader_change_pct": 10.06}
+  MARKETS: {'?': 20}
+  TYPEOF: {"code": "str", "name": "str", "kind": "str", "index_value": "float", "change_pct": "float", "change_amount": "float", "volume": "float", "amount": "float", "amplitude": "float", "turnover_rate": "float", "main_net_inflow": "float", "main_net_inflow_pct": "float", "up_count": "int", "down_count": "int", "flat_count": "int", "leader_symbol": "str", "leader_name": "str", "leader_change_pct": "float"}
+
+### boards/BK1592/constituents (kind=industry)
+  HTTP 200 77ms total=None count=13 rows=13
+  FIELDS: ["symbol", "name", "price", "change_pct", "volume", "amount", "turnover_rate", "main_net_inflow", "main_net_inflow_pct"]
+   SAMPLE: {"symbol": "300563", "name": "神宇股份", "price": 27.92, "change_pct": 19.98, "volume": 22877800.0, "amount": 611894701.26, "turnover_rate": 18.05, "main_net_inflow": 204938861.0, "main_net_inflow_pct": 33.49}
+   SAMPLE: {"symbol": "688143", "name": "长盈通", "price": 195.0, "change_pct": 15.49, "volume": 20658700.0, "amount": 3715315618.0, "turnover_rate": 16.88, "main_net_inflow": 183871040.0, "main_net_inflow_pct": 4.95}
+   SAMPLE: {"symbol": "601869", "name": "长飞光纤", "price": 473.99, "change_pct": 8.78, "volume": 18773600.0, "amount": 8447753026.0, "turnover_rate": 4.62, "main_net_inflow": 491958720.0, "main_net_inflow_pct": 5.82}
+  MARKETS: {'SZ': 5, 'SH': 7, 'BJ': 1}
+  TYPEOF: {"symbol": "str", "name": "str", "price": "float", "change_pct": "float", "volume": "float", "amount": "float", "turnover_rate": "float", "main_net_inflow": "float", "main_net_inflow_pct": "float"}
+
+### boards/BK0976/constituents (kind=concept)
+  HTTP 200 59ms total=None count=20 rows=20
+  FIELDS: ["symbol", "name", "price", "change_pct", "volume", "amount", "turnover_rate", "main_net_inflow", "main_net_inflow_pct"]
+   SAMPLE: {"symbol": "002848", "name": "高斯贝尔", "price": 15.24, "change_pct": 10.04, "volume": 30228900.0, "amount": 452134867.0, "turnover_rate": 18.27, "main_net_inflow": 92082683.0, "main_net_inflow_pct": 20.37}
+   SAMPLE: {"symbol": "600237", "name": "铜峰电子", "price": 9.22, "change_pct": 10.02, "volume": 101316400.0, "amount": 899418794.0, "turnover_rate": 16.22, "main_net_inflow": 175619013.0, "main_net_inflow_pct": 19.53}
+   SAMPLE: {"symbol": "000636", "name": "风华高科", "price": 55.99, "change_pct": 10.0, "volume": 186078300.0, "amount": 9984863608.53, "turnover_rate": 16.22, "main_net_inflow": 2071935376.0, "main_net_inflow_pct": 20.75}
+  MARKETS: {'SZ': 15, 'SH': 5}
+  TYPEOF: {"symbol": "str", "name": "str", "price": "float", "change_pct": "float", "volume": "float", "amount": "float", "turnover_rate": "float", "main_net_inflow": "float", "main_net_inflow_pct": "float"}
+
+### boards/BK0153/constituents (kind=region)
+  HTTP 200 58ms total=None count=20 rows=20
+  FIELDS: ["symbol", "name", "price", "change_pct", "volume", "amount", "turnover_rate", "main_net_inflow", "main_net_inflow_pct"]
+   SAMPLE: {"symbol": "920821", "name": "则成电子", "price": 25.29, "change_pct": 15.16, "volume": 14189100.0, "amount": 330566893.24, "turnover_rate": 19.48, "main_net_inflow": 19631372.0, "main_net_inflow_pct": 5.94}
+   SAMPLE: {"symbol": "603336", "name": "宏辉果蔬", "price": 10.09, "change_pct": 10.03, "volume": 38485900.0, "amount": 372805131.0, "turnover_rate": 6.32, "main_net_inflow": 98077790.0, "main_net_inflow_pct": 26.31}
+   SAMPLE: {"symbol": "002815", "name": "崇达技术", "price": 20.08, "change_pct": 10.03, "volume": 104664600.0, "amount": 2014176870.18, "turnover_rate": 13.47, "main_net_inflow": 225718437.0, "main_net_inflow_pct": 11.21}
+  MARKETS: {'BJ': 2, 'SH': 4, 'SZ': 14}
+  TYPEOF: {"symbol": "str", "name": "str", "price": "float", "change_pct": "float", "volume": "float", "amount": "float", "turnover_rate": "float", "main_net_inflow": "float", "main_net_inflow_pct": "float"}
+
+### fund-flow/boards kind=industry
+  HTTP 200 50ms total=None count=20 rows=20
+  FIELDS: ["code", "name", "kind", "price", "change_pct", "main_net_inflow", "main_net_inflow_pct", "super_large_net_inflow", "super_large_net_inflow_pct", "large_net_inflow", "large_net_inflow_pct", "medium_net_inflow", "medium_net_inflow_pct", "small_net_inflow", "small_net_inflow_pct"]
+   SAMPLE: {"code": "BK0448", "name": "通信设备", "kind": "industry", "price": 24261.6, "change_pct": 0.52, "main_net_inflow": 4741400064.0, "main_net_inflow_pct": 2.67, "super_large_net_inflow": 4091189248.0, "super_large_net_inflow_pct": 2.3, "large_net_inflow": 650210816.0, "large_net_inflow_pct": 0.37, "medium_net_inflow": -5434457088.0, "medium_net_inflow_pct": -3.06, "small_net_inflow": 776176896.0, "small_net_inflow_pct": 0.44}
+   SAMPLE: {"code": "BK1215", "name": "通信", "kind": "industry", "price": 7768.57, "change_pct": -0.04, "main_net_inflow": 4432378368.0, "main_net_inflow_pct": 2.36, "super_large_net_inflow": 3868047616.0, "super_large_net_inflow_pct": 2.06, "large_net_inflow": 564330752.0, "large_net_inflow_pct": 0.3, "medium_net_inflow": -5443392256.0, "medium_net_inflow_pct": -2.9, "small_net_inflow": 1092125440.0, "small_net_inflow_pct": 0.58}
+   SAMPLE: {"code": "BK0459", "name": "元件", "kind": "industry", "price": 62794.88, "change_pct": 3.03, "main_net_inflow": 3787459840.0, "main_net_inflow_pct": 2.56, "super_large_net_inflow": 3027642112.0, "super_large_net_inflow_pct": 2.05, "large_net_inflow": 759817728.0, "large_net_inflow_pct": 0.51, "medium_net_inflow": -1772445184.0, "medium_net_inflow_pct": -1.2, "small_net_inflow": -2012572416.0, "small_net_inflow_pct": -1.36}
+  MARKETS: {'?': 20}
+  TYPEOF: {"code": "str", "name": "str", "kind": "str", "price": "float", "change_pct": "float", "main_net_inflow": "float", "main_net_inflow_pct": "float", "super_large_net_inflow": "float", "super_large_net_inflow_pct": "float", "large_net_inflow": "float", "large_net_inflow_pct": "float", "medium_net_inflow": "float", "medium_net_inflow_pct": "float", "small_net_inflow": "float", "small_net_inflow_pct": "float"}
+
+### fund-flow/boards kind=concept
+  HTTP 200 48ms total=None count=20 rows=20
+  FIELDS: ["code", "name", "kind", "price", "change_pct", "main_net_inflow", "main_net_inflow_pct", "super_large_net_inflow", "super_large_net_inflow_pct", "large_net_inflow", "large_net_inflow_pct", "medium_net_inflow", "medium_net_inflow_pct", "small_net_inflow", "small_net_inflow_pct"]
+   SAMPLE: {"code": "BK0714", "name": "5G概念", "kind": "concept", "price": 2052.14, "change_pct": -0.36, "main_net_inflow": 4487951360.0, "main_net_inflow_pct": 1.08, "super_large_net_inflow": 4205532160.0, "super_large_net_inflow_pct": 1.01, "large_net_inflow": 282419200.0, "large_net_inflow_pct": 0.07, "medium_net_inflow": -6950158336.0, "medium_net_inflow_pct": -1.68, "small_net_inflow": 2465345536.0, "small_net_inflow_pct": 0.59}
+   SAMPLE: {"code": "BK1136", "name": "光通信模块", "kind": "concept", "price": 3928.28, "change_pct": 0.07, "main_net_inflow": 4337153280.0, "main_net_inflow_pct": 1.64, "super_large_net_inflow": 3225908480.0, "super_large_net_inflow_pct": 1.22, "large_net_inflow": 1111244800.0, "large_net_inflow_pct": 0.42, "medium_net_inflow": -6583623680.0, "medium_net_inflow_pct": -2.49, "small_net_inflow": 2298343680.0, "small_net_inflow_pct": 0.87}
+   SAMPLE: {"code": "BK0976", "name": "被动元件概念", "kind": "concept", "price": 2505.13, "change_pct": 2.54, "main_net_inflow": 3369454080.0, "main_net_inflow_pct": 6.67, "super_large_net_inflow": 2880538368.0, "super_large_net_inflow_pct": 5.71, "large_net_inflow": 488915712.0, "large_net_inflow_pct": 0.97, "medium_net_inflow": -1097337344.0, "medium_net_inflow_pct": -2.17, "small_net_inflow": -2287558912.0, "small_net_inflow_pct": -4.53}
+  MARKETS: {'?': 20}
+  TYPEOF: {"code": "str", "name": "str", "kind": "str", "price": "float", "change_pct": "float", "main_net_inflow": "float", "main_net_inflow_pct": "float", "super_large_net_inflow": "float", "super_large_net_inflow_pct": "float", "large_net_inflow": "float", "large_net_inflow_pct": "float", "medium_net_inflow": "float", "medium_net_inflow_pct": "float", "small_net_inflow": "float", "small_net_inflow_pct": "float"}
+
+### fund-flow/boards kind=region
+  HTTP 200 59ms total=None count=20 rows=20
+  FIELDS: ["code", "name", "kind", "price", "change_pct", "main_net_inflow", "main_net_inflow_pct", "super_large_net_inflow", "super_large_net_inflow_pct", "large_net_inflow", "large_net_inflow_pct", "medium_net_inflow", "medium_net_inflow_pct", "small_net_inflow", "small_net_inflow_pct"]
+   SAMPLE: {"code": "BK0164", "name": "山东板块", "kind": "region", "price": 21033.78, "change_pct": -1.76, "main_net_inflow": 1875550720.0, "main_net_inflow_pct": 1.69, "super_large_net_inflow": 1074065920.0, "super_large_net_inflow_pct": 0.97, "large_net_inflow": 801484800.0, "large_net_inflow_pct": 0.72, "medium_net_inflow": -3540802304.0, "medium_net_inflow_pct": -3.2, "small_net_inflow": 1626532608.0, "small_net_inflow_pct": 1.47}
+   SAMPLE: {"code": "BK0175", "name": "内蒙古", "kind": "region", "price": 24638.29, "change_pct": -2.35, "main_net_inflow": 698790512.0, "main_net_inflow_pct": 4.05, "super_large_net_inflow": 716813728.0, "super_large_net_inflow_pct": 4.15, "large_net_inflow": -18023216.0, "large_net_inflow_pct": -0.1, "medium_net_inflow": -196968192.0, "medium_net_inflow_pct": -1.14, "small_net_inflow": -521651968.0, "small_net_inflow_pct": -3.02}
+   SAMPLE: {"code": "BK0146", "name": "黑龙江", "kind": "region", "price": 8099.7, "change_pct": -2.01, "main_net_inflow": -13490304.0, "main_net_inflow_pct": -0.13, "super_large_net_inflow": 327319056.0, "super_large_net_inflow_pct": 3.07, "large_net_inflow": -340809360.0, "large_net_inflow_pct": -3.2, "medium_net_inflow": -243754176.0, "medium_net_inflow_pct": -2.29, "small_net_inflow": 253536544.0, "small_net_inflow_pct": 2.38}
+  MARKETS: {'?': 20}
+  TYPEOF: {"code": "str", "name": "str", "kind": "str", "price": "float", "change_pct": "float", "main_net_inflow": "float", "main_net_inflow_pct": "float", "super_large_net_inflow": "float", "super_large_net_inflow_pct": "float", "large_net_inflow": "float", "large_net_inflow_pct": "float", "medium_net_inflow": "float", "medium_net_inflow_pct": "float", "small_net_inflow": "float", "small_net_inflow_pct": "float"}
+
+### fund-flow/stocks
+  HTTP 200 46ms total=None count=20 rows=20
+  FIELDS: ["code", "name", "kind", "price", "change_pct", "main_net_inflow", "main_net_inflow_pct", "super_large_net_inflow", "super_large_net_inflow_pct", "large_net_inflow", "large_net_inflow_pct", "medium_net_inflow", "medium_net_inflow_pct", "small_net_inflow", "small_net_inflow_pct"]
+   SAMPLE: {"code": "300308", "name": "中际旭创", "kind": "stock", "price": 926.0, "change_pct": 4.03, "main_net_inflow": 3119764480.0, "main_net_inflow_pct": 10.41, "super_large_net_inflow": 2067054848.0, "super_large_net_inflow_pct": 6.9, "large_net_inflow": 1052709632.0, "large_net_inflow_pct": 3.51, "medium_net_inflow": -3119381504.0, "medium_net_inflow_pct": -10.41, "small_net_inflow": -383306.0, "small_net_inflow_pct": 0.0}
+   SAMPLE: {"code": "300502", "name": "新易盛", "kind": "stock", "price": 423.0, "change_pct": 2.94, "main_net_inflow": 2152589904.0, "main_net_inflow_pct": 12.14, "super_large_net_inflow": 1196768080.0, "super_large_net_inflow_pct": 6.75, "large_net_inflow": 955821824.0, "large_net_inflow_pct": 5.39, "medium_net_inflow": -2150284800.0, "medium_net_inflow_pct": -12.13, "small_net_inflow": -2305320.0, "small_net_inflow_pct": -0.01}
+   SAMPLE: {"code": "000636", "name": "风华高科", "kind": "stock", "price": 55.99, "change_pct": 10.0, "main_net_inflow": 2071935376.0, "main_net_inflow_pct": 20.75, "super_large_net_inflow": 2217062368.0, "super_large_net_inflow_pct": 22.2, "large_net_inflow": -145126992.0, "large_net_inflow_pct": -1.45, "medium_net_inflow": -954334144.0, "medium_net_inflow_pct": -9.56, "small_net_inflow": -1117601216.0, "small_net_inflow_pct": -11.19}
+  MARKETS: {'?': 20}
+  TYPEOF: {"code": "str", "name": "str", "kind": "str", "price": "float", "change_pct": "float", "main_net_inflow": "float", "main_net_inflow_pct": "float", "super_large_net_inflow": "float", "super_large_net_inflow_pct": "float", "large_net_inflow": "float", "large_net_inflow_pct": "float", "medium_net_inflow": "float", "medium_net_inflow_pct": "float", "small_net_inflow": "float", "small_net_inflow_pct": "float"}
+
+### fund-flow/stocks/600519 (history)
+  HTTP 200 152ms total=None count=10 rows=10
+  FIELDS: ["trade_date", "main_net_inflow", "small_net_inflow", "medium_net_inflow", "large_net_inflow", "super_large_net_inflow", "main_net_inflow_pct", "close_price", "change_pct"]
+   SAMPLE: {"trade_date": "2026-08-31", "main_net_inflow": -38633360.0, "small_net_inflow": -119883.0, "medium_net_inflow": 38753232.0, "large_net_inflow": -15361168.0, "super_large_net_inflow": -23272192.0, "main_net_inflow_pct": -1.29, "close_price": 1299.52, "change_pct": 0.16}
+   SAMPLE: {"trade_date": "2026-09-01", "main_net_inflow": 220531760.0, "small_net_inflow": -97733.0, "medium_net_inflow": -220434016.0, "large_net_inflow": 52482800.0, "super_large_net_inflow": 168048960.0, "main_net_inflow_pct": 5.2, "close_price": 1299.56, "change_pct": 0.0}
+   SAMPLE: {"trade_date": "2026-09-02", "main_net_inflow": -31931024.0, "small_net_inflow": -72740.0, "medium_net_inflow": 32003744.0, "large_net_inflow": -138364880.0, "super_large_net_inflow": 106433856.0, "main_net_inflow_pct": -1.21, "close_price": 1297.5, "change_pct": -0.16}
+  MARKETS: {'?': 10}
+  TYPEOF: {"trade_date": "str", "main_net_inflow": "float", "small_net_inflow": "float", "medium_net_inflow": "float", "large_net_inflow": "float", "super_large_net_inflow": "float", "main_net_inflow_pct": "float", "close_price": "float", "change_pct": "float"}
+
+### limit-up/limit-up
+  HTTP 200 205ms total=40 count=20 rows=20
+  FIELDS: ["symbol", "name", "price", "change_pct", "amount", "turnover_rate", "seal_amount", "first_seal_time", "last_seal_time", "broken_times", "limit_up_stat", "boards", "float_market_cap", "total_market_cap", "industry"]
+   SAMPLE: {"symbol": "000993", "name": "闽东电力", "price": 13.88, "change_pct": 9.984151840209961, "amount": 664912544.0, "turnover_rate": 10.468605995178223, "seal_amount": 135527678.0, "first_seal_time": "09:25:00", "last_seal_time": "09:32:36", "broken_times": 1, "limit_up_stat": "3天3板", "boards": 3, "float_market_cap": 6356366195.400001, "total_market_cap": 6356366209.280001, "industry": "电力"}
+   SAMPLE: {"symbol": "002161", "name": "远 望 谷", "price": 8.04, "change_pct": 9.986320495605469, "amount": 151052642.0, "turnover_rate": 2.5402114391326904, "seal_amount": 272159290.0, "first_seal_time": "09:25:00", "last_seal_time": "09:25:00", "broken_times": 0, "limit_up_stat": "1天1板", "boards": 1, "float_market_cap": 5946459173.999999, "total_market_cap": 5947649560.32, "industry": "其他电子"}
+   SAMPLE: {"symbol": "002790", "name": "瑞尔特", "price": 9.31, "change_pct": 10.047281265258789, "amount": 99158762.0, "turnover_rate": 4.085493564605713, "seal_amount": 385166058.0, "first_seal_time": "09:25:00", "last_seal_time": "09:25:00", "broken_times": 0, "limit_up_stat": "4天4板", "boards": 4, "float_market_cap": 2427093725.0, "total_market_cap": 3890391150.2400002, "industry": "家居用品"}
+  MARKETS: {'SZ': 9, 'SH': 11}
+  TYPEOF: {"symbol": "str", "name": "str", "price": "float", "change_pct": "float", "amount": "float", "turnover_rate": "float", "seal_amount": "float", "first_seal_time": "str", "last_seal_time": "str", "broken_times": "int", "limit_up_stat": "str", "boards": "int", "float_market_cap": "float", "total_market_cap": "float", "industry": "str"}
+
+### limit-up/limit-down
+  HTTP 200 64ms total=21 count=20 rows=20
+  FIELDS: ["symbol", "name", "price", "change_pct", "amount", "turnover_rate", "dynamic_pe", "seal_amount", "board_amount", "last_seal_time", "limit_down_days", "open_times", "float_market_cap", "total_market_cap", "industry"]
+   SAMPLE: {"symbol": "002295", "name": "精艺股份", "price": 11.09, "change_pct": -9.983766555786133, "amount": 38276026.0, "turnover_rate": 1.378206491470337, "dynamic_pe": 351.5185241699219, "seal_amount": 152531227.0, "board_amount": 361528455.0, "last_seal_time": "09:25:00", "limit_down_days": 1, "open_times": 0, "float_market_cap": 2777234598.25, "total_market_cap": 2779331440.0, "industry": "工业金属"}
+   SAMPLE: {"symbol": "600108", "name": "亚盛集团", "price": 4.73, "change_pct": -9.90476131439209, "amount": 2086626208.0, "turnover_rate": 21.56209373474121, "dynamic_pe": 184.7786102294922, "seal_amount": 115720741.0, "board_amount": 3171776704.0, "last_seal_time": "13:21:58", "limit_down_days": 1, "open_times": 2, "float_market_cap": 9208908522.33, "total_market_cap": 9208908517.6, "industry": "种植业"}
+   SAMPLE: {"symbol": "002909", "name": "集泰股份", "price": 7.49, "change_pct": -9.975961685180664, "amount": 273509728.0, "turnover_rate": 9.450555801391602, "dynamic_pe": -106.86676788330078, "seal_amount": 113293253.0, "board_amount": 213370555.0, "last_seal_time": "09:44:27", "limit_down_days": 1, "open_times": 7, "float_market_cap": 2849401098.67, "total_market_cap": 2921100000.0, "industry": "化学制品"}
+  MARKETS: {'SZ': 12, 'SH': 8}
+  TYPEOF: {"symbol": "str", "name": "str", "price": "float", "change_pct": "float", "amount": "float", "turnover_rate": "float", "dynamic_pe": "float", "seal_amount": "float", "board_amount": "float", "last_seal_time": "str", "limit_down_days": "int", "open_times": "int", "float_market_cap": "float", "total_market_cap": "float", "industry": "str"}
+
+### limit-up/broken-board
+  HTTP 200 55ms total=18 count=18 rows=18
+  FIELDS: ["symbol", "name", "price", "change_pct", "limit_up_price", "amount", "turnover_rate", "first_seal_time", "broken_times", "amplitude", "speed", "limit_up_stat", "float_market_cap", "total_market_cap", "industry"]
+   SAMPLE: {"symbol": "600712", "name": "南宁百货", "price": 6.7, "change_pct": -1.9033674001693726, "limit_up_price": 7.51, "amount": 1043332160.0, "turnover_rate": 26.58584976196289, "first_seal_time": "09:30:01", "broken_times": 2, "amplitude": 14.348462104797363, "speed": 0.0, "limit_up_stat": "2天1板", "float_market_cap": 3608944085.7000003, "total_market_cap": 3649190912.0, "industry": "一般零售"}
+   SAMPLE: {"symbol": "600359", "name": "新农开发", "price": 9.72, "change_pct": 0.8298755884170532, "limit_up_price": 10.6, "amount": 1398570672.0, "turnover_rate": 35.715782165527344, "first_seal_time": "09:30:02", "broken_times": 5, "amplitude": 13.900415420532227, "speed": 0.0, "limit_up_stat": "3天2板", "float_market_cap": 3708304610.4, "total_market_cap": 3708304571.5200005, "industry": "种植业"}
+   SAMPLE: {"symbol": "600792", "name": "云煤能源", "price": 5.15, "change_pct": -4.805914878845215, "limit_up_price": 5.95, "amount": 1249033856.0, "turnover_rate": 19.659730911254883, "first_seal_time": "09:30:11", "broken_times": 3, "amplitude": 17.560073852539062, "speed": 0.0, "limit_up_stat": "4天3板", "float_market_cap": 5716106540.0, "total_market_cap": 5716106540.0, "industry": "焦炭Ⅱ"}
+  MARKETS: {'SH': 9, 'SZ': 9}
+  TYPEOF: {"symbol": "str", "name": "str", "price": "float", "change_pct": "float", "limit_up_price": "float", "amount": "float", "turnover_rate": "float", "first_seal_time": "str", "broken_times": "int", "amplitude": "float", "speed": "float", "limit_up_stat": "str", "float_market_cap": "float", "total_market_cap": "float", "industry": "str"}
+
+### limit-up/strong
+  HTTP 200 42ms total=90 count=20 rows=20
+  FIELDS: ["symbol", "name", "price", "change_pct", "limit_up_price", "is_limit_up", "amount", "turnover_rate", "is_new_high", "volume_ratio", "speed", "limit_up_stat", "float_market_cap", "total_market_cap", "industry"]
+   SAMPLE: {"symbol": "920821", "name": "则成电子", "price": 25.29, "change_pct": 15.163934707641602, "limit_up_price": 28.54, "is_limit_up": "是", "amount": 330566896.0, "turnover_rate": 19.476205825805664, "is_new_high": "是", "volume_ratio": 1.298039197921753, "speed": 0.7168458700180054, "limit_up_stat": "", "float_market_cap": 1842463042.3799999, "total_market_cap": 3499172425.71, "industry": "元件"}
+   SAMPLE: {"symbol": "920008", "name": "成电光信", "price": 24.75, "change_pct": 10.540419578552246, "limit_up_price": 29.1, "is_limit_up": "是", "amount": 131614762.0, "turnover_rate": 15.902050971984863, "is_new_high": "是", "volume_ratio": 2.695155382156372, "speed": -0.5624748468399048, "limit_up_stat": "", "float_market_cap": 843200151.75, "total_market_cap": 1577812500.0, "industry": "军工电子"}
+   SAMPLE: {"symbol": "002242", "name": "九阳股份", "price": 9.74, "change_pct": 10.056497573852539, "limit_up_price": 9.74, "is_limit_up": "是", "amount": 314171584.0, "turnover_rate": 4.368296146392822, "is_new_high": "是", "volume_ratio": 3.7198426723480225, "speed": 0.0, "limit_up_stat": "1天1板", "float_market_cap": 7419597187.5, "total_market_cap": 7431785657.92, "industry": "小家电"}
+  MARKETS: {'BJ': 2, 'SZ': 10, 'SH': 8}
+  TYPEOF: {"symbol": "str", "name": "str", "price": "float", "change_pct": "float", "limit_up_price": "float", "is_limit_up": "str", "amount": "float", "turnover_rate": "float", "is_new_high": "str", "volume_ratio": "float", "speed": "float", "limit_up_stat": "str", "float_market_cap": "float", "total_market_cap": "float", "industry": "str"}
+
+### limit-up/sub-new
+  HTTP 200 53ms total=159 count=20 rows=20
+  FIELDS: ["symbol", "name", "price", "change_pct", "limit_up_price", "is_limit_up", "amount", "turnover_rate", "is_new_high", "listed_date", "limit_up_stat", "float_market_cap", "total_market_cap", "industry"]
+   SAMPLE: {"symbol": "688801", "name": "N燧原-U", "price": 397.0, "change_pct": 179.2235107421875, "limit_up_price": null, "is_limit_up": "否", "amount": 5647951616.0, "turnover_rate": 76.02473449707031, "is_new_high": "否", "listed_date": "2026-09-11", "limit_up_stat": "", "float_market_cap": 7106429025.0, "total_market_cap": 170849636016.0, "industry": "半导体"}
+   SAMPLE: {"symbol": "920268", "name": "百迈科", "price": 41.5, "change_pct": 18.775043487548828, "limit_up_price": 45.42, "is_limit_up": "是", "amount": 392724480.0, "turnover_rate": 70.58277893066406, "is_new_high": "否", "listed_date": "2026-09-09", "limit_up_stat": "2天1板", "float_market_cap": 599597644.0, "total_market_cap": 2249300000.0, "industry": "医疗器械"}
+   SAMPLE: {"symbol": "001232", "name": "嘉立创", "price": 182.48, "change_pct": 10.000602722167969, "limit_up_price": 182.48, "is_limit_up": "是", "amount": 1248553584.0, "turnover_rate": 16.251232147216797, "is_new_high": "否", "listed_date": "2026-08-04", "limit_up_stat": "1天1板", "float_market_cap": 8066811061.5199995, "total_market_cap": 101378588800.0, "industry": "元件"}
+  MARKETS: {'SH': 10, 'BJ': 8, 'SZ': 2}
+  TYPEOF: {"symbol": "str", "name": "str", "price": "float", "change_pct": "float", "limit_up_price": "NoneType", "is_limit_up": "str", "amount": "float", "turnover_rate": "float", "is_new_high": "str", "listed_date": "str", "limit_up_stat": "str", "float_market_cap": "float", "total_market_cap": "float", "industry": "str"}
+
+### quotes: 600519 / 000001 / 430047 / 688981
+  HTTP 200 68ms total=None count=None rows=0
+  TOPKEYS: ["symbol", "name", "price", "open", "high", "low", "previous_close", "volume", "amount", "bid_price", "ask_price", "source", "market_time", "received_at", "is_stale"]
+  BODY: {"symbol": "600519", "name": "贵州茅台", "price": 1275.16, "open": 1285.15, "high": 1286.15, "low": 1263.01, "previous_close": 1285.13, "volume": 3480100.0, "amount": 4430841344.0, "bid_price": 1275.16, "ask_price": 1276.0, "source": "tdx", "market_time": "2026-09-13T15:17:46", "received_at": "2026-09-13T12:39:33.610844", "is_stale": false}
+  HTTP 200 49ms total=None count=None rows=0
+  TOPKEYS: ["symbol", "name", "price", "open", "high", "low", "previous_close", "volume", "amount", "bid_price", "ask_price", "source", "market_time", "received_at", "is_stale"]
+  BODY: {"symbol": "000001", "name": "平安银行", "price": 11.74, "open": 11.82, "high": 11.86, "low": 11.71, "previous_close": 11.85, "volume": 83246000.0, "amount": 979990528.0, "bid_price": 11.74, "ask_price": 11.75, "source": "tdx", "market_time": "2026-09-13T15:29:52", "received_at": "2026-09-13T12:39:33.659487", "is_stale": false}
+  HTTP 200 243ms total=None count=None rows=0
+  TOPKEYS: ["symbol", "name", "price", "open", "high", "low", "previous_close", "volume", "amount", "bid_price", "ask_price", "source", "market_time", "received_at", "is_stale"]
+  BODY: {"symbol": "430047", "name": "诺思兰德", "price": 8.17, "open": 0.0, "high": 0.0, "low": 0.0, "previous_close": 8.17, "volume": 0.0, "amount": 0.0, "bid_price": 0.0, "ask_price": 0.0, "source": "tencent", "market_time": "2026-09-11T09:00:00", "received_at": "2026-09-13T12:39:33.903518", "is_stale": false}
+  HTTP 200 66ms total=None count=None rows=0
+  TOPKEYS: ["symbol", "name", "price", "open", "high", "low", "previous_close", "volume", "amount", "bid_price", "ask_price", "source", "market_time", "received_at", "is_stale"]
+  BODY: {"symbol": "688981", "name": "中芯国际", "price": 117.41, "open": 118.0, "high": 118.4, "low": 115.8, "previous_close": 119.18, "volume": 35165000.0, "amount": 4116668672.0, "bid_price": 117.41, "ask_price": 117.44, "source": "tdx", "market_time": "2026-09-13T15:29:20", "received_at": "2026-09-13T12:39:33.967777", "is_stale": false}
+
+### quotes batch
+  HTTP 422 13ms detail="非法股票代码"
+
+### ERROR PATHS
+  HTTP 422 14ms detail="未知数据集: 'no-such-dataset-xyz'（可选 dragon-tiger, block-trade, margin, northbound, org-survey, holder-number, restricted-release, earnings-forecast, dividend, executive-hold, pledge, convertible-bond）"
+  HTTP 503 658ms detail="东方财富数据源暂不可用: datacenter.eastmoney.com 未返回所需数据"
+  HTTP 422 3ms detail=[{"type": "string_pattern_mismatch", "loc": ["query", "date"], "msg": "String should match pattern '^\\d{4}-\\d{2}-\\d{2}$'", "input": "notadate", "ctx": {"pattern": "^\\d{4}-\\d{2}-\\d{2}$"}}]
+  HTTP 422 3ms detail=[{"type": "less_than_equal", "loc": ["query", "limit"], "msg": "Input should be less than or equal to 500", "input": "99999", "ctx": {"le": 500}}]
+  HTTP 422 13ms detail=[{"type": "greater_than_equal", "loc": ["query", "limit"], "msg": "Input should be greater than or equal to 1", "input": "0", "ctx": {"ge": 1}}]
+  HTTP 200 103ms total=0 count=0 rows=0
+  TOPKEYS: ["dataset", "label", "total", "page", "count", "rows"]
+  BODY: {"dataset": "margin", "label": "融资融券", "total": 0, "page": 1, "count": 0, "rows": []}
+  HTTP 422 3ms detail=[{"type": "string_pattern_mismatch", "loc": ["query", "symbol"], "msg": "String should match pattern '^\\d{6}$'", "input": "abc", "ctx": {"pattern": "^\\d{6}$"}}]
+  HTTP 422 14ms detail="不支持的板块类型: 'notakind'（可选 industry/concept/region）"
+  HTTP 422 3ms detail="未知情绪池: 'not-a-pool'（可选 limit-up, limit-down, broken-board, strong, sub-new）"
+  HTTP 422 4ms detail=[{"type": "string_pattern_mismatch", "loc": ["path", "symbol"], "msg": "String should match pattern '^\\d{6}$'", "input": "12ab", "ctx": {"pattern": "^\\d{6}$"}}]
+  HTTP 422 2ms detail="非法股票代码"
+  HTTP 422 3ms detail="非法股票代码"
+
+WROTE E:\workbuddy work\2026-09-09-15-34-54\a-stock-platform\work\probe_all.json entries=49

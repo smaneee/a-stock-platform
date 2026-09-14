@@ -300,11 +300,13 @@ def test_datacenter_catalog_lists_datasets():
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["count"] == 12
+    # 12 个数据集 + 席位字段清单（供前端渲染 EM-09 的 12 个席位列）
+    assert body["count"] == 13
     keys = [item["key"] for item in body["datasets"]]
     assert "dragon-tiger" in keys and "northbound" in keys
     assert "executive-hold" in keys and "pledge" in keys
     assert "convertible-bond" in keys
+    assert "dragon-tiger-seats" in keys
     dragon = body["datasets"][keys.index("dragon-tiger")]
     assert dragon["supports_date"] is True
     assert dragon["supports_symbol"] is True

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, date
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, ROUND_UP
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -46,8 +46,28 @@ CANCELLED = "CANCELLED"
 REJECTED = "REJECTED"
 
 
-def _to_trading_date(d: date | None) -> date:
-    return d if d is not None else date.today()
+def _to_trading_date(d: date | None, db: Session | None = None) -> date:
+    """缺省交易日：**最近一个交易日**，而不是 `date.today()`。
+
+    实测缺口（P1-02）：HTTP 下单/调仓不传 `trading_date` 时会回退到 `date.today()`，
+    在周末/节假日调用会把买入批次记成周六（实测 acquisition_date=2026-09-13 周六），
+    既污染 T+1 判定，也让「可卖数量」在日历上无意义。这里改为：若给了日期就用；
+    否则用交易日历上「今天或之前最近的一个交易日」；日历为空时退回今天。
+    """
+    if d is not None:
+        return d
+    today = date.today()
+    if db is None:
+        return today
+    try:
+        from app.market_rules.calendar import TradingCalendar
+
+        calendar = TradingCalendar(db)
+        if not calendar.is_empty() and not calendar.is_trading_day(today):
+            return calendar.last_trading_day_on_or_before(today)
+    except Exception:  # noqa: BLE001 - 日历不可用时退回今天，不影响下单
+        return today
+    return today
 
 
 class PaperBroker:
@@ -127,7 +147,7 @@ class PaperBroker:
             decision = self._risk.check_buy(snapshot, symbol, order_value, quote)
         else:
             # 风控可用数量与 _validate 对齐：已 settle + T+1 严格合规
-            td = trading_date or date.today()
+            td = _to_trading_date(trading_date, self._db)
             positions = self._db.scalars(
                 select(PaperPosition).where(
                     PaperPosition.account_id == account_id,
@@ -186,7 +206,7 @@ class PaperBroker:
         quote: QuoteData | None = None,
         trading_date: date | None = None,
     ) -> tuple[PaperOrder | None, str]:
-        td = _to_trading_date(trading_date)
+        td = _to_trading_date(trading_date, self._db)
         order = self._db.get(PaperOrder, order_id)
         if order is None:
             return None, "订单不存在"
@@ -204,7 +224,7 @@ class PaperBroker:
             return None, reason
 
         try:
-            trade = self._settle_fill(order, account, td)
+            trade = self._settle_fill(order, account, td, quote)
         except Exception as exc:  # noqa: BLE001
             self._db.rollback()
             logger.error("成交失败: %s", exc)
@@ -257,14 +277,50 @@ class PaperBroker:
 
     # ──────── 内部：成交结算 ────────
 
+    def _fill_price(
+        self, order: PaperOrder, trading_date: date, quote: QuoteData | None = None
+    ) -> Decimal:
+        """成交价 = 委托价 ± 滑点，且**不得越过涨跌停价**（与回测引擎同口径）。
+
+        为什么需要（P1-02 登记缺口）：模拟盘此前直接用 `order.price` 成交，
+        而回测引擎按 `slippage` 抬价/压价 —— 两套假设会让模拟盘业绩系统性偏乐观、
+        且与回测不可比。滑点方向与回测一致：买入抬价、卖出压价。
+
+        为什么必须夹到板价：触及涨跌停的委托已被 `_validate_executability` 拒绝，
+        但**接近**板价的委托加滑点后可能越过板价，而按板价成交在真实市场里不可能
+        （涨停买不到、跌停卖不掉）。因此做 `min/max` 截断，与 `try_fill` 一致。
+        """
+        slippage = float(self._risk.limits.slippage)
+        price = float(order.price)
+        if slippage > 0:
+            price = price * (1 + slippage) if order.side == "BUY" else price * (1 - slippage)
+        price_decimal = Decimal(str(price)).quantize(_PRICE_QUANT, rounding=ROUND_HALF_UP)
+
+        previous_close = float(getattr(quote, "previous_close", 0.0) or 0.0)
+        if previous_close > 0:
+            security = self._security_master.ensure(order.symbol)
+            rules = self._rule_engine.get_rules_from_security(security, trading_date)
+            if rules.has_price_limit:
+                prev = Decimal(str(previous_close))
+                limit_up, limit_down = rules.limit_up(prev), rules.limit_down(prev)
+                if order.side == "BUY" and limit_up is not None:
+                    price_decimal = min(price_decimal, limit_up.quantize(_PRICE_QUANT))
+                if order.side == "SELL" and limit_down is not None:
+                    price_decimal = max(price_decimal, limit_down.quantize(_PRICE_QUANT))
+        return price_decimal
+
     def _settle_fill(
-        self, order: PaperOrder, account: PaperAccount, trading_date: date
+        self,
+        order: PaperOrder,
+        account: PaperAccount,
+        trading_date: date,
+        quote: QuoteData | None = None,
     ) -> PaperTrade:
         security = self._security_master.ensure(order.symbol)
-        # 规则解析（用于后续扩展：tick 校验、价格过滤等）
+        # 规则解析（与 _validate_executability 同一引擎：板块/ST/新股决定板价）
         _rules = self._rule_engine.get_rules_from_security(security, trading_date)
 
-        price_decimal = order.price.quantize(_PRICE_QUANT, rounding=ROUND_HALF_UP)
+        price_decimal = self._fill_price(order, trading_date, quote)
         quantity = order.quantity
         value = price_decimal * quantity
         commission = self._commission(value).quantize(_MONEY_QUANT, rounding=ROUND_HALF_UP)
@@ -273,26 +329,39 @@ class PaperBroker:
             if order.side == "SELL"
             else Decimal("0")
         ).quantize(_MONEY_QUANT, rounding=ROUND_HALF_UP)
+        # 过户费：**双边**收取（与回测 ExecutionConfig.transfer_fee_rate 同口径）
+        transfer_fee = (
+            value * Decimal(str(self._risk.limits.transfer_fee_rate))
+        ).quantize(_MONEY_QUANT, rounding=ROUND_HALF_UP)
 
         realized_pnl = Decimal("0")
 
         if order.side == "BUY":
+            # 冻结额按**含滑点**的挂单价上限计提（见 _freeze_amount），因此实际成本
+            # 不会超过冻结额；差额退回可用资金。此前实现把「冻结额 = 实际成本」写死，
+            # 一旦引入滑点就会出现「持仓成本 > 现金支出」的账目缺口。
             freeze = self._freeze_amount("BUY", float(order.price), quantity)
+            actual_cost = value + commission + transfer_fee
             account.frozen_cash = (account.frozen_cash - freeze).quantize(
+                _MONEY_QUANT, rounding=ROUND_HALF_UP
+            )
+            refund = (freeze - actual_cost).quantize(_MONEY_QUANT, rounding=ROUND_HALF_UP)
+            account.available_cash = (account.available_cash + refund).quantize(
                 _MONEY_QUANT, rounding=ROUND_HALF_UP
             )
             self._create_buy_batch(
                 account.id, order.symbol, trading_date, quantity,
-                total_cost=value + commission,
+                total_cost=actual_cost,
             )
         else:
-            total_proceeds = value - commission - stamp_tax
+            total_proceeds = value - commission - stamp_tax - transfer_fee
             account.available_cash = (account.available_cash + total_proceeds).quantize(
                 _MONEY_QUANT, rounding=ROUND_HALF_UP
             )
             realized_pnl = self._deduct_sell_batches(
                 account.id, order.symbol, quantity, trading_date,
                 price=price_decimal, commission=commission, stamp_tax=stamp_tax,
+                transfer_fee=transfer_fee,
             )
 
         return PaperTrade(
@@ -304,6 +373,7 @@ class PaperBroker:
             price=price_decimal,
             commission=commission,
             stamp_tax=stamp_tax,
+            transfer_fee=transfer_fee,
             realized_pnl=realized_pnl,
             signal_id=order.signal_id,
             executed_at=datetime.now(UTC).replace(tzinfo=None),
@@ -340,6 +410,7 @@ class PaperBroker:
         price: Decimal,
         commission: Decimal,
         stamp_tax: Decimal,
+        transfer_fee: Decimal = Decimal("0"),
     ) -> Decimal:
         """按 FIFO 从最早批次扣减持仓。
 
@@ -380,7 +451,7 @@ class PaperBroker:
                 continue
             batch_cost = batch.avg_cost * Decimal(take)
             proceeds = price * Decimal(take)
-            fee_share = (commission + stamp_tax) * Decimal(take) / Decimal(quantity)
+            fee_share = (commission + stamp_tax + transfer_fee) * Decimal(take) / Decimal(quantity)
             pnl = (proceeds - batch_cost - fee_share).quantize(
                 _MONEY_QUANT, rounding=ROUND_HALF_UP
             )
@@ -425,7 +496,7 @@ class PaperBroker:
         else:
             # 卖出端可用数量：已 settle 解冻的可直接用 available_quantity；
             # 未 settle 但满足严格 T+1（acquisition_date < 交易日）可按 quantity 计入。
-            td = trading_date or date.today()
+            td = _to_trading_date(trading_date, self._db)
             positions = self._db.scalars(
                 select(PaperPosition).where(
                     PaperPosition.account_id == account_id,
@@ -456,7 +527,62 @@ class PaperBroker:
         reason = self._validate_quote(symbol, quote)
         if reason:
             return None, reason
+        reason = self._validate_executability(symbol, side, quote, trading_date)
+        if reason:
+            return None, reason
         return account, ""
+
+    def _validate_executability(
+        self,
+        symbol: str,
+        side: str,
+        quote: QuoteData,
+        trading_date: date | None,
+    ) -> str:
+        """可成交性硬校验：停牌/无效价格与涨跌停。
+
+        背景（P1-02 实测缺陷）：
+
+        * ``price=0`` 的停牌行情能绕过资金与仓位检查，以 0 元成交并生成持仓；
+        * 2026-09-11 封板未开的涨停股 002161 被按涨停价 8.04 全额买入 —— 缺少盘口
+          排队证据时，这是**系统性乐观**假设。
+
+        保守口径（与回测引擎一致）：缺少盘口证据时，**以涨停价买入 / 以跌停价卖出
+        视为不可成交**。区分一字板与盘中开板需要分时/盘口数据，这里不具备，因此按
+        最保守的处理并给出明确原因，而不是静默放行。
+        """
+        if quote.price <= 0:
+            return "停牌或无有效行情（最新价为 0），禁止成交"
+
+        previous_close = getattr(quote, "previous_close", 0.0) or 0.0
+        if previous_close <= 0:
+            # 没有昨收就无法判断涨跌停。这里不静默假设一个昨收，交由上层风控继续把关。
+            return ""
+
+        security = self._security_master.ensure(symbol)
+        rules = self._rule_engine.get_rules_from_security(
+            security, _to_trading_date(trading_date, self._db)
+        )
+        if not rules.has_price_limit:
+            return ""
+        prev = Decimal(str(previous_close))
+        limit_up = rules.limit_up(prev)
+        limit_down = rules.limit_down(prev)
+        if limit_up is None or limit_down is None:
+            return ""
+
+        price = float(quote.price)
+        if side == "BUY" and price >= float(limit_up) - 1e-9:
+            return (
+                f"价格 {price:.2f} 已达涨停价 {float(limit_up):.2f}：缺少盘口排队证据时"
+                "视为不可成交（保守假设）"
+            )
+        if side == "SELL" and price <= float(limit_down) + 1e-9:
+            return (
+                f"价格 {price:.2f} 已达跌停价 {float(limit_down):.2f}：缺少盘口排队证据时"
+                "视为不可成交（保守假设）"
+            )
+        return ""
 
     def _validate_quote(self, symbol: str, quote: QuoteData) -> str:
         if quote.is_stale:
@@ -472,11 +598,15 @@ class PaperBroker:
         if quote.price > 0:
             tick = TICK_SIZE
             try:
-                price_dec = Decimal(str(quote.price))
-                remainder = price_dec % tick
-            except Exception:
+                # 行情源的 price 是 float（真实盘口会出现 5.5200000000000005 这类
+                # 二进制浮点尾差），直接 Decimal(str(price)) % 0.01 会把合法价格误判
+                # 为「不在最小报价单位上」而拒绝全部下单。这里改为比较「与最近整数
+                # tick 的偏离量」，容差 1e-6：10.005 仍被拒绝，5.5200000000000005 通过。
+                ticks = Decimal(str(quote.price)) / tick
+                remainder = abs(ticks - ticks.to_integral_value(rounding=ROUND_HALF_UP))
+            except Exception:  # noqa: BLE001
                 remainder = Decimal("0")
-            if remainder != Decimal("0"):
+            if remainder > Decimal("1e-6"):
                 return f"行情价格不在最小报价单位 {tick} 上"
         return ""
 
@@ -491,7 +621,25 @@ class PaperBroker:
         return max(value * rate, min_comm)
 
     def _freeze_amount(self, side: str, price: float, quantity: int) -> Decimal:
+        """买入冻结额：按**含滑点**的最坏成交价计提，保证实际成本不会超过冻结额。
+
+        不含滑点会在引入滑点后造成「冻结额 < 实际成本」→ 成交时现金无处可扣，
+        账目出现缺口（持仓成本高于现金支出）。因此冻结按上限价计提，成交后差额退回。
+        """
         if side != "BUY":
             return Decimal("0")
-        value = Decimal(str(price)) * quantity
-        return (value + self._commission(value)).quantize(_MONEY_QUANT, rounding=ROUND_HALF_UP)
+        slippage = float(self._risk.limits.slippage)
+        fee_rate = float(self._risk.limits.transfer_fee_rate)
+        worst_price = price * (1 + slippage) if slippage > 0 else price
+        # 向上取整到 4 位小数：成交价会被 quantize 到 4 位，若这里向下取整，
+        # 极端尾差下可能出现「实际成本 > 冻结额」，成交时现金无处可扣。
+        worst = Decimal(str(worst_price)).quantize(_PRICE_QUANT, rounding=ROUND_UP)
+        value = worst * quantity
+        # 冻结额必须覆盖**全部**买入成本：成交额 + 佣金 + 过户费
+        # （漏掉过户费会导致冻结额比实际成本少几分钱，退款计算变成负数）
+        transfer_fee = (value * Decimal(str(fee_rate))).quantize(
+            _MONEY_QUANT, rounding=ROUND_UP
+        )
+        return (value + self._commission(value) + transfer_fee).quantize(
+            _MONEY_QUANT, rounding=ROUND_HALF_UP
+        )

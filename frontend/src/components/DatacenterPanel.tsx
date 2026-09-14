@@ -16,7 +16,7 @@ import type {
   DatacenterRow,
   DragonTigerSeatsResponse,
 } from "../lib/types";
-import { formatCell, formatNumber, trendClass } from "../lib/format";
+import { formatCell } from "../lib/format";
 
 const PAGE_SIZE = 50;
 
@@ -26,12 +26,31 @@ const td = "px-3 py-2 text-sm whitespace-nowrap";
 const input =
   "bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-slate-200 numeric";
 
-function SeatsTable({ title, rows }: { title: string; rows: DatacenterRow[] }) {
+function SeatsTable({
+  title,
+  rows,
+  fields,
+}: {
+  title: string;
+  rows: DatacenterRow[];
+  /** 列定义来自后端目录（dataset key = dragon-tiger-seats），避免前后端字段漂移 */
+  fields: DatacenterDatasetInfo["fields"];
+}) {
+  const columns = fields.length
+    ? fields
+    : ([
+        { key: "seat_name", title: "席位名称", kind: "text" },
+        { key: "buy_amount", title: "买入额(元)", kind: "num" },
+        { key: "sell_amount", title: "卖出额(元)", kind: "num" },
+        { key: "net_amount", title: "净额(元)", kind: "num" },
+      ] as DatacenterDatasetInfo["fields"]);
   return (
     <div className={panel}>
       <div className="px-4 py-2 border-b border-slate-800 text-sm text-slate-300">
         {title}
-        <span className="ml-2 text-xs text-slate-500">共 {rows.length} 个席位</span>
+        <span className="ml-2 text-xs text-slate-500">
+          共 {rows.length} 个席位 · {columns.length} 个字段
+        </span>
       </div>
       {rows.length === 0 ? (
         <div className="p-4 text-sm text-slate-500">暂无席位数据</div>
@@ -40,27 +59,28 @@ function SeatsTable({ title, rows }: { title: string; rows: DatacenterRow[] }) {
           <table className="min-w-full divide-y divide-slate-800">
             <thead className="bg-slate-950/60">
               <tr>
-                <th className={th}>席位名称</th>
-                <th className={`${th} text-right`}>买入额</th>
-                <th className={`${th} text-right`}>卖出额</th>
-                <th className={`${th} text-right`}>净额</th>
+                {columns.map((field) => (
+                  <th key={field.key} className={th}>
+                    {field.title}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
               {rows.map((row, index) => (
                 <tr key={`${row.seat_name}-${index}`} className="hover:bg-slate-800/40">
-                  <td className={`${td} text-slate-200`}>{String(row.seat_name ?? "—")}</td>
-                  <td className={`${td} numeric text-right text-slate-300`}>
-                    {formatNumber(Number(row.buy_amount ?? 0))}
-                  </td>
-                  <td className={`${td} numeric text-right text-slate-300`}>
-                    {formatNumber(Number(row.sell_amount ?? 0))}
-                  </td>
-                  <td
-                    className={`${td} numeric text-right ${trendClass(Number(row.net_amount ?? 0))}`}
-                  >
-                    {formatNumber(Number(row.net_amount ?? 0))}
-                  </td>
+                  {columns.map((field) => (
+                    <td
+                      key={field.key}
+                      className={`${td} ${
+                        field.key === "seat_name" || field.key === "reason"
+                          ? "text-slate-200"
+                          : "numeric"
+                      }`}
+                    >
+                      {formatCell(field, row[field.key])}
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>
@@ -89,6 +109,10 @@ export default function DatacenterPanel() {
   const info: DatacenterDatasetInfo | undefined = catalog.data?.datasets.find(
     (item) => item.key === dataset,
   );
+  // 席位列定义同样来自后端目录：EM-09 实测「12 个字段只渲染 4 个」，
+  // 改成元数据驱动后新增字段无需改前端。
+  const seatFields: DatacenterDatasetInfo["fields"] =
+    catalog.data?.datasets.find((item) => item.key === "dragon-tiger-seats")?.fields ?? [];
 
   const result = useQuery({
     queryKey: [
@@ -265,8 +289,13 @@ export default function DatacenterPanel() {
               <tr>
                 {dataset === "dragon-tiger" && <th className={th}>席位</th>}
                 {fields.map((field) => (
-                  <th key={field.key} className={th}>
+                  <th key={field.key} className={th} title={field.note || undefined}>
                     {field.title}
+                    {field.note ? (
+                      <span className="ml-1 text-slate-500" aria-label={field.note}>
+                        ⓘ
+                      </span>
+                    ) : null}
                   </th>
                 ))}
               </tr>
@@ -314,10 +343,12 @@ export default function DatacenterPanel() {
           <SeatsTable
             title={`${seats.symbol} 买入席位${seats.trade_date ? ` · ${seats.trade_date}` : ""}`}
             rows={seats.buy}
+            fields={seatFields}
           />
           <SeatsTable
             title={`${seats.symbol} 卖出席位${seats.trade_date ? ` · ${seats.trade_date}` : ""}`}
             rows={seats.sell}
+            fields={seatFields}
           />
         </div>
       )}

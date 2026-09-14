@@ -175,6 +175,76 @@ def test_paper_account_create_and_list():
         assert len(resp.json()) >= 1
 
 
+def test_paper_payload_matches_frontend_contract():
+    """回归：/api/paper 三个列表接口必须返回前端表格直接消费的全部字段。
+
+    前端 PaperTrading 页面「已实现盈亏」列直接调用 ``t.realized_pnl.toFixed(2)``，
+    一旦成交记录缺少该字段就会抛 TypeError 并让整页崩溃（有持仓/成交时才复现）。
+    """
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/paper/accounts", json={"name": "契约", "initial_cash": 200000}
+        )
+        assert resp.status_code == 201
+        account_id = resp.json()["id"]
+
+        resp = client.post(
+            "/api/paper/orders",
+            json={
+                "account_id": account_id,
+                "symbol": "600000",
+                "side": "BUY",
+                "quantity": 100,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        expected = {
+            "trades": {
+                "id",
+                "symbol",
+                "side",
+                "quantity",
+                "price",
+                "commission",
+                "stamp_tax",
+                "realized_pnl",
+                "signal_id",
+                "executed_at",
+            },
+            "positions": {
+                "symbol",
+                "quantity",
+                "available_quantity",
+                "avg_cost",
+                "realized_pnl",
+            },
+            "orders": {
+                "id",
+                "symbol",
+                "side",
+                "quantity",
+                "price",
+                "status",
+                "reject_reason",
+                "signal_id",
+                "created_at",
+            },
+        }
+
+        for endpoint, fields in expected.items():
+            resp = client.get(f"/api/paper/{endpoint}?account_id={account_id}")
+            assert resp.status_code == 200, resp.text
+            rows = resp.json()[endpoint]
+            assert rows, f"{endpoint} 应有至少 1 条记录"
+            for row in rows:
+                missing = fields - set(row)
+                assert not missing, f"{endpoint} 缺少字段: {sorted(missing)}"
+
+        trades = client.get(f"/api/paper/trades?account_id={account_id}").json()["trades"]
+        assert isinstance(trades[0]["realized_pnl"], (int, float))
+
+
 def test_disclaimer_present():
     """所有接口必须包含免责声明（由应用描述体现）。"""
     assert "不构成投资建议" in app.description

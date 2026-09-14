@@ -175,3 +175,134 @@ async def test_execute_no_history_marks_failed(db_session, monkeypatch):
     db_session.refresh(bt)
     assert bt.status == FAILED
     assert "历史数据" in (bt.error_message or "")
+
+
+# ──────── D6：单标的回测也必须「前复权收益 + 未复权涨跌停昨收」 ────────
+
+
+def _daily_bars(n: int = 60, base: float = 10.0):
+    """构造有真实交易日的日线（不是 60 根同一个日期）。"""
+    from datetime import timedelta
+
+    from app.market_data.base import QuoteData
+
+    start = datetime(2026, 1, 5)
+    out = []
+    for i in range(n):
+        price = base + i * 0.01
+        out.append(
+            QuoteData(
+                symbol="600000",
+                name="测试",
+                price=price,
+                open=price,
+                high=price,
+                low=price,
+                previous_close=price - 0.01,
+                volume=1_000_000,
+                amount=10_000_000,
+                source="mock",
+                market_time=start + timedelta(days=i),
+            )
+        )
+    return out
+
+
+def _patch_history(monkeypatch, qfq_bars, none_bars, captured):
+    async def fake_get_history(self, symbol, start, end, **kwargs):
+        from app.history.quality import QualityReport
+        from app.history.service import HistoryResult
+
+        adjust = kwargs.get("adjust", "none")
+        captured.append(adjust)
+        bars = none_bars if adjust == "none" else qfq_bars
+        return HistoryResult(
+            bars=bars,
+            source="cache",
+            data_updated_at=None,
+            is_complete=True,
+            quality=QualityReport(total=len(bars)),
+        )
+
+    monkeypatch.setattr(
+        "app.history.service.HistoricalDataService.get_history", fake_get_history
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_uses_qfq_with_unadjusted_limit_reference(db_session, monkeypatch):
+    """单标的回测：策略/收益取 qfq，另取 none 仅用于还原涨跌停昨收。"""
+    captured: list[str] = []
+    _patch_history(monkeypatch, _daily_bars(), _daily_bars(), captured)
+    bt = _make_backtest(db_session, status=RUNNING)
+
+    worker = BacktestWorker(session_factory=_factory(db_session))
+    await worker._execute(bt.id)
+
+    db_session.refresh(bt)
+    assert bt.status == SUCCEEDED
+    assert "qfq" in captured, f"策略/收益口径必须是前复权，实际请求={captured}"
+    assert "none" in captured, f"涨跌停昨收必须另取未复权序列，实际请求={captured}"
+
+    payload = __import__("json").loads(bt.result)
+    assert payload["bars_adjust"] == "qfq"
+    assert payload["bars_adjust_label"] == "前复权"
+    assert payload["limit_reference"] == "unadjusted_previous_close"
+    assert payload["limit_reference_missing"] == 0
+    assert payload["limit_reference_complete"] is True
+    assert "limit_reference_note" not in payload
+
+
+@pytest.mark.asyncio
+async def test_execute_reverts_to_unadjusted_when_configured(db_session, monkeypatch):
+    """一键回退：backtest_bars_adjust=none 时只请求未复权（改造前行为）。"""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "backtest_bars_adjust", "none", raising=False)
+    captured: list[str] = []
+    _patch_history(monkeypatch, _daily_bars(), _daily_bars(), captured)
+    bt = _make_backtest(db_session, status=RUNNING)
+
+    worker = BacktestWorker(session_factory=_factory(db_session))
+    await worker._execute(bt.id)
+
+    db_session.refresh(bt)
+    assert bt.status == SUCCEEDED
+    assert captured == ["none"], f"回退后只应请求一次未复权，实际={captured}"
+    payload = __import__("json").loads(bt.result)
+    assert payload["bars_adjust"] == "none"
+    assert payload["bars_adjust_label"] == "不复权"
+    assert payload["limit_reference"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_execute_reports_limit_reference_gap(db_session, monkeypatch):
+    """未复权序列缺最后一天时，必须把缺口写进结果，而不是静默跳过涨跌停。"""
+    captured: list[str] = []
+    _patch_history(monkeypatch, _daily_bars(), _daily_bars()[:-1], captured)
+    bt = _make_backtest(db_session, status=RUNNING)
+
+    worker = BacktestWorker(session_factory=_factory(db_session))
+    await worker._execute(bt.id)
+
+    db_session.refresh(bt)
+    assert bt.status == SUCCEEDED
+    payload = __import__("json").loads(bt.result)
+    assert payload["limit_reference_missing"] == 1
+    assert payload["limit_reference_complete"] is False
+    assert "涨跌停判断已跳过" in payload["limit_reference_note"]
+
+
+def test_backtest_result_meta_reports_configured_adjust():
+    """`BacktestResult.to_dict()` 必须带口径标注，且随配置变化。"""
+    from app.backtest.engine import BacktestResult
+
+    qfq = BacktestResult(equity_curve=[100.0], bars_adjust="qfq").to_dict()
+    assert qfq["bars_adjust"] == "qfq"
+    assert qfq["bars_adjust_label"] == "前复权"
+    assert qfq["limit_reference"] == "unadjusted_previous_close"
+    assert "除权除息跳空已在本地还原" in qfq["return_convention_note"]
+
+    default = BacktestResult(equity_curve=[100.0]).to_dict()
+    assert default["bars_adjust"] == "none"
+    assert default["limit_reference"] == "none"

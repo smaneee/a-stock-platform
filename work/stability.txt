@@ -1,0 +1,25 @@
+﻿margin page1 n=500 page2 n=500 交集=499
+  page1 市场: SH=338 SZ=0 其他=162
+  page2 市场: SH=338 SZ=0 其他=162
+  page1 重复请求结果一致=True 差异=0
+
+dragon-tiger n=500 空值计数={"trade_date": 0, "symbol": 0, "name": 0, "close": 0, "change_pct": 0, "turnover_rate": 0, "market": 0, "billboard_buy_amount": 0, "billboard_sell_amount": 0, "billboard_net_amount": 0, "deal_amount": 0, "accum_amount": 0, "deal_amount_ratio": 0, "net_amount_ratio": 0, "change_1d_pct": 79, "change_5d_pct": 336, "change_10d_pct": 500, "change_20d_pct": 500, "reason": 0, "interpretation": 0}
+
+席位交叉核对 300808 2026-09-11: 买席位买入额合计=16603015 主表 billboard_buy_amount=21318934
+  比值=0.7788（主表应为全部席位合计，>= 前5席位合计）
+
+=== 各数据集字段空值率（limit=200 抽样） ===
+dragon-tiger         n=200 恒空=['change_5d_pct', 'change_10d_pct', 'change_20d_pct'] 部分空={'change_1d_pct': 71}
+block-trade          n=200 恒空=[] 部分空={'discount_ratio': 18, 'trade_ratio': 18, 'free_shares_ratio': 18}
+margin               n=200 恒空=[] 部分空={'financing_balance_pct': 20}
+northbound           n=200 恒空=['fund_inflow', 'quota_balance'] 部分空={'buy_amount': 101, 'sell_amount': 101, 'net_deal_amount': 101, 'accum_deal_amount': 101, 'hold_market_cap': 67}
+org-survey           n=200 恒空=[] 部分空={}
+holder-number        n=200 恒空=[] 部分空={'holder_num_ratio': 2, 'interval_change_pct': 2}
+restricted-release   n=200 恒空=[] 部分空={}
+earnings-forecast    n=200 恒空=[] 部分空={'predict_amount_lower': 12, 'predict_amount_upper': 12, 'forecast_jz': 12, 'increase_jz': 16, 'add_amp_lower': 16, 'add_amp_upper': 16, 'preyear_same_period': 3}
+dividend             n=200 恒空=['bonus_ratio'] 部分空={'pretax_bonus': 2, 'it_ratio': 198, 'dividend_ratio': 5}
+executive-hold       n=200 恒空=[] 部分空={'after_hold_num': 1}
+pledge               n=200 恒空=[] 部分空={}
+convertible-bond     n=200 恒空=[] 部分空={'coupon_rate': 5}
+
+WROTE E:\workbuddy work\2026-09-09-15-34-54\a-stock-platform\work\probe_stability.json

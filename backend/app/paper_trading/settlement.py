@@ -69,7 +69,10 @@ class DailySettlement:
         - force: True 时强制重算（无视幂等记录）。
         """
         td = trading_date or self._default_trading_date(account)
-        # 幂等：同一 (account_id, trading_date) 已结算过则直接返回
+        # 幂等：同一 (account_id, trading_date) 已结算过则不重复记快照，
+        # **但仍要执行 T+1 解冻**。实测缺口（P1-02）：旧实现在这里直接 return，
+        # 于是「同日先结算、之后再买入」的新批次永远保持 available_quantity=0，
+        # 必须换一个 trading_date 才能解冻 —— 相当于凭空多冻结一天。
         if not force:
             existing = self._db.scalars(
                 select(DailySettlementRecord).where(
@@ -78,12 +81,27 @@ class DailySettlement:
                 )
             ).first()
             if existing is not None:
+                unlocked = 0
+                for position in self._db.scalars(
+                    select(PaperPosition).where(PaperPosition.account_id == account.id)
+                ).all():
+                    # 只解冻结算日**之前**建立的批次；当日新建批次仍受 T+1 约束
+                    if (
+                        position.acquisition_date is not None
+                        and position.acquisition_date < td
+                        and position.available_quantity != position.quantity
+                    ):
+                        position.available_quantity = position.quantity
+                        unlocked += 1
+                if unlocked:
+                    self._db.commit()
                 return {
                     "account_id": account.id,
                     "trading_date": td.isoformat(),
                     "total_asset": float(existing.total_asset),
                     "frozen_cash": float(account.frozen_cash),
                     "positions_settled": existing.positions_settled,
+                    "unlocked_on_repeat": unlocked,
                     "idempotent": True,
                 }
 
@@ -91,9 +109,19 @@ class DailySettlement:
             select(PaperPosition).where(PaperPosition.account_id == account.id)
         ).all()
 
-        # T+1 解冻：所有批次 available_quantity 恢复为 quantity
+        # T+1 解冻：只解冻**结算日之前**建立的批次。
+        # 旧实现无条件把 available_quantity 恢复为 quantity，于是「当日买入 + 当日结算」
+        # 就能当天卖出，违反 T+1。此处是**服务层**防线（与建仓日比较，缺建仓日则不解冻）；
+        # 接口层另有第二道防线：未来日期 → 422、非交易日 → 400
+        # （见 `app/api/paper_accounts.py::settle_account`，回归测试
+        # `tests/test_paper_settle_guards.py`）。两道都要在，缺任一道都能绕过 T+1。
         positions_settled = 0
         for position in positions:
+            acquired = position.acquisition_date
+            # acquisition_date 缺失的历史批次无法判定建仓日：保守起见**不解冻**，
+            # 由人工核对后再处理，避免静默放行违反 T+1。
+            if acquired is None or acquired >= td:
+                continue
             if position.available_quantity != position.quantity:
                 position.available_quantity = position.quantity
                 positions_settled += 1
