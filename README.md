@@ -26,11 +26,24 @@ Set-Location a-stock-platform
 
 **方式 C：本机离线压缩包（不依赖 GitHub）**
 
-源码压缩包（**仅代码**）生成在：
+源码压缩包（**仅代码**，1.35 MB）生成在：
 
 ```
 D:\A股量化平台备份\a-stock-platform-src-<时间戳>.zip
 D:\A股量化平台备份\a-stock-platform-src-<时间戳>.zip.sha256.txt
+```
+
+已生成的最新一份（可直接复制走）：
+
+```
+D:\A股量化平台备份\a-stock-platform-src-20260914_144427.zip
+SHA-256  8cffc1fc052eb17b6f2397acf1e715335f6e8decbe9cf49a29ad99f4b42249f2
+```
+
+重新生成（包含当前 HEAD 的全部跟踪文件，不含数据库与密钥）：
+
+```powershell
+git archive --format=zip -o "D:\A股量化平台备份\a-stock-platform-src-$(Get-Date -Format yyyyMMdd_HHmmss).zip" HEAD
 ```
 
 校验：
