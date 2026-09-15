@@ -183,6 +183,14 @@ def test_endpoint_reads_account_history_and_returns_no_execution(db_session):
             "prompt_version": "investment-thesis-s1",
             "citations_valid": True,
             "citation_report": {},
+            # 反方必须通过结构化契约，否则门禁不允许增仓（S1 规则）
+            "opposing_incomplete": False,
+            "opposing_opinions": [
+                {"claim": "负债偏高", "evidence_id": "fact:debt_ratio",
+                 "why_it_matters": "财务风险", "evidence_exists": True}
+            ],
+            "cannot_answer": [],
+            "critic_report": {"opposing_incomplete": False},
             "gaps": [],
             "model_usage": {},
             "evidence_refs": [],

@@ -6,6 +6,7 @@ import pytest
 from app.explain.deepseek import EvidencePack
 from app.research.thesis import (
     CRITICAL_MISSING_KEYS,
+    parse_critic_output,
     DECISION_LABELS,
     STRATEGY_HORIZON,
     Decision,
@@ -138,8 +139,17 @@ def test_valid_ids_and_numbers_pass():
     assert card.citations_valid is True
     assert "fact:roe" in card.supporting_evidence_ids
     assert "fact:debt_ratio" in card.opposing_evidence_ids
-    # 支持与反对不得重复引用同一条
-    assert not set(card.supporting_evidence_ids) & set(card.opposing_evidence_ids)
+    # 同一条证据可被两方同时引用：必须保留在两边，并把交集显式列出
+    assert set(card.supporting_evidence_ids) & set(card.opposing_evidence_ids) == set()
+    # 再用一个"两边都引用 fact:roe"的场景验证交集被记录而不是被抹掉
+    overlap = build_thesis_card(
+        _analysis(), PACK,
+        model_text="净资产收益率 11.33%（fact:roe）",
+        variant_text="净资产收益率 11.33% 并不高（fact:roe）",
+    )
+    assert overlap.supporting_evidence_ids == ["fact:roe"]
+    assert overlap.opposing_evidence_ids == ["fact:roe"]
+    assert overlap.shared_evidence_ids == ["fact:roe"]
     assert card.evidence_refs and card.evidence_refs[0].period == "2026-06-30"
 
 
@@ -184,12 +194,41 @@ def test_validate_evidence_ids_reports_known_set_size():
 # ── 增仓门禁 ───────────────────────────────────────────────────────────────
 
 
+def _bound_critic():
+    """一份通过结构化契约的反方输出（3 条，id 全部真实存在）。"""
+    from app.research.thesis import CriticReport, OpposingOpinion, bind_critic_output
+
+    return bind_critic_output(
+        CriticReport(opposing=[
+            OpposingOpinion(claim="净资产收益率只有 11.33%，不算高", evidence_id="fact:roe"),
+            OpposingOpinion(claim="资产负债率 64.89% 偏高", evidence_id="fact:debt_ratio"),
+            OpposingOpinion(claim="现金流覆盖并不算厚", evidence_id="fact:ocf_to_profit"),
+        ]),
+        PACK,
+    )
+
+
 def test_gate_allows_when_data_complete_and_citations_valid():
-    card = build_thesis_card(_analysis(), PACK, model_text="净资产收益率 11.33%（fact:roe）")
+    card = build_thesis_card(
+        _analysis(), PACK,
+        model_text="质量分 59.9（calc:quality_score）",
+        critic_binding=_bound_critic(),
+    )
     gate = position_gate(card)
     assert card.citations_valid is True
+    assert card.opposing_incomplete is False
     assert gate["allowed"] is True
     assert gate["blockers"] == []
+
+
+def test_gate_blocks_when_critic_is_absent_even_with_clean_citations():
+    """没有可核对的反方意见 = 没人替我们找错 → 不允许增仓。"""
+    card = build_thesis_card(_analysis(), PACK, model_text="质量分 59.9（calc:quality_score）")
+    assert card.citations_valid is True
+    assert card.opposing_incomplete is True
+    gate = position_gate(card)
+    assert gate["allowed"] is False
+    assert any("反方审查未通过结构化契约" in item for item in gate["blockers"])
 
 
 def test_missing_critical_data_blocks_increase_even_when_other_metrics_look_good():
@@ -207,7 +246,8 @@ def test_invalid_citation_blocks_increase():
     gate = position_gate(card)
     assert card.citations_valid is False
     assert gate["allowed"] is False
-    assert any("不存在的证据 id" in item or "引用校验" in item for item in gate["blockers"])
+    # 数字越界必须单独说清楚（而不是笼统地说"引用有问题"）
+    assert any("证据包外的数字" in item and "45.2" in item for item in gate["blockers"])
 
 
 def test_not_applicable_valuation_blocks_increase():
@@ -256,7 +296,7 @@ def test_card_numbers_do_not_depend_on_model_wording():
 def test_missing_opposing_ids_is_reported_as_a_gap():
     card = build_thesis_card(_analysis(), PACK, variant_text="估值可能过于乐观，护城河在收窄。")
     assert card.opposing_evidence_ids == []
-    assert any("未标注任何证据 id" in gap for gap in card.gaps)
+    assert any("找不到可回指" in gap for gap in card.gaps)
 
 
 def test_absent_critic_is_also_reported():
@@ -272,3 +312,115 @@ def test_gap_list_is_empty_when_both_sides_cite_ids():
     )
     assert card.gaps == []
     assert card.supporting_evidence_ids and card.opposing_evidence_ids
+
+
+def test_supporting_ids_are_never_invented_from_the_pack():
+    """没有模型文字时不得凭空把证据包前几条当成"支持证据"。"""
+    card = build_thesis_card(_analysis(), PACK)
+    assert card.supporting_evidence_ids == []
+    assert any("未标注任何支持证据 id" in gap for gap in card.gaps)
+
+# ── 反方结构化契约（S1 收尾） ─────────────────────────────────────────────
+
+
+def _critic_json(items, cannot=None):
+    import json as _json
+    return _json.dumps({"opposing": items, "cannot_answer": cannot or []}, ensure_ascii=False)
+
+
+def test_parse_critic_output_accepts_plain_json():
+    report, error = parse_critic_output(_critic_json([
+        {"claim": "毛利率偏低", "evidence_id": "fact:debt_ratio", "why_it_matters": "盈利质量"},
+        {"claim": "增速放缓", "evidence_id": "fact:roe", "why_it_matters": "成长性"},
+        {"claim": "现金流覆盖不足", "evidence_id": "fact:ocf_to_profit", "why_it_matters": "现金"},
+    ]))
+    assert error is None and report is not None and len(report.opposing) == 3
+
+
+def test_parse_critic_output_tolerates_code_fence_and_prose():
+    text = "分析如下：\n```json\n" + _critic_json([
+        {"claim": "a", "evidence_id": "fact:roe"},
+        {"claim": "b", "evidence_id": "fact:roe"},
+        {"claim": "c", "evidence_id": "fact:roe"},
+    ]) + "\n```\n以上。"
+    report, error = parse_critic_output(text)
+    assert error is None and report is not None
+
+
+def test_parse_critic_output_rejects_garbage_and_too_few():
+    assert parse_critic_output("口头意见，没有结构化输出")[0] is None
+    assert "JSON" in parse_critic_output("口头意见，没有结构化输出")[1]
+    few, error = parse_critic_output(_critic_json([{"claim": "a", "evidence_id": "fact:roe"}]))
+    assert few is None and "少于" in error
+
+
+def test_bind_critic_output_flags_invalid_ids_and_keeps_valid_ones():
+    from app.research.thesis import CriticReport, OpposingOpinion, bind_critic_output
+
+    report = CriticReport(opposing=[
+        OpposingOpinion(claim="净资产收益率偏低", evidence_id="fact:roe"),
+        OpposingOpinion(claim="编造的依据", evidence_id="fact:not_exists"),
+        OpposingOpinion(claim="负债偏高", evidence_id="fact:debt_ratio"),
+    ])
+    binding = bind_critic_output(report, PACK)
+    assert binding["opposing_incomplete"] is True
+    assert binding["invalid_evidence_ids"] == ["fact:not_exists"]
+    # 合法的那两条仍然保留，便于人工复核
+    assert set(binding["opposing_evidence_ids"]) == {"fact:roe", "fact:debt_ratio"}
+    assert any(item["evidence_exists"] is False for item in binding["opinions"])
+
+
+def test_card_uses_binding_and_marks_incomplete():
+    from app.research.thesis import CriticReport, OpposingOpinion, bind_critic_output
+
+    report = CriticReport(opposing=[
+        OpposingOpinion(claim="净资产收益率偏低", evidence_id="fact:roe"),
+        OpposingOpinion(claim="负债偏高", evidence_id="fact:debt_ratio"),
+        OpposingOpinion(claim="现金流覆盖不足", evidence_id="fact:ocf_to_profit"),
+    ])
+    binding = bind_critic_output(report, PACK)
+    card = build_thesis_card(
+        _analysis(), PACK, critic_binding=binding,
+        model_text="质量分 59.9（calc:quality_score）",
+    )
+    assert card.opposing_incomplete is False
+    assert len(card.opposing_opinions) == 3
+    assert set(card.opposing_evidence_ids) == {"fact:roe", "fact:debt_ratio", "fact:ocf_to_profit"}
+    assert card.gaps == []
+    assert position_gate(card)["allowed"] is True
+
+
+def test_incomplete_critic_blocks_increase_with_specific_reason():
+    from app.research.thesis import bind_critic_output
+
+    binding = bind_critic_output(None, PACK, error="输出里没有 JSON 对象")
+    card = build_thesis_card(_analysis(), PACK, critic_binding=binding)
+    assert card.opposing_incomplete is True
+    gate = position_gate(card)
+    assert gate["allowed"] is False
+    assert any("反方审查未通过结构化契约" in item for item in gate["blockers"])
+    assert any("结构化契约" in gap for gap in card.gaps)
+
+
+def test_cannot_answer_is_preserved_even_when_opposing_is_incomplete():
+    from app.research.thesis import CriticReport, OpposingOpinion, bind_critic_output
+
+    report = CriticReport(
+        opposing=[OpposingOpinion(claim="x", evidence_id="fact:unknown")],
+        cannot_answer=["缺少一致预期数据，无法判断市场共识"],
+    )
+    binding = bind_critic_output(report, PACK)
+    card = build_thesis_card(_analysis(), PACK, critic_binding=binding)
+    assert card.cannot_answer == ["缺少一致预期数据，无法判断市场共识"]
+    assert card.opposing_incomplete is True
+
+def test_evidence_ids_survive_stray_whitespace():
+    """模型把 id 写成 "calc:dcf_ 悲观" 时不该被抽成不存在的 "calc:dcf_"。"""
+    from app.research.thesis import normalize_evidence_text
+
+    assert extract_evidence_ids("见 calc:dcf_ 悲观 与 fact: roe") == ["calc:dcf_悲观", "fact:roe"]
+    assert normalize_evidence_text("calc:dcf_ 悲观") == "calc:dcf_悲观"
+    # 规整只是去掉空白，不会把编造的 id 变成合法
+    card = build_thesis_card(_analysis(), PACK, model_text="依据 calc:dcf_ 不存在 与 fact:made_up")
+    assert card.citations_valid is False
+    assert "fact:made_up" in card.citation_report["invalid_ids"]

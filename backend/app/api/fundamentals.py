@@ -31,7 +31,14 @@ from app.explain.deepseek import (
     ExplainerConfig,
     build_evidence_pack,
 )
-from app.research.thesis import CRITIC_PROMPT, build_thesis_card, position_gate
+from app.research.thesis import (
+    CRITIC_PROMPT,
+    CRITIC_RETRY_SUFFIX,
+    bind_critic_output,
+    build_thesis_card,
+    parse_critic_output,
+    position_gate,
+)
 from app.research.thesis import StrategyType  # noqa: E402
 from app.fundamentals.decision import (
     DecisionInputs,
@@ -664,13 +671,28 @@ async def post_explain(
     explainer = _explainer()
     explanation = await explainer.explain(pack, question=payload.question or None)
     critic: dict = {}
+    critic_binding: dict | None = None
     if payload.include_critic and explanation.get("status") == STATUS_OK:
         critic = await explainer.explain(pack, question=CRITIC_PROMPT)
+        report, format_error = parse_critic_output(str(critic.get("text") or ""))
+        if report is None:
+            # 结构化契约不合格：**只重试一次**并明确指出问题，仍不合格就判不完整
+            critic = await explainer.explain(
+                pack, question=CRITIC_PROMPT + CRITIC_RETRY_SUFFIX
+            )
+            report, format_error = parse_critic_output(str(critic.get("text") or ""))
+        critic_binding = bind_critic_output(report, pack, error=format_error)
         explanation = {
             **explanation,
             "mode": "independent_dual_review",
             "critic": critic,
             "critic_passed": bool((critic.get("validation") or {}).get("passed")),
+            "critic_contract": {
+                "format_error": critic_binding["format_error"],
+                "opinions": len(critic_binding["opinions"]),
+                "invalid_evidence_ids": critic_binding["invalid_evidence_ids"],
+                "complete": not critic_binding["opposing_incomplete"],
+            },
         }
     latency_ms = round((time.perf_counter() - started) * 1000, 1)
     usage = dict(explanation.get("usage") or {})
@@ -690,6 +712,7 @@ async def post_explain(
         horizon=(payload.portfolio.horizon if payload.portfolio else None) or None,
         model_text=primary_text,
         variant_text=variant_text,
+        critic_binding=critic_binding,
         model_usage=usage,
         fetched_at=now_cst().isoformat(),
         text_origin="model_primary_and_critic" if primary_text else "deterministic_skeleton",

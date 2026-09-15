@@ -46,6 +46,9 @@ from app.research.preregistration import (
 from app.research.review import build_review
 from app.research.thesis import (
     CRITIC_PROMPT,
+    CRITIC_RETRY_SUFFIX,
+    bind_critic_output,
+    parse_critic_output,
     build_thesis_card,
     card_from_payload,
     position_gate,
@@ -307,11 +310,20 @@ async def create_investment_research_run(
 
     explanation: dict | None = None
     explanation_status = "not_requested"
+    # 反方结构化绑定结果：未开启解释时为 None（决策卡据此标记 opposing_incomplete）
+    critic_binding: dict | None = None
     if body.include_explanation:
         pack = build_evidence_pack(analysis, generated_at=now_cst().isoformat())
         explainer = _explainer()
         primary = await explainer.explain(pack, question=body.question or None)
         critic = await explainer.explain(pack, question=CRITIC_PROMPT)
+        critic_report, critic_error = parse_critic_output(str(critic.get("text") or ""))
+        if critic_report is None:
+            critic = await explainer.explain(
+                pack, question=CRITIC_PROMPT + CRITIC_RETRY_SUFFIX
+            )
+            critic_report, critic_error = parse_critic_output(str(critic.get("text") or ""))
+        critic_binding = bind_critic_output(critic_report, pack, error=critic_error)
         explanation = _merge_dual_review(primary, critic)
         explanation_status = str(explanation.get("status") or "unknown")
 
@@ -334,6 +346,7 @@ async def create_investment_research_run(
         horizon=body.horizon or None,
         model_text=primary_text,
         variant_text=variant_text,
+        critic_binding=critic_binding,
         model_usage={
             "latency_ms": None,
             "total_tokens": ((explanation or {}).get("usage") or {}).get("total_tokens"),

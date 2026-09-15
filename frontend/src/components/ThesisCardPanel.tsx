@@ -103,7 +103,9 @@ export default function ThesisCardPanel({
           </div>
         </div>
         <div>
-          <div className="text-xs text-slate-500">反对证据 id（{card.opposing_evidence_ids.length}）</div>
+          <div className="text-xs text-slate-500">
+            反对证据 id（{card.opposing_evidence_ids.length}，结构化意见 {card.opposing_opinions.length} 条）
+          </div>
           <div className="mt-1 flex flex-wrap gap-1">
             {card.opposing_evidence_ids.length ? card.opposing_evidence_ids.map((id) => (
               <span key={id} className="rounded bg-slate-950 px-1.5 py-0.5 font-mono text-[11px] text-rose-300">{id}</span>
@@ -111,6 +113,35 @@ export default function ThesisCardPanel({
           </div>
         </div>
       </div>
+
+      {card.opposing_opinions.length ? (
+        <div className="mt-3">
+          <div className="text-xs text-slate-500">独立反方意见（结构化契约）</div>
+          <ul className="mt-1 space-y-1 text-xs">
+            {card.opposing_opinions.map((item, index) => (
+              <li key={`${item.evidence_id}-${index}`} className={item.evidence_exists ? "text-rose-200" : "text-amber-300"}>
+                · {item.claim}
+                <span className="ml-1 font-mono text-[11px] text-slate-400">
+                  [{item.evidence_id}{item.evidence_exists ? "" : " ✗ 不存在"}]
+                </span>
+                {item.why_it_matters ? <span className="text-slate-400"> — {item.why_it_matters}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {card.shared_evidence_ids.length ? (
+        <div className="mt-2 text-xs text-slate-500">
+          两方同时引用的证据：{card.shared_evidence_ids.join("、")}（同一证据的两面看法，不是缺陷）
+        </div>
+      ) : null}
+
+      {card.cannot_answer.length ? (
+        <div className="mt-2 rounded border border-slate-800 bg-slate-950/60 p-2 text-xs text-slate-400">
+          反方明确"证据不足无法判断"：{card.cannot_answer.join("；")}
+        </div>
+      ) : null}
 
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <div>

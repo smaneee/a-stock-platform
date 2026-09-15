@@ -331,6 +331,19 @@ export interface ThesisCard {
     numbers?: Record<string, unknown>;
   };
   gaps: string[];
+  /** 反方结构化意见（claim + evidence_id + 影响机制 + 是否真实存在） */
+  opposing_opinions: Array<{
+    claim: string;
+    evidence_id: string;
+    why_it_matters: string;
+    evidence_exists: boolean;
+  }>;
+  /** 反方"证据不足无法判断"的问题 */
+  cannot_answer: string[];
+  /** 反方整份是否不合格（没输出 / JSON 不合法 / 引用了不存在的 id） */
+  opposing_incomplete: boolean;
+  /** 同时被支持方与反方引用的证据 id */
+  shared_evidence_ids: string[];
   model_usage: {
     total_tokens?: number | null;
     prompt_tokens?: number | null;

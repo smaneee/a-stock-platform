@@ -22,10 +22,11 @@ model_version / prompt_version``
 """
 from __future__ import annotations
 
+import json
 import re
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.explain.deepseek import (  # noqa: F401 - EvidencePack 作为类型来源
     NUMBER_RE,
@@ -104,15 +105,132 @@ PROMPT_VERSION = "investment-thesis-s1"
 MODEL_VERSION = "fundamentals-decision-v1"
 
 #: 反方审查提示词（两处共用，避免口径漂移）。
-#: 2026-09-15 实测教训：原提示词没有要求标注证据 id，导致 `opposing_evidence_ids` 恒为空，
-#: 卡片里"反对证据"一栏只能空着。现在把"每条反对意见必须带真实存在的 id"写成硬性格式要求。
+#:
+#: 2026-09-15 实测两次教训：
+#: ① 最初没有要求标注证据 id → ``opposing_evidence_ids`` 恒为空；
+#: ② 改成"句末标注 id"的自然语言要求后，真实模型**依然没标**（提示词约束不保证合规）。
+#: 因此现在改成**结构化契约**：只返回 JSON，字段固定；服务端 schema 校验 + 证据 id 存在性校验，
+#: 不合格就重试一次，仍不合格则卡片显式标记 ``opposing_incomplete``（而不是静默留空）。
 CRITIC_PROMPT = (
-    "你是独立反方投资委员。不要迎合既有结论；优先找出会导致永久损失、估值失真或论点"
-    "失效的证据，并明确当前证据无法回答什么。\n"
-    "硬性格式要求（不满足即视为不合格）：至少写出 3 条反对意见，**每条都必须在句末标注"
-    "它所依据的证据 id**（形如 fact:roe 或 calc:dcf_基准），id 只能取证据包里真实存在的；"
-    "没有证据可依的意见必须写明「证据不足，无法判断」，不得凭空给结论。"
+    "你是独立反方投资委员。不要迎合既有结论；只根据证据包判断，指出会导致永久损失、"
+    "估值失真或论点失效的理由。\n"
+    "**输出格式（必须严格遵守）**：只输出一个 JSON 对象，不要写任何解释性文字或 Markdown 代码块，结构为：\n"
+    '{"opposing": [{"claim": "一句话反对意见", "evidence_id": "fact:roe", '
+    '"why_it_matters": "这条证据如何影响判断"}], "cannot_answer": ["证据不足无法判断的问题"]}\n'
+    "要求：\n"
+    "1. opposing 至少 3 条，至多 6 条；\n"
+    "2. 每条 evidence_id 必须取自证据包里真实存在的 id（形如 fact:xxx 或 calc:xxx），"
+    "不得编造、不得留空；\n"
+    "3. 找不到证据支持的意见不要写进 opposing，放进 cannot_answer；\n"
+    "4. 数字只能照抄证据包里的原值，不得换算或估算。"
 )
+
+#: 反方输出不合格时的追加提醒（只在重试时使用一次）
+CRITIC_RETRY_SUFFIX = (
+    "\n【上一次输出不合格】必须只输出规定结构的 JSON；opposing 至少 3 条；"
+    "每条都要带真实存在的 evidence_id。"
+)
+
+
+class OpposingOpinion(BaseModel):
+    """反方的一条反对意见（结构化契约的最小单元）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    claim: str = Field(min_length=1, description="一句话反对意见")
+    evidence_id: str = Field(min_length=1, description="依据的证据 id，必须真实存在")
+    why_it_matters: str = Field(default="", description="这条证据如何影响判断")
+
+
+class CriticReport(BaseModel):
+    """反方审查的结构化输出。字段固定，多写会被忽略，缺 opposing 视为不合格。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    opposing: list[OpposingOpinion] = Field(default_factory=list)
+    cannot_answer: list[str] = Field(default_factory=list)
+
+
+#: opposing 至少要有这么多条，否则判为不合格
+MIN_OPPOSING = 3
+
+
+def extract_json_object(text: str) -> tuple[dict | None, str | None]:
+    """从模型输出里抠出第一个 JSON 对象。
+
+    允许外面包着解释性文字或 ```json 代码块（模型经常这样），但不做"猜字段"式兼容：
+    抠不出 JSON 就返回错误原因，由调用方决定重试或标不合格。
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return None, "输出为空"
+    if stripped.startswith("```"):
+        # 去掉 ```json / ``` 包裹
+        lines = [line for line in stripped.splitlines() if not line.strip().startswith("```")]
+        stripped = "\n".join(lines).strip()
+    start, end = stripped.find("{"), stripped.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None, "输出里没有 JSON 对象"
+    candidate = stripped[start : end + 1]
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError as exc:
+        return None, f"JSON 解析失败：{exc.msg}"
+    if not isinstance(payload, dict):
+        return None, "JSON 顶层必须是对象"
+    return payload, None
+
+
+def parse_critic_output(text: str) -> tuple[CriticReport | None, str | None]:
+    """把反方输出解析成 :class:`CriticReport`；失败返回 (None, 原因)。"""
+    payload, error = extract_json_object(text)
+    if payload is None:
+        return None, error
+    try:
+        report = CriticReport.model_validate(payload)
+    except ValidationError as exc:
+        return None, f"字段校验失败：{exc.error_count()} 处"
+    if len(report.opposing) < MIN_OPPOSING:
+        return None, f"opposing 只有 {len(report.opposing)} 条，少于 {MIN_OPPOSING} 条"
+    return report, None
+
+
+def bind_critic_output(
+    report: CriticReport | None, pack: EvidencePack, *, error: str | None = None
+) -> dict:
+    """把反方结构化输出**绑定到证据包**：逐条校验 evidence_id 是否存在。
+
+    返回可直接放进决策卡的字典；任何一条引用了不存在的 id，整份反方意见判为不合格
+    （``opposing_incomplete=True``）—— 允许"证据不足"进 cannot_answer，
+    不允许"有结论但找不到依据"。
+    """
+    index = set(_evidence_index(pack))
+    opinions: list[dict] = []
+    invalid: list[str] = []
+    if report is not None:
+        for item in report.opposing:
+            ok = item.evidence_id in index
+            if not ok:
+                invalid.append(item.evidence_id)
+            opinions.append({
+                "claim": item.claim,
+                "evidence_id": item.evidence_id,
+                "why_it_matters": item.why_it_matters,
+                "evidence_exists": ok,
+            })
+    complete = bool(report is not None and opinions and not invalid)
+    return {
+        "opinions": opinions,
+        "opposing_evidence_ids": [item["evidence_id"] for item in opinions if item["evidence_exists"]],
+        "cannot_answer": list(report.cannot_answer) if report is not None else [],
+        "invalid_evidence_ids": invalid,
+        "format_error": error,
+        "opposing_incomplete": not complete,
+        "note": (
+            "反方意见按结构化契约校验：每条必须有真实存在的证据 id；"
+            "不合格时整份判为不完整，不作为增仓依据"
+        ),
+    }
 
 
 class EvidenceRef(BaseModel):
@@ -165,6 +283,15 @@ class ThesisCard(BaseModel):
     citation_report: dict = Field(default_factory=dict)
     #: 结构性缺口（例如反方意见没标 id）——显式列出，不靠"反证为空"让人猜
     gaps: list[str] = Field(default_factory=list)
+    #: 反方结构化意见（claim + evidence_id + 影响机制），每条带 evidence_exists 校验结果
+    opposing_opinions: list[dict] = Field(default_factory=list)
+    #: 反方"证据不足无法判断"的问题清单
+    cannot_answer: list[str] = Field(default_factory=list)
+    #: 反方整份是否不合格（没输出 / JSON 不合法 / 引用了不存在的 id）
+    opposing_incomplete: bool = True
+    #: 同时被支持方与反方引用的证据 id（不是缺陷，是"同一证据两面看"）
+    shared_evidence_ids: list[str] = Field(default_factory=list)
+    critic_report: dict = Field(default_factory=dict)
     #: 模型调用成本与耗时（方案 §四 S1 验收要求记录）
     model_usage: dict = Field(default_factory=dict)
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
@@ -180,11 +307,24 @@ def _evidence_index(pack: EvidencePack) -> dict[str, dict]:
     return index
 
 
+#: id 里被模型不小心插入空白的两种位置（2026-09-15 实测：模型写 "calc:dcf_ 悲观"，
+#: 结果被抽成不存在的 "calc:dcf_"，整张卡的门禁因此失败）。这里只做**空白规整**，
+#: 不补齐、不猜测：规整后仍然对不上的 id 依旧判为无效。
+_ID_SPACE_AFTER_PREFIX = re.compile(r"\b(fact|calc):\s+")
+_ID_SPACE_AFTER_UNDERSCORE = re.compile(r"_\s+([A-Za-z0-9\u4e00-\u9fff])")
+
+
+def normalize_evidence_text(text: str) -> str:
+    """把 id 前后的多余空白去掉（只处理此两类空白，不改动其它内容）。"""
+    cleaned = _ID_SPACE_AFTER_PREFIX.sub(r"\1:", text or "")
+    return _ID_SPACE_AFTER_UNDERSCORE.sub(r"_\1", cleaned)
+
+
 def extract_evidence_ids(*texts: str) -> list[str]:
-    """从文字里抓出所有证据 id（保持出现顺序、去重）。"""
+    """从文字里抓出所有证据 id（保持出现顺序、去重；先做空白规整）。"""
     seen: list[str] = []
     for text in texts:
-        for match in EVIDENCE_ID_RE.findall(text or ""):
+        for match in EVIDENCE_ID_RE.findall(normalize_evidence_text(text)):
             if match not in seen:
                 seen.append(match)
     return seen
@@ -258,10 +398,18 @@ def position_gate(card: ThesisCard, *, current_weight: float | None = None) -> d
     """
     blockers: list[str] = []
     if not card.citations_valid:
-        blockers.append(
-            "解释引用了不存在的证据 id："
-            + "、".join(card.citation_report.get("invalid_ids") or [])
-        )
+        invalid_ids = list(card.citation_report.get("invalid_ids") or [])
+        if invalid_ids:
+            blockers.append("解释引用了不存在的证据 id：" + "、".join(invalid_ids))
+        unverified = list(card.citation_report.get("unverified_numbers") or [])
+        if unverified:
+            blockers.append("解释里出现证据包外的数字：" + "、".join(unverified))
+
+    # 反方审查必须通过结构化契约：没有可核对的反对意见，就等于"没人替我们找错"，
+    # 这种状态不允许解锁增仓（与模型调用失败同一条规则）。
+    if card.opposing_incomplete:
+        reason = card.critic_report.get("format_error") or "反对意见缺少可核对的证据 id"
+        blockers.append(f"反方审查未通过结构化契约（{reason}）")
     critical_missing = [item for item in card.missing_data if item in CRITICAL_MISSING_KEYS]
     if critical_missing:
         blockers.append("关键数据缺失：" + "、".join(critical_missing))
@@ -291,6 +439,7 @@ def build_thesis_card(
     horizon: str | None = None,
     model_text: str = "",
     variant_text: str = "",
+    critic_binding: dict | None = None,
     model_usage: dict | None = None,
     fetched_at: str | None = None,
     text_origin: str = "deterministic_skeleton",
@@ -301,18 +450,28 @@ def build_thesis_card(
     report_date = (analysis.get("2_data_asof") or {}).get("report_date")
     snapshot_date = str(fetched_at or "")
 
-    supporting = extract_evidence_ids(model_text) or [
-        item["id"] for item in pack.facts[:3]
-    ]
-    opposing = extract_evidence_ids(variant_text)
-    # 支持/反对证据 id 去重且不重叠
-    opposing = [item for item in opposing if item not in supporting]
+    # 支持证据只认模型真正引用过的 id：**不用"证据包前三条"顶替**，
+    # 否则那些 id 会在去重时把反方真正引用的同一条证据挤掉（2026-09-15 实测缺陷）。
+    supporting = extract_evidence_ids(model_text)
+    binding = critic_binding or {}
+    # 优先使用结构化契约绑定出来的 id；没有绑定时退回文字里抓到的 id
+    opposing = list(binding.get("opposing_evidence_ids") or [])
+    if not opposing:
+        opposing = extract_evidence_ids(variant_text)
+    # 同一条证据**可以同时被两方引用**（例如负债率既支持"便宜"也提示风险）。
+    # 2026-09-15 实测缺陷：原先强行去重，导致主审引用了 17 条证据时把反方 6 条全部挤掉，
+    # 卡片出现"反方契约完整但反对证据 id 为 0"的自相矛盾。现在保留两边，
+    # 只把交集单独列出来让人看到"同一证据被两方同时引用"。
+    shared_evidence_ids = [item for item in opposing if item in supporting]
 
     id_report = validate_evidence_ids(supporting + opposing, pack)
     number_report = validate_citations(model_text + "\n" + variant_text, pack)
     # 反方意见必须能回指至少一条证据；否则它只是没有依据的修辞，不能进入
     # 冻结卡片或作为增仓依据。确定性骨架没有反方文字时不触发此规则。
-    opposing_binding_missing = bool(variant_text.strip()) and not opposing
+    if binding:
+        opposing_binding_missing = bool(binding.get("opposing_incomplete", True))
+    else:
+        opposing_binding_missing = bool(variant_text.strip()) and not opposing
     citations_valid = bool(
         id_report["passed"] and number_report["passed"] and not opposing_binding_missing
     )
@@ -329,8 +488,20 @@ def build_thesis_card(
     ]
 
     gaps: list[str] = []
-    if not opposing and variant_text.strip():
-        gaps.append("反方意见未标注任何证据 id（不合格）：无法核对反对意见是否有依据")
+    if binding:
+        if binding.get("format_error"):
+            gaps.append(f"反方输出不符合结构化契约：{binding['format_error']}")
+        if binding.get("invalid_evidence_ids"):
+            gaps.append(
+                "反方引用了不存在的证据 id："
+                + "、".join(binding["invalid_evidence_ids"])
+            )
+        if not binding.get("opinions"):
+            gaps.append("反方未给出结构化反对意见（opposing 为空）")
+    elif not opposing and variant_text.strip():
+        gaps.append(
+            "反方文字里找不到可回指的 fact:/calc: 证据 id（未走结构化契约时无法核对依据）"
+        )
     elif not variant_text.strip():
         gaps.append("未生成独立反方意见（未调用反方审查或调用失败）")
     if not supporting:
@@ -382,6 +553,11 @@ def build_thesis_card(
         },
         model_usage=dict(model_usage or {}),
         gaps=gaps,
+        opposing_opinions=list(binding.get("opinions") or []),
+        cannot_answer=list(binding.get("cannot_answer") or []),
+        opposing_incomplete=bool(binding.get("opposing_incomplete", not opposing)),
+        shared_evidence_ids=shared_evidence_ids,
+        critic_report=dict(binding),
         evidence_refs=evidence_refs_for(
             list(dict.fromkeys(supporting + opposing)),
             index,
