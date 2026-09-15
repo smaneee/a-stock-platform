@@ -142,6 +142,17 @@ class Settings(BaseSettings):
     # 单次解释的最大输出 token（成本上限；不按金额计价，因为费率未核实）
     deepseek_max_output_tokens: int = Field(default=1200, ge=128, le=8000)
 
+    # ───────────── 研究复核提醒（阶段 2） ─────────────
+    # 收盘后扫描每个标的的最新研究记录，把触发的复核条件写进待办列表。
+    # 只读快照 + 只写平台自己的提醒表，不涉及任何交易动作，因此默认开启；
+    # 需要关闭时设置 RESEARCH_REMINDER_AUTO_ENABLED=false。
+    research_reminder_auto_enabled: bool = True
+    # 日终结算在 15:30，提醒扫描排在 15:45（北京时间）
+    research_reminder_auto_hour: int = Field(default=15, ge=0, le=23)
+    research_reminder_auto_minute: int = Field(default=45, ge=0, le=59)
+    # 一次扫描最多处理多少个标的（每个标的取最新一条研究记录）
+    research_reminder_scan_limit: int = Field(default=200, ge=1, le=2000)
+
     # CORS
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 

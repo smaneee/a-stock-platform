@@ -44,6 +44,11 @@ from app.research.preregistration import (
     summarize_correction,
 )
 from app.research.review import build_review
+from app.research.service import (
+    acknowledge_reminder,
+    list_reminders,
+    scan_reminders,
+)
 from app.research.rebalance import (
     ResearchDraftConstraints,
     ResearchDraftInputs,
@@ -573,3 +578,40 @@ def review_investment_research_run(
         "immutability_note": "复核只读；要记录新判断请创建新的研究记录（旧的不会被覆盖）",
         "disclaimer": "复核提醒只说明'该重新看一遍'，不构成投资建议。",
     }
+
+
+# ── 自动复核提醒（阶段 2 剩余部分） ──────────────────────────────────────
+#
+# 复核本身是只读的；自动化的价值在于"不用人记得去点"。收盘后定时任务扫描每个标的的最新
+# 记录，把触发的条件写进 research_review_reminders，形成可确认的待办列表。
+
+
+@router.get("/reminders")
+def list_research_reminders(
+    include_acknowledged: bool = Query(default=False),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> dict:
+    """复核提醒待办列表（默认只看未确认的，按严重度排序）。"""
+    return list_reminders(db, include_acknowledged=include_acknowledged, limit=limit)
+
+
+@router.post("/reminders/scan")
+def scan_research_reminders(
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+) -> dict:
+    """立即扫描一次：对每个标的的最新研究记录重算并落库提醒（幂等，可重复调用）。"""
+    return scan_reminders(db, limit=limit)
+
+
+@router.post("/reminders/{reminder_id}/acknowledge")
+def acknowledge_research_reminder(
+    reminder_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """把某条提醒标记为「已查看」：只是从待办里去掉，历史仍然保留。"""
+    result = acknowledge_reminder(db, reminder_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("reason"))
+    return result

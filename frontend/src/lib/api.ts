@@ -67,6 +67,9 @@ import type {
   InvestmentResearchRun,
   InvestmentResearchRunSummary,
   InvestmentReview,
+  RealtimeWinRateResponse,
+  ResearchReminderList,
+  ResearchReminderScan,
   ResearchRebalanceConstraints,
   ResearchRebalanceDraft,
 } from "./types";
@@ -210,6 +213,23 @@ export const listInvestmentResearch = (symbol: string, limit = 10) =>
 /** 复核某条研究记录：是否该重新研究、触发条件、与上次记录的差异（只读）。 */
 export const fetchInvestmentReview = (runId: number) =>
   request<InvestmentReview>(`/research/runs/${runId}/review`);
+
+/** 复核提醒待办（收盘后自动扫描落库；也可手动触发扫描）。 */
+export const listResearchReminders = (includeAcknowledged = false, limit = 100) =>
+  request<ResearchReminderList>("/research/reminders", {
+    params: { include_acknowledged: includeAcknowledged, limit },
+  });
+
+export const scanResearchReminders = (limit = 200) =>
+  request<ResearchReminderScan>("/research/reminders/scan", {
+    method: "POST",
+    params: { limit },
+  });
+
+export const acknowledgeResearchReminder = (reminderId: number) =>
+  request<{ ok: boolean; id: number }>(`/research/reminders/${reminderId}/acknowledge`, {
+    method: "POST",
+  });
 
 export const createResearchRebalanceDraft = (
   runId: number,
@@ -721,6 +741,30 @@ export interface RealtimePicksParams {
   risk_budget_pct?: number;
   max_weight_pct?: number;
 }
+
+export interface RealtimeWinRateParams {
+  top_n?: number;
+  pool_size?: number;
+  hold_days?: number;
+  min_hits?: number;
+  lookback?: number;
+}
+
+/**
+ * 首页「赚钱率前五」：样本内历史回放胜率排名。
+ *
+ * 后端每次调用都用本地前复权日线重新回放（无未来函数），返回值自带口径与免责声明；
+ * 该指标**不是上涨概率**、未通过样本外验证、未扣费用。
+ */
+export const fetchRealtimeWinRate = (params: RealtimeWinRateParams = {}) => {
+  const query: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) {
+      query[key] = value as string | number | boolean;
+    }
+  }
+  return request<RealtimeWinRateResponse>("/realtime/win-rate", { params: query });
+};
 
 /**
  * 全市场实时扫描：返回研究候选排序和后端证据门禁。

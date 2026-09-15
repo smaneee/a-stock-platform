@@ -223,6 +223,88 @@ export interface InvestmentReview {
   disclaimer?: string;
 }
 
+/** 首页「赚钱率前五」：样本内历史回放胜率排名（不是未来上涨概率）。 */
+export interface WinRateRow {
+  board_rank: number;
+  symbol: string;
+  name: string;
+  screener_rank: number;
+  price: number | null;
+  change_pct: number | null;
+  strength_score: number;
+  score: number;
+  live: boolean;
+  win_rate: number | null;
+  samples: number;
+  mean_return: number | null;
+  median_return: number | null;
+  best: number | null;
+  worst: number | null;
+  bar_count: number;
+  last_bar_date: string | null;
+  bars_adjust: string;
+  replay_note: string;
+}
+
+export interface RealtimeWinRateResponse {
+  generated_at_cst: string;
+  market_session: {
+    session_day: string;
+    signal_day: string;
+    live: boolean;
+    bars_last_day: string | null;
+  };
+  coverage_ratio: number | null;
+  coverage_ok: boolean;
+  bars_adjust: string;
+  scan_seconds: number;
+  pool_size: number;
+  evaluated: number;
+  skipped_count: number;
+  skipped: Array<{ symbol: string; name: string; samples: number; reason: string }>;
+  hold_days: number;
+  min_hits: number;
+  min_samples: number;
+  top: WinRateRow[];
+  definitions: {
+    win_rate: string;
+    mean_return: string;
+    samples: string;
+    buy_timing: string;
+    conditions_used: string[];
+  };
+  disclaimer: string;
+}
+
+/** 自动复核提醒（收盘后扫描落库的待办）。 */
+export interface ResearchReminder {
+  id: number;
+  run_id: number;
+  symbol: string;
+  trigger_name: string;
+  label: string;
+  detail: string;
+  severity: "high" | "medium" | "low";
+  detected_on: string;
+  acknowledged: boolean;
+  acknowledged_at: string | null;
+}
+
+export interface ResearchReminderList {
+  count: number;
+  unacknowledged_count: number;
+  items: ResearchReminder[];
+  note: string;
+}
+
+export interface ResearchReminderScan {
+  detected_on: string;
+  symbols_scanned: number;
+  reminders_created: number;
+  skipped: Array<{ symbol: string; run_id: number; reason: string }>;
+  details: Array<{ symbol: string; run_id: number; needs_review: boolean; fired: number }>;
+}
+
 export interface InvestmentResearchRun extends InvestmentResearchRunSummary {
   assumptions: {
     valuation: ValuationInput;

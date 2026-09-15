@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
+  acknowledgeResearchReminder,
   analyzeInvestment,
   createResearchRebalanceDraft,
   explainInvestment,
@@ -9,9 +10,11 @@ import {
   fetchInvestmentReview,
   listInvestmentResearch,
   listPaperAccounts,
+  listResearchReminders,
   refreshStatementDetail,
   reverseValuation,
   saveInvestmentResearch,
+  scanResearchReminders,
 } from "../lib/api";
 import type { InvestmentEvidenceItem, ResearchRebalanceConstraints, ValuationInput } from "../lib/types";
 
@@ -132,6 +135,19 @@ export default function InvestmentResearchPage() {
   const review = useMutation({
     mutationFn: (runId: number) => fetchInvestmentReview(runId),
     onSuccess: (_data, runId) => setReviewedId(runId),
+  });
+  // 自动复核提醒：收盘后由定时任务扫描落库，这里也可以手动触发一次
+  const reminders = useQuery({
+    queryKey: ["research-reminders"],
+    queryFn: () => listResearchReminders(true, 100),
+  });
+  const scanReminders = useMutation({
+    mutationFn: () => scanResearchReminders(200),
+    onSuccess: () => reminders.refetch(),
+  });
+  const ackReminder = useMutation({
+    mutationFn: (id: number) => acknowledgeResearchReminder(id),
+    onSuccess: () => reminders.refetch(),
   });
   const [draftedRunId, setDraftedRunId] = useState<number | null>(null);
   const rebalanceDraft = useMutation({
@@ -279,9 +295,68 @@ export default function InvestmentResearchPage() {
             ))}
           </div>
           {review.data && reviewedId !== null ? <div className="mt-3 rounded border border-sky-900 bg-sky-950/20 p-3 text-sm text-slate-300"><div className="font-medium text-sky-300">复核记录 #{review.data.run.id}：{review.data.needs_review === null ? "无法复核（缺少当前快照）" : review.data.needs_review ? `需要重新研究（触发 ${review.data.fired_count ?? review.data.fired_triggers.length} 项）` : "暂不需要重新研究"}</div>{review.data.fired_triggers.length ? <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-200">{review.data.fired_triggers.map((t) => <li key={t.name}>[{t.severity}] {t.label}：{t.detail}</li>)}</ul> : <p className="mt-2 text-xs text-slate-500">所有触发条件均未满足。</p>}<div className="mt-2 text-xs text-slate-400">{review.data.diff.summary}{review.data.has_previous_run ? "" : "（无上一条记录，已与当前重算结果对照）"}</div>{review.data.diff.changes.length ? <ul className="mt-2 space-y-1 text-xs text-slate-400">{review.data.diff.changes.slice(0, 8).map((c) => <li key={c.field}><span className="text-slate-600">[{c.importance}]</span> {c.label}：{String(c.before)} → {String(c.after)}</li>)}</ul> : null}<p className="mt-2 text-xs text-slate-500">{review.data.note}{review.data.disclaimer ? ` ${review.data.disclaimer}` : ""}</p></div> : null}
-          {rebalanceDraft.data && draftedRunId !== null ? <div className="mt-3 rounded border border-amber-800 bg-amber-950/20 p-3 text-sm"><div className="font-medium text-amber-300">研究记录 #{draftedRunId} · {rebalanceDraft.data.action} · 当前 {pctText(rebalanceDraft.data.current_weight)} → 草案 {pctText(rebalanceDraft.data.target_weight)}</div><ul className="mt-2 space-y-1 text-xs">{rebalanceDraft.data.checks.map((check) => <li key={check.name} className={check.status === "pass" ? "text-emerald-300" : "text-rose-300"}>{check.status === "pass" ? "通过" : "拦截"} · {check.detail}</li>)}</ul>{rebalanceDraft.data.proposed_order ? <div className="mt-3 rounded bg-slate-950 p-2 text-slate-300">模拟增持草案：{rebalanceDraft.data.proposed_order.symbol} × {rebalanceDraft.data.proposed_order.quantity} 股，参考金额 ¥{num(rebalanceDraft.data.proposed_order.indicative_value, 0)}</div> : <div className="mt-3 text-slate-400">当前约束下不生成新增订单。</div>}<p className="mt-2 text-xs text-slate-500">{rebalanceDraft.data.note} {rebalanceDraft.data.disclaimer}</p></div> : null}
         </section>
       ) : null}
+
+      <section className={panel}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="font-medium">复核提醒（自动扫描）</h2>
+            <p className="mt-1 text-xs text-slate-500">每个交易日收盘后自动扫描全部研究记录：新财报、价格偏离 ≥ ±20%、结论变化、数据过期、记录陈旧都会进这个待办列表。这里也可以手动扫一次。</p>
+          </div>
+          <button type="button" disabled={scanReminders.isPending} onClick={() => scanReminders.mutate()} className="rounded bg-sky-700 px-4 py-2 text-sm hover:bg-sky-600 disabled:opacity-40">{scanReminders.isPending ? "扫描中…" : "立即扫描"}</button>
+        </div>
+        {scanReminders.data ? <p className="mt-2 text-xs text-emerald-300">扫描完成（{scanReminders.data.detected_on}）：标的 {scanReminders.data.symbols_scanned} 个，新建提醒 {scanReminders.data.reminders_created} 条{scanReminders.data.skipped.length ? `，跳过 ${scanReminders.data.skipped.length} 个（缺当前快照）` : ""}</p> : null}
+        {reminders.data ? (
+          <div className="mt-3 space-y-2">
+            <div className="text-xs text-slate-400">待办 {reminders.data.unacknowledged_count} 条 / 共 {reminders.data.count} 条</div>
+            {reminders.data.items.map((item) => (
+              <div key={item.id} className={`flex flex-wrap items-center justify-between gap-2 rounded border p-3 text-sm ${item.acknowledged ? "border-slate-800 bg-slate-950/40 text-slate-500" : item.severity === "high" ? "border-amber-800 bg-amber-950/20" : "border-slate-800 bg-slate-950/60"}`}>
+                <div>
+                  <span className="text-slate-300">#{item.symbol}</span> · 记录 #{item.run_id} · <span className={item.severity === "high" ? "text-amber-300" : "text-slate-400"}>[{item.severity}]</span> {item.label}
+                  <div className="mt-1 text-xs text-slate-500">{item.detail} · 检测日 {item.detected_on}</div>
+                </div>
+                {item.acknowledged ? <span className="text-xs text-slate-600">已查看</span> : <button type="button" disabled={ackReminder.isPending} onClick={() => ackReminder.mutate(item.id)} className="rounded border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40">标记已查看</button>}
+              </div>
+            ))}
+            {reminders.data.items.length === 0 ? <p className="text-xs text-slate-500">暂无提醒。研究记录冻结后，条件触发时会自动出现在这里。</p> : null}
+            <p className="text-xs text-slate-500">{reminders.data.note}</p>
+          </div>
+        ) : null}
+      </section>
+
+      <section className={panel}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="font-medium">复核提醒（自动扫描）</h2>
+            <p className="mt-1 text-xs text-slate-500">每个交易日收盘后自动扫描全部研究记录：新财报、价格偏离 ≥ ±20%、结论变化、数据过期、记录陈旧都会进这个待办列表。这里也可以手动扫一次。</p>
+          </div>
+          <button type="button" disabled={scanReminders.isPending} onClick={() => scanReminders.mutate()} className="rounded bg-sky-700 px-4 py-2 text-sm hover:bg-sky-600 disabled:opacity-40">{scanReminders.isPending ? "扫描中…" : "立即扫描"}</button>
+        </div>
+        {scanReminders.data ? <p className="mt-2 text-xs text-emerald-300">扫描完成（{scanReminders.data.detected_on}）：标的 {scanReminders.data.symbols_scanned} 个，新建提醒 {scanReminders.data.reminders_created} 条{scanReminders.data.skipped.length ? `，跳过 ${scanReminders.data.skipped.length} 个（缺当前快照）` : ""}</p> : null}
+        {reminders.data ? (
+          <div className="mt-3 space-y-2">
+            <div className="text-xs text-slate-400">待办 {reminders.data.unacknowledged_count} 条 / 共 {reminders.data.count} 条</div>
+            {reminders.data.items.map((item) => (
+              <div key={item.id} className={`flex flex-wrap items-center justify-between gap-2 rounded border p-3 text-sm ${item.acknowledged ? "border-slate-800 bg-slate-950/40 text-slate-500" : item.severity === "high" ? "border-amber-800 bg-amber-950/20" : "border-slate-800 bg-slate-950/60"}`}>
+                <div>
+                  <span className="text-slate-300">#{item.symbol}</span> · 记录 #{item.run_id} · <span className={item.severity === "high" ? "text-amber-300" : "text-slate-400"}>[{item.severity}]</span> {item.label}
+                  <div className="mt-1 text-xs text-slate-500">{item.detail} · 检测日 {item.detected_on}</div>
+                </div>
+                {item.acknowledged ? <span className="text-xs text-slate-600">已查看</span> : <button type="button" disabled={ackReminder.isPending} onClick={() => ackReminder.mutate(item.id)} className="rounded border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40">标记已查看</button>}
+              </div>
+            ))}
+            {reminders.data.items.length === 0 ? <p className="text-xs text-slate-500">暂无提醒。研究记录冻结后，条件触发时会自动出现在这里。</p> : null}
+            <p className="text-xs text-slate-500">{reminders.data.note}</p>
+          </div>
+        ) : null}
+      </section>
+
+      <section className={panel}>
+        <h2 className="font-medium">组合草案（研究记录 → 模拟盘）</h2>
+        <p className="mt-1 text-xs text-slate-500">在历史研究记录里点「组合草案」：后端用当前持仓与约束检查集中度、行业暴露与流动性，只生成待审批草案，不写订单、不自动执行。</p>
+          {rebalanceDraft.data && draftedRunId !== null ? <div className="mt-3 rounded border border-amber-800 bg-amber-950/20 p-3 text-sm"><div className="font-medium text-amber-300">研究记录 #{draftedRunId} · {rebalanceDraft.data.action} · 当前 {pctText(rebalanceDraft.data.current_weight)} → 草案 {pctText(rebalanceDraft.data.target_weight)}</div><ul className="mt-2 space-y-1 text-xs">{rebalanceDraft.data.checks.map((check) => <li key={check.name} className={check.status === "pass" ? "text-emerald-300" : "text-rose-300"}>{check.status === "pass" ? "通过" : "拦截"} · {check.detail}</li>)}</ul>{rebalanceDraft.data.proposed_order ? <div className="mt-3 rounded bg-slate-950 p-2 text-slate-300">模拟增持草案：{rebalanceDraft.data.proposed_order.symbol} × {rebalanceDraft.data.proposed_order.quantity} 股，参考金额 ¥{num(rebalanceDraft.data.proposed_order.indicative_value, 0)}</div> : <div className="mt-3 text-slate-400">当前约束下不生成新增订单。</div>}<p className="mt-2 text-xs text-slate-500">{rebalanceDraft.data.note} {rebalanceDraft.data.disclaimer}</p></div> : null}
+      </section>
     </div>
   );
 }

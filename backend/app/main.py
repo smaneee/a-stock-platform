@@ -80,6 +80,7 @@ from app.tasks.history_ingest_worker import HistoryIngestWorker
 from app.tasks.daily_pipeline import DailyPipelineWorker
 from app.tasks.daily_pipeline_scheduler import DailyPipelineScheduler
 from app.tasks.limit_up_sentiment_scheduler import LimitUpSentimentScheduler
+from app.tasks.research_reminder_scheduler import ResearchReminderScheduler
 from app.tasks.worker import BacktestWorker
 from app.validation import sanitize_symbols
 
@@ -264,6 +265,12 @@ async def lifespan(app: FastAPI):
     )
     limit_up_sentiment_scheduler.start()
 
+    # 研究复核提醒：收盘后扫描冻结的研究记录，把触发的条件写进待办列表
+    research_reminder_scheduler: ResearchReminderScheduler = (
+        app.state.research_reminder_scheduler
+    )
+    research_reminder_scheduler.start()
+
     # 后台预热买点雷达的日线缓存：冷启动读 66 万行约 15.9 秒（实测），
     # 不应算进「用户启动后第一次打开首页」的等待时间里。
     warm_task = asyncio.create_task(app.state.screener_service.warm_bars_cache())
@@ -274,6 +281,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await limit_up_sentiment_scheduler.stop()
+        await research_reminder_scheduler.stop()
         await daily_pipeline_scheduler.stop()
         await daily_pipeline_worker.stop()
         await live_reconcile_worker.stop()
@@ -432,6 +440,7 @@ def create_app() -> FastAPI:
     daily_pipeline_worker = DailyPipelineWorker(provider_manager=provider_manager)
     daily_pipeline_scheduler = DailyPipelineScheduler(provider_manager=provider_manager)
     limit_up_sentiment_scheduler = LimitUpSentimentScheduler(service=limit_up_service)
+    research_reminder_scheduler = ResearchReminderScheduler()
 
     app.state.provider_manager = provider_manager
     app.state.market_service = market_service
@@ -454,6 +463,7 @@ def create_app() -> FastAPI:
     app.state.daily_pipeline_worker = daily_pipeline_worker
     app.state.daily_pipeline_scheduler = daily_pipeline_scheduler
     app.state.limit_up_sentiment_scheduler = limit_up_sentiment_scheduler
+    app.state.research_reminder_scheduler = research_reminder_scheduler
     app.state.settlement_scheduler = settlement_scheduler
 
     # 注册路由

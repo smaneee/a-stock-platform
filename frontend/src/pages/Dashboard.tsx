@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchHealth, fetchMarketProviders, fetchMetrics } from "../lib/api";
 import type { MetricsResponse } from "../lib/types";
 import NowBuyPanel from "../components/NowBuyPanel";
+import WinRatePanel from "../components/WinRatePanel";
 
 export default function Dashboard() {
   const { data, isLoading, isError, refetch } = useQuery({
@@ -26,6 +27,8 @@ export default function Dashboard() {
       <h1 className="text-2xl font-semibold">看板</h1>
 
       <NowBuyPanel />
+
+      <WinRatePanel />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card title="数据库" loading={isLoading} error={isError}>

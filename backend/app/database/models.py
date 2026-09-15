@@ -883,3 +883,38 @@ class InvestmentResearchRun(Base):
     reverse_valuation: Mapped[dict] = mapped_column(JSON, nullable=False)
     explanation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utc_now)
+
+
+class ResearchReviewReminder(Base):
+    """复核提醒（同一研究记录 + 同一触发条件 + 同一天最多一条）。
+
+    为什么需要：研究记录冻结之后，"现在要不要重新研究"原先只能靠人手动点一次复核。
+    本表让**自动扫描**（收盘后定时任务）把触发结果落库，从而：
+
+    * 同一天重复扫描不会产生重复提醒（唯一键 run_id + trigger_name + detected_on）；
+    * 提醒可以被"确认"（acknowledged），确认后不再出现在待办列表；
+    * 触发条件消失时**不删除历史**，只是当天不再新增，保留审计轨迹。
+    """
+
+    __tablename__ = "research_review_reminders"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "trigger_name", "detected_on", name="uq_reminder_run_trigger_day"
+        ),
+        Index("ix_reminder_detected_on", "detected_on"),
+        Index("ix_reminder_symbol", "symbol"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("investment_research_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(String(10), nullable=False)
+    trigger_name: Mapped[str] = mapped_column(String(40), nullable=False)
+    label: Mapped[str] = mapped_column(String(120), nullable=False)
+    detail: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    severity: Mapped[str] = mapped_column(String(12), nullable=False, default="medium")
+    detected_on: Mapped[date] = mapped_column(Date, nullable=False)
+    acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utc_now)

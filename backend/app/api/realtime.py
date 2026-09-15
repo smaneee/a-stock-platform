@@ -12,18 +12,25 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.api.deps import get_radar_validation_service, get_screener_service
+from app.database.models import HistoricalBar
+from app.database.session import get_db
 from app.realtime.screener import (
+    BAR_PERIOD,
     BOARD_LABELS,
     RISK_LABELS,
     ScreenerConfig,
     ScreenerResult,
     ScreenerService,
     ScreenerUnavailable,
+    resolve_bar_adjust_cached,
 )
 from app.realtime.validation import (
     CostModel,
@@ -31,8 +38,12 @@ from app.realtime.validation import (
     ValidationConfig,
     ValidationReport,
 )
+from app.realtime.win_rate import REPLAY_CONDITIONS, replay_signal
 
 logger = logging.getLogger(__name__)
+
+#: 参与「赚钱率」排名所需的最少回放样本数（太少的上榜等于用巧合排名）
+MIN_SAMPLES_FOR_RANK = 5
 
 router = APIRouter(prefix="/api/realtime", tags=["realtime"])
 
@@ -551,6 +562,136 @@ def _to_validation(report: ValidationReport) -> ValidationReportResponse:
         caveats=list(report.caveats),
         notes=list(report.notes),
     )
+
+
+@router.get("/win-rate", summary="赚钱率前五（样本内回放）")
+async def realtime_win_rate(
+    top_n: int = Query(default=5, ge=1, le=20, description="返回前几名"),
+    pool_size: int = Query(default=20, ge=5, le=50, description="参与回放的候选池大小"),
+    hold_days: int = Query(default=5, ge=1, le=20, description="持有交易日数"),
+    min_hits: int = Query(default=4, ge=1, le=5, description="回放门槛：命中条数"),
+    lookback: int = Query(default=260, ge=120, le=600, description="回放用的日线根数"),
+    service: ScreenerService = Depends(get_screener_service),
+    db: Session = Depends(get_db),
+) -> dict:
+    """「赚钱率前五」：按**样本内历史回放胜率**排序的研究优先级列表。
+
+    数字来自本地前复权日线逐日回放（每天只用当天及以前的数据），**每次调用重新计算**：
+
+    * 候选池取自当前实时扫描的前 ``pool_size`` 名（真实行情，含盘中）；
+    * 对每只候选回放「同类条件」（命中条数 ≥ ``min_hits``），统计持有 ``hold_days`` 日的胜率；
+    * 样本数达不到门槛时**不参与排名**（缺样本不编数字），并如实列在 ``skipped`` 里；
+    * 返回值带口径说明与「不是上涨概率、未通过样本外验证、未扣费用」的声明。
+    """
+    result = await service.run(ScreenerConfig(top_n=pool_size))
+    pool = list(result.picks)[:pool_size]
+
+    entries: list[dict] = []
+    skipped: list[dict] = []
+    for pick in pool:
+        closes, volumes, days, adjust = _load_replay_series(db, pick.symbol, lookback)
+        stats = replay_signal(closes, volumes, hold_days=hold_days, min_hits=min_hits)
+        if stats.samples < MIN_SAMPLES_FOR_RANK:
+            skipped.append({
+                "symbol": pick.symbol,
+                "name": pick.name,
+                "samples": stats.samples,
+                "reason": stats.note,
+            })
+            continue
+        entries.append({
+            "symbol": pick.symbol,
+            "name": pick.name,
+            "screener_rank": pick.rank,
+            "price": pick.price,
+            "change_pct": pick.change_pct,
+            "strength_score": pick.strength_score,
+            "score": pick.score,
+            "live": pick.live,
+            "win_rate": stats.win_rate,
+            "samples": stats.samples,
+            "mean_return": stats.mean_return,
+            "median_return": stats.median_return,
+            "best": stats.best,
+            "worst": stats.worst,
+            "bar_count": len(closes),
+            "last_bar_date": days[-1].isoformat() if days else None,
+            "bars_adjust": adjust,
+            "replay_note": stats.note,
+        })
+
+    entries.sort(
+        key=lambda item: (
+            -(item["win_rate"] or 0.0),
+            -(item["mean_return"] or 0.0),
+            -item["samples"],
+            -item["strength_score"],
+        )
+    )
+    for position, item in enumerate(entries, start=1):
+        item["board_rank"] = position
+    top = entries[:top_n]
+
+    return {
+        "generated_at_cst": result.generated_at_cst,
+        "market_session": {
+            "session_day": result.session_day.isoformat(),
+            "signal_day": result.signal_day.isoformat(),
+            "live": result.live,
+            "bars_last_day": result.bars_last_day.isoformat() if result.bars_last_day else None,
+        },
+        "coverage_ratio": result.coverage_ratio,
+        "coverage_ok": result.coverage_ok,
+        "bars_adjust": result.bars_adjust,
+        "scan_seconds": round(result.scan_seconds, 3),
+        "pool_size": len(pool),
+        "evaluated": len(entries),
+        "skipped_count": len(skipped),
+        "skipped": skipped[:10],
+        "hold_days": hold_days,
+        "min_hits": min_hits,
+        "min_samples": MIN_SAMPLES_FOR_RANK,
+        "top": top,
+        "definitions": {
+            "win_rate": "样本内历史回放：同类条件出现后，持有 hold_days 个交易日的正收益占比",
+            "mean_return": "同一批样本的平均收益（未扣交易费用）",
+            "samples": "回放中出现的同类条件次数；越多越可信，太少不参与排名",
+            "buy_timing": "信号日 t 收盘 → t+1 收盘买入 → t+1+hold_days 收盘卖出",
+            "conditions_used": list(REPLAY_CONDITIONS),
+        },
+        "disclaimer": (
+            "「赚钱率」是样本内历史回放胜率，**不是未来上涨概率**，也没有通过样本外验证，"
+            "且未扣交易费用。它只能用来排序研究优先级；策略证据页的 production_ready_count 仍为 0。"
+            "本结果仅供研究，不构成投资建议。"
+        ),
+    }
+
+
+def _load_replay_series(
+    db: Session, symbol: str, lookback: int
+) -> tuple[list[float], list[float], list[date], str]:
+    """读某标的最近 ``lookback`` 根日线（升序，前复权优先）。缺数据返回空列表。"""
+    adjust, _, _ = resolve_bar_adjust_cached(db, BAR_PERIOD)
+    rows = db.execute(
+        select(HistoricalBar.trade_date, HistoricalBar.close, HistoricalBar.volume)
+        .where(
+            HistoricalBar.symbol == symbol,
+            HistoricalBar.period == BAR_PERIOD,
+            HistoricalBar.adjust == adjust,
+        )
+        .order_by(HistoricalBar.trade_date.desc())
+        .limit(lookback)
+    ).all()
+    ordered = list(reversed(rows))
+    usable = [
+        (row[0], float(row[1]), float(row[2] or 0.0))
+        for row in ordered
+        if row[1] is not None and float(row[1]) > 0
+    ]
+    days = [item[0] for item in usable]
+    closes = [item[1] for item in usable]
+    volumes = [item[2] for item in usable]
+    return closes, volumes, days, adjust
 
 
 @router.get(
