@@ -103,6 +103,17 @@ EVIDENCE_ID_RE = re.compile(r"\b(?:fact|calc):[A-Za-z0-9_\u4e00-\u9fff]+")
 PROMPT_VERSION = "investment-thesis-s1"
 MODEL_VERSION = "fundamentals-decision-v1"
 
+#: 反方审查提示词（两处共用，避免口径漂移）。
+#: 2026-09-15 实测教训：原提示词没有要求标注证据 id，导致 `opposing_evidence_ids` 恒为空，
+#: 卡片里"反对证据"一栏只能空着。现在把"每条反对意见必须带真实存在的 id"写成硬性格式要求。
+CRITIC_PROMPT = (
+    "你是独立反方投资委员。不要迎合既有结论；优先找出会导致永久损失、估值失真或论点"
+    "失效的证据，并明确当前证据无法回答什么。\n"
+    "硬性格式要求（不满足即视为不合格）：至少写出 3 条反对意见，**每条都必须在句末标注"
+    "它所依据的证据 id**（形如 fact:roe 或 calc:dcf_基准），id 只能取证据包里真实存在的；"
+    "没有证据可依的意见必须写明「证据不足，无法判断」，不得凭空给结论。"
+)
+
 
 class EvidenceRef(BaseModel):
     """一条证据的溯源信息（方案 §二：保存 id、来源、口径、单位、报告期、公告/抓取时间）。"""
@@ -152,6 +163,8 @@ class ThesisCard(BaseModel):
     #: 引用与数字校验结果（引用不存在即为 False）
     citations_valid: bool = True
     citation_report: dict = Field(default_factory=dict)
+    #: 结构性缺口（例如反方意见没标 id）——显式列出，不靠"反证为空"让人猜
+    gaps: list[str] = Field(default_factory=list)
     #: 模型调用成本与耗时（方案 §四 S1 验收要求记录）
     model_usage: dict = Field(default_factory=dict)
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
@@ -297,7 +310,12 @@ def build_thesis_card(
 
     id_report = validate_evidence_ids(supporting + opposing, pack)
     number_report = validate_citations(model_text + "\n" + variant_text, pack)
-    citations_valid = bool(id_report["passed"] and number_report["passed"])
+    # 反方意见必须能回指至少一条证据；否则它只是没有依据的修辞，不能进入
+    # 冻结卡片或作为增仓依据。确定性骨架没有反方文字时不触发此规则。
+    opposing_binding_missing = bool(variant_text.strip()) and not opposing
+    citations_valid = bool(
+        id_report["passed"] and number_report["passed"] and not opposing_binding_missing
+    )
 
     quality = ((analysis.get("3_dimensions") or {}).get("quality")) or {}
     valuation = ((analysis.get("3_dimensions") or {}).get("valuation")) or {}
@@ -309,6 +327,16 @@ def build_thesis_card(
         for scenario in ((analysis.get("5_scenarios") or {}).get("scenarios") or [])
         if f"calc:dcf_{scenario.get('label')}" in index
     ]
+
+    gaps: list[str] = []
+    if not opposing and variant_text.strip():
+        gaps.append("反方意见未标注任何证据 id（不合格）：无法核对反对意见是否有依据")
+    elif not variant_text.strip():
+        gaps.append("未生成独立反方意见（未调用反方审查或调用失败）")
+    if not supporting:
+        gaps.append("未标注任何支持证据 id")
+    if not scenario_ids:
+        gaps.append("没有可引用的情景计算结果（未提供估值假设）")
 
     return ThesisCard(
         symbol=str(analysis.get("symbol") or pack.symbol),
@@ -350,8 +378,10 @@ def build_thesis_card(
             "numbers": number_report,
             "invalid_ids": id_report["invalid_ids"],
             "unverified_numbers": number_report["unverified_numbers"],
+            "opposing_binding_missing": opposing_binding_missing,
         },
         model_usage=dict(model_usage or {}),
+        gaps=gaps,
         evidence_refs=evidence_refs_for(
             list(dict.fromkeys(supporting + opposing)),
             index,

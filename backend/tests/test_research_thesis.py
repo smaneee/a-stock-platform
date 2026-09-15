@@ -249,3 +249,26 @@ def test_card_numbers_do_not_depend_on_model_wording():
         assert getattr(neutral, field) == getattr(enthusiastic, field), field
     # 只有文字段允许不同
     assert neutral.thesis != enthusiastic.thesis
+
+# ── 结构缺口（反方没标 id 不能被静默忽略） ──────────────────────────────
+
+
+def test_missing_opposing_ids_is_reported_as_a_gap():
+    card = build_thesis_card(_analysis(), PACK, variant_text="估值可能过于乐观，护城河在收窄。")
+    assert card.opposing_evidence_ids == []
+    assert any("未标注任何证据 id" in gap for gap in card.gaps)
+
+
+def test_absent_critic_is_also_reported():
+    card = build_thesis_card(_analysis(), PACK)
+    assert any("未生成独立反方意见" in gap for gap in card.gaps)
+
+
+def test_gap_list_is_empty_when_both_sides_cite_ids():
+    card = build_thesis_card(
+        _analysis(), PACK,
+        model_text="净资产收益率 11.33%（fact:roe）",
+        variant_text="资产负债率 64.89% 偏高（fact:debt_ratio）",
+    )
+    assert card.gaps == []
+    assert card.supporting_evidence_ids and card.opposing_evidence_ids

@@ -44,7 +44,12 @@ from app.research.preregistration import (
     summarize_correction,
 )
 from app.research.review import build_review
-from app.research.thesis import build_thesis_card, card_from_payload, position_gate
+from app.research.thesis import (
+    CRITIC_PROMPT,
+    build_thesis_card,
+    card_from_payload,
+    position_gate,
+)
 from app.research.service import (
     acknowledge_reminder,
     list_reminders,
@@ -306,13 +311,7 @@ async def create_investment_research_run(
         pack = build_evidence_pack(analysis, generated_at=now_cst().isoformat())
         explainer = _explainer()
         primary = await explainer.explain(pack, question=body.question or None)
-        critic = await explainer.explain(
-            pack,
-            question=(
-                "你是独立反方投资委员。不要迎合既有结论；优先找出会导致永久损失、"
-                "估值失真或论点失效的证据，并明确当前证据无法回答什么。"
-            ),
-        )
+        critic = await explainer.explain(pack, question=CRITIC_PROMPT)
         explanation = _merge_dual_review(primary, critic)
         explanation_status = str(explanation.get("status") or "unknown")
 
@@ -327,8 +326,8 @@ async def create_investment_research_run(
     primary_text = ""
     variant_text = ""
     if explanation and explanation.get("status") == "ok":
-        primary_text = str(explanation.get("text") or "")
-        variant_text = str((explanation.get("primary") or {}).get("text") or "")
+        primary_text = str((explanation.get("primary") or {}).get("text") or "")
+        variant_text = str((explanation.get("critic") or {}).get("text") or "")
     thesis_card = build_thesis_card(
         analysis,
         pack,
@@ -522,6 +521,23 @@ async def create_research_rebalance_draft(
             max_liquidity_participation=body.max_liquidity_participation,
         ),
     )
+    # S1/S4：用**冻结决策卡**的增仓门禁再挡一道 —— 关键数据缺失、引用无效、方法不适用时，
+    # 不允许生成任何新增订单（草案仍然展示风险检查，但 proposed_order 强制为空）。
+    # 历史记录若没有结构化决策卡，同样不放行：缺结构就是缺依据。
+    frozen_card = card_from_payload(run.thesis_card) if run.thesis_card else None
+    thesis_gate = (
+        position_gate(frozen_card, current_weight=round(current_weight, 6))
+        if frozen_card is not None
+        else {
+            "allowed": False,
+            "blockers": ["该研究记录没有冻结的结构化决策卡，不能作为增仓依据"],
+            "note": "历史记录缺少结构化论点；请用新版流程创建研究记录后再生成草案",
+            "current_weight": round(current_weight, 6),
+        }
+    )
+    if not thesis_gate["allowed"]:
+        draft = {**draft, "proposed_order": None}
+
     return {
         "research_run": _summary(run),
         "account": {
@@ -538,6 +554,7 @@ async def create_research_rebalance_draft(
         },
         "constraints": body.model_dump(),
         **draft,
+        "thesis_gate": thesis_gate,
         "disclaimer": "调仓草案只用于研究与模拟，不构成投资建议，也不会自动提交任何订单。",
     }
 

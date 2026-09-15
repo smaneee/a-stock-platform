@@ -166,7 +166,14 @@ export interface InvestmentExplainResponse {
     missing?: string[];
     validation?: { passed: boolean; unverified_numbers?: string[] };
     message?: string;
+    mode?: string;
+    critic?: { status?: string; text?: string; validation?: { passed: boolean } };
+    critic_passed?: boolean;
   };
+  /** S1：结构化研究决策卡 */
+  thesis_card?: ThesisCard;
+  /** S1：增仓门禁（缺关键数据/引用无效/方法不适用 → 不允许） */
+  position_gate?: ThesisPositionGate;
   boundary: string;
 }
 
@@ -274,6 +281,73 @@ export interface RealtimeWinRateResponse {
     conditions_used: string[];
   };
   disclaimer: string;
+}
+
+/** S1 结构化研究决策卡（字段与后端 ThesisCard 一一对应）。 */
+export interface ThesisCard {
+  symbol: string;
+  name: string;
+  strategy_type: "quality_value" | "cyclical_recovery" | "event_driven" | "trend";
+  strategy_label: string;
+  horizon: string;
+  return_source: string;
+  as_of: string;
+  thesis: string;
+  variant_view: string;
+  supporting_evidence_ids: string[];
+  opposing_evidence_ids: string[];
+  assumptions: Record<string, unknown>;
+  valuation_method: {
+    available?: boolean;
+    applicable?: boolean;
+    model?: string | null;
+    caveat?: string | null;
+    basis?: string;
+  };
+  scenario_result_ids: string[];
+  invalidation_conditions: string[];
+  review_triggers: string[];
+  missing_data: string[];
+  decision:
+    | "insufficient_data"
+    | "watch"
+    | "await_validation"
+    | "research_candidate"
+    | "not_applicable";
+  decision_label: string;
+  confidence_basis: {
+    quality_score?: number | null;
+    quality_coverage?: number | null;
+    evidence_confidence?: number | null;
+    not_a_probability?: string;
+  };
+  model_version: string;
+  prompt_version: string;
+  citations_valid: boolean;
+  citation_report: {
+    invalid_ids?: string[];
+    unverified_numbers?: string[];
+    ids?: Record<string, unknown>;
+    numbers?: Record<string, unknown>;
+  };
+  gaps: string[];
+  model_usage: {
+    total_tokens?: number | null;
+    prompt_tokens?: number | null;
+    completion_tokens?: number | null;
+    latency_ms?: number | null;
+    note?: string;
+  };
+  evidence_refs: Array<Record<string, unknown>>;
+  text_origin: string;
+}
+
+/** 增仓门禁结果（缺关键数据/引用无效/方法不适用 → allowed=false）。 */
+export interface ThesisPositionGate {
+  allowed: boolean;
+  blockers: string[];
+  note: string;
+  current_weight?: number | null;
 }
 
 /** 自动复核提醒（收盘后扫描落库的待办）。 */

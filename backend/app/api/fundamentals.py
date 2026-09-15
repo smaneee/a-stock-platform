@@ -31,7 +31,7 @@ from app.explain.deepseek import (
     ExplainerConfig,
     build_evidence_pack,
 )
-from app.research.thesis import build_thesis_card, position_gate
+from app.research.thesis import CRITIC_PROMPT, build_thesis_card, position_gate
 from app.research.thesis import StrategyType  # noqa: E402
 from app.fundamentals.decision import (
     DecisionInputs,
@@ -586,6 +586,8 @@ class ExplainRequest(AnalysisRequest):
     #: S1：策略类型必须显式声明（quality_value/cyclical_recovery/event_driven/trend），
     #: 不自动推断，避免用长期估值结论替短线判断辩护
     strategy_type: StrategyType | None = None
+    #: 是否同时跑独立反方审查（决策卡需要 variant_view 与反对证据 id）
+    include_critic: bool = True
     """在统一分析之上，请求一段**有引用的解释**（数字仍全部来自确定性计算）。"""
 
     question: str = Field(default="", max_length=500)
@@ -659,7 +661,17 @@ async def post_explain(
     analysis = post_analysis(symbol, payload, db)
     pack = build_evidence_pack(analysis, generated_at=now_cst().isoformat())
     started = time.perf_counter()
-    explanation = await _explainer().explain(pack, question=payload.question or None)
+    explainer = _explainer()
+    explanation = await explainer.explain(pack, question=payload.question or None)
+    critic: dict = {}
+    if payload.include_critic and explanation.get("status") == STATUS_OK:
+        critic = await explainer.explain(pack, question=CRITIC_PROMPT)
+        explanation = {
+            **explanation,
+            "mode": "independent_dual_review",
+            "critic": critic,
+            "critic_passed": bool((critic.get("validation") or {}).get("passed")),
+        }
     latency_ms = round((time.perf_counter() - started) * 1000, 1)
     usage = dict(explanation.get("usage") or {})
     usage["latency_ms"] = latency_ms
@@ -670,7 +682,6 @@ async def post_explain(
     variant_text = ""
     if explanation.get("status") == STATUS_OK:
         primary_text = str(explanation.get("text") or "")
-        critic = explanation.get("critic") or {}
         variant_text = str(critic.get("text") or "")
     card = build_thesis_card(
         analysis,
