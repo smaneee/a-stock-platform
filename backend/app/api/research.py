@@ -44,6 +44,7 @@ from app.research.preregistration import (
     summarize_correction,
 )
 from app.research.integrity import run_audit
+from app.research.outcome import classify_review_outcome
 from app.research.review import build_review
 from app.research.thesis import (
     CRITIC_PROMPT,
@@ -631,9 +632,21 @@ def review_investment_research_run(
         current_analysis=current_analysis,
         today=today,
     )
+    # S4 / 方案 §三：把"要不要重新研究"进一步**归因**
+    # （判断错误 / 事实变化 / 估值变化 / 仓位问题 / 执行偏差 / 随机波动）
+    outcome = classify_review_outcome(
+        run=_detail(row),
+        current_snapshot=current_snapshot,
+        current_analysis=current_analysis,
+        changes=(review.get("diff") or {}).get("changes") or [],
+        structured_conditions=(current_analysis.get("6_open_items") or {}).get(
+            "structured_conditions"
+        ),
+    )
     return {
         "run": _summary(row),
         "previous_run": _summary(previous) if previous is not None else None,
+        "outcome": outcome.to_dict(),
         "current": {
             "snapshot": current_snapshot,
             "conclusion_key": (current_analysis.get("1_conclusion") or {}).get("conclusion_key"),
