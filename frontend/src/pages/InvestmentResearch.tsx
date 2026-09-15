@@ -314,7 +314,24 @@ export default function InvestmentResearchPage() {
               </div>
             ))}
           </div>
-          {review.data && reviewedId !== null ? <div className="mt-3 rounded border border-sky-900 bg-sky-950/20 p-3 text-sm text-slate-300"><div className="font-medium text-sky-300">复核记录 #{review.data.run.id}：{review.data.needs_review === null ? "无法复核（缺少当前快照）" : review.data.needs_review ? `需要重新研究（触发 ${review.data.fired_count ?? review.data.fired_triggers.length} 项）` : "暂不需要重新研究"}</div>{review.data.fired_triggers.length ? <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-200">{review.data.fired_triggers.map((t) => <li key={t.name}>[{t.severity}] {t.label}：{t.detail}</li>)}</ul> : <p className="mt-2 text-xs text-slate-500">所有触发条件均未满足。</p>}<div className="mt-2 text-xs text-slate-400">{review.data.diff.summary}{review.data.has_previous_run ? "" : "（无上一条记录，已与当前重算结果对照）"}</div>{review.data.diff.changes.length ? <ul className="mt-2 space-y-1 text-xs text-slate-400">{review.data.diff.changes.slice(0, 8).map((c) => <li key={c.field}><span className="text-slate-600">[{c.importance}]</span> {c.label}：{String(c.before)} → {String(c.after)}</li>)}</ul> : null}<p className="mt-2 text-xs text-slate-500">{review.data.note}{review.data.disclaimer ? ` ${review.data.disclaimer}` : ""}</p></div> : null}
+          {review.data && reviewedId !== null ? <div className="mt-3 rounded border border-sky-900 bg-sky-950/20 p-3 text-sm text-slate-300">
+            <div className="font-medium text-sky-300">复核记录 #{review.data.run.id}：{review.data.needs_review === null ? "无法复核（缺少当前快照）" : review.data.needs_review ? `需要重新研究（触发 ${review.data.fired_count ?? review.data.fired_triggers.length} 项）` : "暂不需要重新研究"}</div>
+            {review.data.outcome ? (
+              <div className={`mt-2 rounded border p-2 text-xs ${review.data.outcome.thesis_level ? "border-amber-800 bg-amber-950/20 text-amber-200" : "border-slate-700 bg-slate-950/40 text-slate-300"}`}>
+                <div className="font-medium">
+                  归因：{review.data.outcome.label}
+                  <span className="ml-2 opacity-70">{review.data.outcome.thesis_level ? "（论点层面）" : "（价格/仓位/执行层面）"}</span>
+                </div>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {review.data.outcome.reasons.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              </div>
+            ) : null}
+            {review.data.fired_triggers.length ? <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-200">{review.data.fired_triggers.map((t) => <li key={t.name}>[{t.severity}] {t.label}：{t.detail}</li>)}</ul> : <p className="mt-2 text-xs text-slate-500">所有触发条件均未满足。</p>}
+            <div className="mt-2 text-xs text-slate-400">{review.data.diff.summary}{review.data.has_previous_run ? "" : "（无上一条记录，已与当前重算结果对照）"}</div>
+            {review.data.diff.changes.length ? <ul className="mt-2 space-y-1 text-xs text-slate-400">{review.data.diff.changes.slice(0, 8).map((c) => <li key={c.field}><span className="text-slate-600">[{c.importance}]</span> {c.label}：{String(c.before)} → {String(c.after)}</li>)}</ul> : null}
+            <p className="mt-2 text-xs text-slate-500">{review.data.note}{review.data.disclaimer ? ` ${review.data.disclaimer}` : ""}</p>
+          </div> : null}
         </section>
       ) : null}
 

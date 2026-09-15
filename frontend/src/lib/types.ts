@@ -275,6 +275,25 @@ export interface InvestmentReview {
   };
   note: string;
   disclaimer?: string;
+  /** 复核归因（方案 §三）：判断错误/事实变化/估值变化/仓位问题/执行偏差/随机波动 */
+  outcome?: InvestmentReviewOutcome;
+}
+
+/** 复核归因结果：只做归因，不预测涨跌 */
+export interface InvestmentReviewOutcome {
+  key:
+    | "thesis_invalidated"
+    | "fact_changed"
+    | "valuation_drift"
+    | "position_constraint"
+    | "execution_gap"
+    | "noise"
+    | "inconclusive";
+  label: string;
+  reasons: string[];
+  evidence: Record<string, unknown>;
+  /** true = 论点层面（判断错误/事实变化）；false = 价格/仓位/执行层面 */
+  thesis_level: boolean;
 }
 
 /** 首页「赚钱率前五」：样本内历史回放胜率排名（不是未来上涨概率）。 */
