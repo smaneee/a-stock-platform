@@ -12,10 +12,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.config import PROJECT_DIR
@@ -32,6 +34,7 @@ from app.api.fundamentals import (
 from app.database.models import InvestmentResearchRun
 from app.database.session import get_db
 from app.explain.deepseek import build_evidence_pack
+from app.fundamentals.repository import latest_snapshot
 from app.market_rules.session_state import now_cst
 from app.research.preregistration import (
     MULTIPLE_COMPARISON_METHODS,
@@ -39,6 +42,7 @@ from app.research.preregistration import (
     adjust_pvalues,
     summarize_correction,
 )
+from app.research.review import build_review
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +171,29 @@ def _detail(row: InvestmentResearchRun) -> dict:
     }
 
 
+def _commit_with_lock_retry(db: Session, *, attempts: int = 3, delay: float = 0.5) -> None:
+    """提交研究记录，对 SQLite 写锁做**有限重试**。
+
+    为什么需要（2026-09-15 实测）：创建研究记录时遇到
+    ``sqlite3.OperationalError: database is locked`` → 接口直接 500。
+    原因是后台 worker（组合回测轮询等）与请求写入争用同一把写锁。研究记录**是不可变的
+    审计记录**，一次瞬时锁冲突就丢掉整次重算（含数十秒的模型调用）代价太高，
+    因此对"锁"这一类瞬时错误做有限重试；其他错误照旧抛出，不掩盖真实缺陷。
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            db.commit()
+            return
+        except OperationalError as exc:
+            db.rollback()
+            locked = "locked" in str(exc).lower()
+            if not locked or attempt == attempts:
+                logger.warning("研究记录提交失败（第 %s 次）：%s", attempt, exc)
+                raise
+            logger.warning("研究记录提交遇到写锁，%s 秒后重试（第 %s 次）", delay * attempt, attempt)
+            time.sleep(delay * attempt)
+
+
 def _merge_dual_review(primary: dict, critic: dict) -> dict:
     """合并两次独立审查；任一轮失败都不能伪装成完整通过。"""
     statuses = [str(primary.get("status") or "error"), str(critic.get("status") or "error")]
@@ -280,7 +307,7 @@ async def create_investment_research_run(
         explanation=explanation,
     )
     db.add(row)
-    db.commit()
+    _commit_with_lock_retry(db)
     db.refresh(row)
     return _detail(row)
 
@@ -307,3 +334,74 @@ def get_investment_research_run(
     if row is None:
         raise HTTPException(status_code=404, detail=f"未找到研究记录：{run_id}")
     return _detail(row)
+
+
+@router.get("/runs/{run_id}/review")
+def review_investment_research_run(
+    run_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """复核某条研究记录：**是否需要重新研究**、触发了哪些条件、与上次记录有哪些差异。
+
+    复核不做任何写操作：当前值由服务端**重新计算**（同一套确定性代码），
+    只读快照表与冻结记录；没有记录、快照缺失时如实说明，不猜。
+    """
+    row = db.get(InvestmentResearchRun, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"未找到研究记录：{run_id}")
+
+    snapshot = latest_snapshot(db, row.symbol)
+    if snapshot is None:
+        return {
+            "run": _summary(row),
+            "needs_review": None,
+            "note": (
+                f"库里没有 {row.symbol} 的当前基本面快照，无法重算当前状态 → "
+                "不给出复核结论（缺数据就是缺数据），请先刷新快照"
+            ),
+        }
+
+    today = now_cst().date()
+    current_snapshot = {
+        "symbol": snapshot.symbol,
+        "name": snapshot.name,
+        "snapshot_date": snapshot.snapshot_date.isoformat(),
+        "report_date": snapshot.report_date.isoformat() if snapshot.report_date else None,
+        "price": snapshot.price,
+        "source": snapshot.source,
+    }
+    # 用**冻结时保存的同一套假设**重算当前分析：这样差异只来自数据变化，而不是假设变化
+    frozen_assumptions = row.assumptions or {}
+    valuation_body = frozen_assumptions.get("valuation") or {}
+    analysis_request = AnalysisRequest(
+        valuation=ValuationRequest(**valuation_body) if valuation_body else None,
+        portfolio=PortfolioContextRequest(horizon=frozen_assumptions.get("horizon") or ""),
+    )
+    current_analysis = post_analysis(row.symbol, analysis_request, db)
+    previous = (
+        db.query(InvestmentResearchRun)
+        .filter(
+            InvestmentResearchRun.symbol == row.symbol,
+            InvestmentResearchRun.id < row.id,
+        )
+        .order_by(InvestmentResearchRun.id.desc())
+        .first()
+    )
+    review = build_review(
+        _detail(row),
+        previous=_detail(previous) if previous is not None else None,
+        current_snapshot=current_snapshot,
+        current_analysis=current_analysis,
+        today=today,
+    )
+    return {
+        "run": _summary(row),
+        "previous_run": _summary(previous) if previous is not None else None,
+        "current": {
+            "snapshot": current_snapshot,
+            "conclusion_key": (current_analysis.get("1_conclusion") or {}).get("conclusion_key"),
+        },
+        **review,
+        "immutability_note": "复核只读；要记录新判断请创建新的研究记录（旧的不会被覆盖）",
+        "disclaimer": "复核提醒只说明'该重新看一遍'，不构成投资建议。",
+    }

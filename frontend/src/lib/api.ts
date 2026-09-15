@@ -66,6 +66,7 @@ import type {
   StatementDetailRefreshResponse,
   InvestmentResearchRun,
   InvestmentResearchRunSummary,
+  InvestmentReview,
 } from "./types";
 import { authHeaders, getToken, setToken } from "./auth";
 
@@ -203,6 +204,10 @@ export const listInvestmentResearch = (symbol: string, limit = 10) =>
   request<{ count: number; items: InvestmentResearchRunSummary[] }>("/research/runs", {
     params: { symbol, limit },
   });
+
+/** 复核某条研究记录：是否该重新研究、触发条件、与上次记录的差异（只读）。 */
+export const fetchInvestmentReview = (runId: number) =>
+  request<InvestmentReview>(`/research/runs/${runId}/review`);
 
 // ---------- 股票筛选 ----------
 

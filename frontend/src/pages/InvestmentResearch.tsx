@@ -5,6 +5,7 @@ import {
   analyzeInvestment,
   explainInvestment,
   fetchFundamentalDetail,
+  fetchInvestmentReview,
   listInvestmentResearch,
   refreshStatementDetail,
   reverseValuation,
@@ -106,6 +107,12 @@ export default function InvestmentResearchPage() {
     mutationFn: () => saveInvestmentResearch(symbol, valuation, horizon, question),
     onSuccess: () => researchHistory.refetch(),
   });
+  // 复核：只读接口，触发条件与差异都由后端确定性计算
+  const [reviewedId, setReviewedId] = useState<number | null>(null);
+  const review = useMutation({
+    mutationFn: (runId: number) => fetchInvestmentReview(runId),
+    onSuccess: (_data, runId) => setReviewedId(runId),
+  });
 
   const updateNumber = (key: keyof ValuationInput, value: string) => {
     setValuation((current) => ({ ...current, [key]: Number(value) }));
@@ -198,7 +205,7 @@ export default function InvestmentResearchPage() {
         </>
       ) : null}
 
-      {researchHistory.data?.items.length ? <section className={panel}><h2 className="font-medium">历史研究记录</h2><div className="mt-3 space-y-2">{researchHistory.data.items.map((run) => <div key={run.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-950/60 p-3 text-sm"><div><span className="text-sky-300">#{run.id}</span> {run.conclusion ?? run.conclusion_key}<div className="mt-1 text-xs text-slate-500">财报 {run.report_date ?? "—"} · 价格 ¥{num(run.price)} · {new Date(run.created_at).toLocaleString("zh-CN")}</div></div><div className="text-right text-xs text-slate-500">DeepSeek {run.explanation_status}<div className="font-mono">{run.fingerprint.slice(0, 12)}…</div></div></div>)}</div></section> : null}
+      {researchHistory.data?.items.length ? <section className={panel}><h2 className="font-medium">历史研究记录</h2><p className="mt-1 text-xs text-slate-500">记录一旦冻结不可修改；点「复核」让后端用当前数据重算，看是否需要重新研究、以及和上一条记录差在哪。</p><div className="mt-3 space-y-2">{researchHistory.data.items.map((run) => <div key={run.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-950/60 p-3 text-sm"><div><span className="text-sky-300">#{run.id}</span> {run.conclusion ?? run.conclusion_key}<div className="mt-1 text-xs text-slate-500">财报 {run.report_date ?? "—"} · 价格 ¥{num(run.price)} · {new Date(run.created_at).toLocaleString("zh-CN")}</div></div><div className="flex items-center gap-3 text-right text-xs text-slate-500"><div>DeepSeek {run.explanation_status}<div className="font-mono">{run.fingerprint.slice(0, 12)}…</div></div><button type="button" disabled={review.isPending} onClick={() => review.mutate(run.id)} className="rounded border border-sky-800 px-3 py-1 text-xs text-sky-300 hover:bg-sky-950 disabled:opacity-40">{review.isPending ? "复核中…" : "复核"}</button></div></div>)}</div>{review.data && reviewedId !== null ? <div className="mt-3 rounded border border-sky-900 bg-sky-950/20 p-3 text-sm text-slate-300"><div className="font-medium text-sky-300">复核记录 #{review.data.run.id}：{review.data.needs_review === null ? "无法复核（缺少当前快照）" : review.data.needs_review ? `需要重新研究（触发 ${review.data.fired_count ?? review.data.fired_triggers.length} 项）` : "暂不需要重新研究"}</div>{review.data.fired_triggers.length ? <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-200">{review.data.fired_triggers.map((t) => <li key={t.name}>[{t.severity}] {t.label}：{t.detail}</li>)}</ul> : <p className="mt-2 text-xs text-slate-500">所有触发条件均未满足。</p>}<div className="mt-2 text-xs text-slate-400">{review.data.diff.summary}{review.data.has_previous_run ? "" : "（无上一条记录，已与当前重算结果对照）"}</div>{review.data.diff.changes.length ? <ul className="mt-2 space-y-1 text-xs text-slate-400">{review.data.diff.changes.slice(0, 8).map((c) => <li key={c.field}><span className="text-slate-600">[{c.importance}]</span> {c.label}：{String(c.before)} → {String(c.after)}</li>)}</ul> : null}<p className="mt-2 text-xs text-slate-500">{review.data.note}{review.data.disclaimer ? ` ${review.data.disclaimer}` : ""}</p></div> : null}</section> : null}
     </div>
   );
 }

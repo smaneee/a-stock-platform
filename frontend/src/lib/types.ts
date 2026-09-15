@@ -185,6 +185,44 @@ export interface InvestmentResearchRunSummary {
   created_at: string;
 }
 
+/** 研究记录复核：是否需要重新研究、触发了哪些条件、与上次记录的差异。 */
+export interface InvestmentReviewChange {
+  field: string;
+  label: string;
+  before: unknown;
+  after: unknown;
+  direction: string;
+  importance: "high" | "medium" | "low";
+  note: string;
+}
+
+export interface InvestmentReviewTrigger {
+  name: string;
+  label: string;
+  fired: boolean;
+  detail: string;
+  severity: "high" | "medium" | "low";
+}
+
+export interface InvestmentReview {
+  run: InvestmentResearchRunSummary;
+  previous_run: InvestmentResearchRunSummary | null;
+  needs_review: boolean | null;
+  fired_count?: number;
+  fired_triggers: InvestmentReviewTrigger[];
+  all_triggers: InvestmentReviewTrigger[];
+  has_previous_run: boolean;
+  diff: {
+    changed_count: number;
+    summary: string;
+    changes: InvestmentReviewChange[];
+    material_changes: InvestmentReviewChange[];
+    baseline?: string;
+  };
+  note: string;
+  disclaimer?: string;
+}
+
 export interface InvestmentResearchRun extends InvestmentResearchRunSummary {
   assumptions: {
     valuation: ValuationInput;
