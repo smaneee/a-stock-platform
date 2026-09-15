@@ -43,6 +43,7 @@ from app.research.preregistration import (
     adjust_pvalues,
     summarize_correction,
 )
+from app.research.integrity import run_audit
 from app.research.review import build_review
 from app.research.thesis import (
     CRITIC_PROMPT,
@@ -647,6 +648,16 @@ def review_investment_research_run(
 #
 # 复核本身是只读的；自动化的价值在于"不用人记得去点"。收盘后定时任务扫描每个标的的最新
 # 记录，把触发的条件写进 research_review_reminders，形成可确认的待办列表。
+
+
+@router.get("/integrity-audit")
+def research_integrity_audit(db: Session = Depends(get_db)) -> dict:
+    """平台数据完整性审计：防未来数据、防虚构成交、防"只留成功案例"（只读）。
+
+    覆盖：成交是否只在交易日、K 线是否只在交易日、前向观察计数是否与日历一致、
+    研究记录时点是否自洽、证据页负结果是否保留且样本量是否达标。
+    """
+    return run_audit(db)
 
 
 @router.get("/reminders")

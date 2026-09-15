@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "artifact_updated_at": "2026-09-14",
+  "artifact_updated_at": "2026-09-15",
   "disclaimer": "本文件中的所有结论仅用于研究，不构成投资建议。任何条目都不得被手工隐藏或改写状态以通过展示；修改必须连同证据来源一起更新，并由 backend/tests/test_evidence_contract.py 校验。",
   "status_vocabulary": {
     "unverified": "未验证",
@@ -238,7 +238,7 @@
       "name": "模拟盘每日闭环与前向观察",
       "status": "unverified",
       "production_ready": false,
-      "data_cutoff": null,
+      "data_cutoff": "2026-09-13",
       "sample": {
         "forward_trading_days_accumulated": 0,
         "accounts": 2,
