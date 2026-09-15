@@ -857,3 +857,29 @@ class FundamentalSnapshot(Base):
     #: 自洽性告警（JSON 数组字符串），例如动态市盈率与自算值偏差过大
     warnings: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     fetched_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utc_now)
+
+
+class InvestmentResearchRun(Base):
+    """一次不可变的投资研究快照，用于日后复盘和比较论点变化。"""
+
+    __tablename__ = "investment_research_runs"
+    __table_args__ = (
+        Index("ix_investment_research_symbol_created", "symbol", "created_at"),
+        Index("ix_investment_research_fingerprint", "fingerprint"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(10), nullable=False)
+    name: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    report_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String(40), nullable=False)
+    conclusion_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    explanation_status: Mapped[str] = mapped_column(String(24), nullable=False, default="not_requested")
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    assumptions: Mapped[dict] = mapped_column(JSON, nullable=False)
+    analysis: Mapped[dict] = mapped_column(JSON, nullable=False)
+    reverse_valuation: Mapped[dict] = mapped_column(JSON, nullable=False)
+    explanation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utc_now)

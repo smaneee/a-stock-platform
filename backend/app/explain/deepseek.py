@@ -41,13 +41,15 @@ SYSTEM_PROMPT = """你是本机个人股票研究工具的**解释员**，不是
 4. 不得出现"稳赚/必涨/保证收益"等承诺性表述；不得给出买入/卖出指令。
 5. 结论必须区分：事实（财报直接给出）、估计（使用者输入）、模型推断（本平台计算得出）。
 6. 数据缺失、过期或模型不适用时，明确说"证据不足/暂不行动"，不要勉强给结论。
-7. 输出用中文，结构固定：①一句话结论与适用期限 ②数据时点与完整性 ③支持证据（最多 3 条，
-   每条带 id）④反对证据（最多 3 条，每条带 id）⑤未验证事项与复核触发条件。"""
+7. 使用投资委员会思维：分别检查企业质量、价格隐含预期、下行风险和证据缺口；优先寻找
+   能推翻当前论点的证据，并判断估值折价是否足以补偿风险，不能只复述质量分或目标价。
+8. 输出用中文，结构固定：①一句话结论与适用期限 ②数据时点与完整性 ③支持证据（最多 3 条，
+   每条带 id）④最强反对证据（最多 3 条，每条带 id）⑤未验证事项、论点失效条件与复核触发器。"""
 
 #: 从模型输出里抓数字（含百分号、负号、千分位）
-NUMBER_RE = re.compile(r"-?\d[\d,]*\.?\d*")
-#: 证据包里允许出现的"结构性小整数"（如情景序号、年份、条数），不算编造
-SMALL_INT_LIMIT = 3000
+NUMBER_RE = re.compile(r"[-−]?\d[\d,]*\.?\d*")
+#: 固定输出结构最多 7 节；只豁免这些项目编号，年份必须真实出现在证据包。
+STRUCTURAL_INTEGERS = frozenset(range(1, 8))
 #: 数字比对容差（相对）
 TOLERANCE = 0.01
 
@@ -77,17 +79,31 @@ class EvidencePack:
         }
 
     def allowed_numbers(self) -> set[float]:
-        """允许在解释里出现的数字集合（来自事实与计算，含格式化后的原值）。"""
+        """允许数字集合：递归扫描整个冻结证据包，日期和约束也可被准确引用。"""
         allowed: set[float] = set()
-        for block in (self.facts, self.calculations):
-            for item in block:
-                for key in ("value", "per_share", "upside", "score"):
-                    raw = item.get(key)
-                    if isinstance(raw, (int, float)):
-                        allowed.add(float(raw))
-                for raw in (item.get("components") or {}).values():
-                    if isinstance(raw, (int, float)):
-                        allowed.add(float(raw))
+
+        def collect(value: Any) -> None:
+            if isinstance(value, bool) or value is None:
+                return
+            if isinstance(value, (int, float)):
+                allowed.add(float(value))
+                return
+            if isinstance(value, str):
+                for raw in NUMBER_RE.findall(value):
+                    try:
+                        allowed.add(float(raw.replace(",", "")))
+                    except ValueError:
+                        pass
+                return
+            if isinstance(value, dict):
+                for child in value.values():
+                    collect(child)
+                return
+            if isinstance(value, (list, tuple)):
+                for child in value:
+                    collect(child)
+
+        collect(self.to_payload())
         return allowed
 
 
@@ -99,6 +115,17 @@ def build_evidence_pack(analysis: dict, *, generated_at: str) -> EvidencePack:
     data_asof = analysis.get("2_data_asof") or {}
 
     facts: list[dict] = []
+    if data_asof.get("price") is not None:
+        facts.append(
+            {
+                "id": "fact:market_price",
+                "label": "快照现价",
+                "value": data_asof.get("price"),
+                "unit": "元/股",
+                "origin": "事实",
+                "source": data_asof.get("source"),
+            }
+        )
     for key, sub in (quality.get("subscores") or {}).items():
         if sub.get("value") is None:
             continue
@@ -152,6 +179,8 @@ def build_evidence_pack(analysis: dict, *, generated_at: str) -> EvidencePack:
                 "unit": "元/股",
                 "formula": result.get("formula"),
                 "overrides": scenario.get("overrides"),
+                "assumptions": result.get("assumptions"),
+                "cash_flows": result.get("cash_flows"),
             }
         )
 
@@ -168,6 +197,21 @@ def build_evidence_pack(analysis: dict, *, generated_at: str) -> EvidencePack:
             f"结论键：{conclusion.get('conclusion_key')}",
             f"数据报告期：{data_asof.get('report_date')}，滞后 {data_asof.get('staleness_days')} 天",
             f"模型适用性：{(valuation.get('applicability') or {}).get('caveat')}",
+            "支持证据：" + "；".join(
+                str(item.get("evidence")) for item in (analysis.get("4_evidence") or {}).get("support", [])
+            ),
+            "反对证据：" + "；".join(
+                str(item.get("evidence")) for item in (analysis.get("4_evidence") or {}).get("oppose", [])
+            ),
+            "尚未验证：" + "；".join(
+                str(item) for item in (analysis.get("6_open_items") or {}).get("unverified", [])
+            ),
+            "论点失效条件：" + "；".join(
+                str(item) for item in (analysis.get("6_open_items") or {}).get("invalidation_conditions", [])
+            ),
+            "复核触发器：" + "；".join(
+                str(item) for item in (analysis.get("6_open_items") or {}).get("review_triggers", [])
+            ),
         ],
     )
 
@@ -175,18 +219,18 @@ def build_evidence_pack(analysis: dict, *, generated_at: str) -> EvidencePack:
 def validate_citations(text: str, pack: EvidencePack) -> dict:
     """校验解释里的数字是否都能追溯到证据包。
 
-    允许：证据包里的数值（相对误差 1% 内）、小于等于 3000 的整数（年份/条数/序号等结构量）。
+    允许：证据包里的数值（相对误差 1% 内）和固定结构的 1–7 项编号。
     不允许：任何其他数字 —— 那意味着模型自己造了数。
     """
     allowed = pack.allowed_numbers()
     unverified: list[str] = []
     for raw in NUMBER_RE.findall(text or ""):
-        cleaned = raw.replace(",", "")
+        cleaned = raw.replace(",", "").replace("−", "-")
         try:
             value = float(cleaned)
         except ValueError:
             continue
-        if value.is_integer() and abs(value) <= SMALL_INT_LIMIT:
+        if value.is_integer() and int(value) in STRUCTURAL_INTEGERS:
             continue
         if not any(
             abs(value - candidate) <= max(TOLERANCE * abs(candidate), 1e-9)
@@ -309,6 +353,14 @@ class DeepSeekExplainer:
 
         choices = body.get("choices") or []
         text = ((choices[0] if choices else {}).get("message") or {}).get("content", "")
+        if not isinstance(text, str) or not text.strip():
+            return {
+                "status": STATUS_ERROR,
+                "error": "empty_model_output",
+                "note": "模型耗尽输出额度或返回空正文；不把空内容标记为审查通过",
+                "usage": body.get("usage") or {},
+                "model": self.config.model,
+            }
         validation = validate_citations(text, pack)
         usage = body.get("usage") or {}
         result = {

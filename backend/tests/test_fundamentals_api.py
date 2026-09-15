@@ -11,6 +11,7 @@ from app.fundamentals import eastmoney_fundamentals as ef
 from app.fundamentals.eastmoney_fundamentals import FetchStats, parse_fundamentals
 from app.fundamentals.repository import upsert_snapshots
 from app.fundamentals.statement_details import StatementDetail
+from app.api.research import _merge_dual_review
 
 #: 000333 的真实接口返回值（已用 akshare 财务摘要交叉核对）
 MEIDE = {
@@ -238,6 +239,54 @@ def test_partial_fetch_is_reported_as_incomplete(client, monkeypatch):
     body = client.post("/api/fundamentals/refresh", json={"max_pages": 2}).json()
     assert body["fetched"]["complete"] is False
     assert body["fetched"]["failures"]
+
+
+def test_research_run_freezes_inputs_analysis_and_fingerprint(client, seeded):
+    response = client.post(
+        "/api/research/runs?symbol=000333",
+        json={
+            "valuation": VALUATION_BODY,
+            "horizon": "3 年以上",
+            "question": "只引用已有证据",
+            "include_explanation": False,
+        },
+    )
+    assert response.status_code == 200
+    created = response.json()
+    assert created["symbol"] == "000333"
+    assert created["assumptions"]["valuation"]["discount_rate"] == 0.10
+    assert created["analysis"]["1_conclusion"]["conclusion_key"]
+    assert created["reverse_valuation"]["status"] == "solved"
+    assert created["explanation_status"] == "not_requested"
+    assert len(created["fingerprint"]) == 64
+    assert "不提供修改接口" in created["immutability_note"]
+
+    listing = client.get("/api/research/runs?symbol=000333").json()
+    assert listing["count"] == 1
+    assert listing["items"][0]["fingerprint"] == created["fingerprint"]
+    loaded = client.get(f"/api/research/runs/{created['id']}").json()
+    assert loaded["analysis"] == created["analysis"]
+
+
+def test_research_run_requires_existing_snapshot(client):
+    response = client.post(
+        "/api/research/runs?symbol=999999",
+        json={"valuation": VALUATION_BODY, "include_explanation": False},
+    )
+    assert response.status_code == 404
+
+
+def test_dual_review_only_passes_when_both_independent_reviews_pass():
+    passed = {"status": "ok", "text": "有据主审", "validation": {"passed": True}}
+    critic = {"status": "ok", "text": "有据反方", "validation": {"passed": True}}
+    merged = _merge_dual_review(passed, critic)
+    assert merged["status"] == "ok"
+    assert merged["validation"]["passed"] is True
+    assert "主审意见" in merged["text"] and "独立反方意见" in merged["text"]
+
+    failed = _merge_dual_review(passed, {"status": "error", "text": ""})
+    assert failed["status"] == "error"
+    assert failed["validation"]["passed"] is False
 
 
 def test_request_fields_only_verified_ones():

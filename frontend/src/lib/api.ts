@@ -64,6 +64,8 @@ import type {
   ReverseValuationResponse,
   ValuationInput,
   StatementDetailRefreshResponse,
+  InvestmentResearchRun,
+  InvestmentResearchRunSummary,
 } from "./types";
 import { authHeaders, getToken, setToken } from "./auth";
 
@@ -185,6 +187,22 @@ export const explainInvestment = (
       body: JSON.stringify({ valuation, portfolio: { horizon }, question }),
     },
   );
+
+export const saveInvestmentResearch = (
+  symbol: string,
+  valuation: ValuationInput,
+  horizon: string,
+  question: string,
+) => request<InvestmentResearchRun>("/research/runs", {
+  method: "POST",
+  params: { symbol },
+  body: JSON.stringify({ valuation, horizon, question, include_explanation: true }),
+});
+
+export const listInvestmentResearch = (symbol: string, limit = 10) =>
+  request<{ count: number; items: InvestmentResearchRunSummary[] }>("/research/runs", {
+    params: { symbol, limit },
+  });
 
 // ---------- 股票筛选 ----------
 

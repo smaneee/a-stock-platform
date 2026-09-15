@@ -194,13 +194,34 @@ def test_invented_number_rejects_the_whole_explanation():
     assert "只展示确定性结果" in result["note"]
 
 
+def test_empty_model_output_is_error_not_false_success():
+    import asyncio
+
+    pack = build_evidence_pack(_analysis_payload(), generated_at="now")
+    fake = _FakeClient(_answer(""))
+    explainer = DeepSeekExplainer(_config(), client_factory=_fake_factory(fake))
+    result = asyncio.run(explainer.explain(pack))
+    assert result["status"] == STATUS_ERROR
+    assert result["error"] == "empty_model_output"
+    assert "不把空内容标记" in result["note"]
+
+
 def test_validate_citations_allows_structure_integers_only():
-    pack = EvidencePack("000333", "美的集团", "now",
+    pack = EvidencePack("000333", "美的集团", "2026-09-14",
                         facts=[{"id": "fact:roe", "value": 11.33}])
     ok = validate_citations("2026 年的净资产收益率为 11.33%", pack)
     assert ok["passed"] is True
     bad = validate_citations("净资产收益率为 12.5%", pack)
     assert bad["passed"] is False
+    assert validate_citations("预计增长 50%", pack)["passed"] is False
+
+
+def test_validate_citations_understands_unicode_minus_sign():
+    pack = EvidencePack(
+        "000333", "美的集团", "now",
+        calculations=[{"id": "calc:downside", "value": -0.4814}],
+    )
+    assert validate_citations("悲观偏离 −0.4814（calc:downside）", pack)["passed"] is True
 
 
 def test_http_error_and_timeout_are_reported_not_cached():

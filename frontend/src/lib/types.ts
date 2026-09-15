@@ -170,6 +170,34 @@ export interface InvestmentExplainResponse {
   boundary: string;
 }
 
+export interface InvestmentResearchRunSummary {
+  id: number;
+  symbol: string;
+  name: string;
+  snapshot_date: string;
+  report_date: string | null;
+  price: number | null;
+  source: string;
+  conclusion_key: string;
+  conclusion: string | null;
+  explanation_status: string;
+  fingerprint: string;
+  created_at: string;
+}
+
+export interface InvestmentResearchRun extends InvestmentResearchRunSummary {
+  assumptions: {
+    valuation: ValuationInput;
+    horizon: string;
+    question: string;
+    include_explanation: boolean;
+  };
+  analysis: InvestmentAnalysisResponse;
+  reverse_valuation: ReverseValuationResponse;
+  explanation: InvestmentExplainResponse["explanation"] | null;
+  immutability_note: string;
+}
+
 export interface Watchlist {
   id: number;
   name: string;

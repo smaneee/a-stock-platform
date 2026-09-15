@@ -5,8 +5,10 @@ import {
   analyzeInvestment,
   explainInvestment,
   fetchFundamentalDetail,
+  listInvestmentResearch,
   refreshStatementDetail,
   reverseValuation,
+  saveInvestmentResearch,
 } from "../lib/api";
 import type { InvestmentEvidenceItem, ValuationInput } from "../lib/types";
 
@@ -57,6 +59,11 @@ export default function InvestmentResearchPage() {
     queryFn: () => fetchFundamentalDetail(symbol),
     retry: false,
   });
+  const researchHistory = useQuery({
+    queryKey: ["investment-research-history", symbol],
+    queryFn: () => listInvestmentResearch(symbol),
+    enabled: Boolean(detail.data),
+  });
 
   useEffect(() => {
     const snapshot = detail.data?.snapshot;
@@ -95,6 +102,10 @@ export default function InvestmentResearchPage() {
   const explanation = useMutation({
     mutationFn: () => explainInvestment(symbol, valuation, horizon, question),
   });
+  const saveRun = useMutation({
+    mutationFn: () => saveInvestmentResearch(symbol, valuation, horizon, question),
+    onSuccess: () => researchHistory.refetch(),
+  });
 
   const updateNumber = (key: keyof ValuationInput, value: string) => {
     setValuation((current) => ({ ...current, [key]: Number(value) }));
@@ -105,12 +116,13 @@ export default function InvestmentResearchPage() {
     setSymbol(normalized);
     analysis.reset();
     explanation.reset();
+    saveRun.reset();
   };
 
   const snapshot = detail.data?.snapshot;
   const report = analysis.data?.report;
   const reverse = analysis.data?.reverse;
-  const error = detail.error ?? statements.error ?? analysis.error ?? explanation.error;
+  const error = detail.error ?? statements.error ?? analysis.error ?? explanation.error ?? saveRun.error;
   const errorText = error instanceof Error ? error.message : null;
   const fields: Array<[keyof ValuationInput, string, string]> = [
     ["revenue_growth", "基准增长率", "小数，例如 0.06 = 6%"],
@@ -182,9 +194,11 @@ export default function InvestmentResearchPage() {
           </section>
           <section className="grid gap-3 lg:grid-cols-2"><div className={panel}><h2 className="mb-3 font-medium text-emerald-300">支持证据</h2><EvidenceList items={report["4_evidence"].support} tone="good" /></div><div className={panel}><h2 className="mb-3 font-medium text-rose-300">反对证据</h2><EvidenceList items={report["4_evidence"].oppose} tone="bad" /></div></section>
           <section className="grid gap-3 lg:grid-cols-3"><div className={panel}><h2 className="mb-2 font-medium">尚未验证</h2><ul className="list-disc space-y-1 pl-5 text-sm text-slate-400">{report["6_open_items"].unverified.map((x) => <li key={x}>{x}</li>)}</ul></div><div className={panel}><h2 className="mb-2 font-medium">论点失效条件</h2><ul className="list-disc space-y-1 pl-5 text-sm text-slate-400">{report["6_open_items"].invalidation_conditions.map((x) => <li key={x}>{x}</li>)}</ul></div><div className={panel}><h2 className="mb-2 font-medium">复核触发器</h2><ul className="list-disc space-y-1 pl-5 text-sm text-slate-400">{report["6_open_items"].review_triggers.map((x) => <li key={x}>{x}</li>)}</ul></div></section>
-          <section className={panel}><h2 className="font-medium">DeepSeek 解释与反方审查</h2><textarea className={`${input} mt-3 min-h-20`} value={question} onChange={(e) => setQuestion(e.target.value)} /><button type="button" disabled={explanation.isPending} onClick={() => explanation.mutate()} className="mt-3 rounded bg-violet-600 px-5 py-2 text-sm hover:bg-violet-500 disabled:opacity-40">{explanation.isPending ? "正在审查…" : "让 DeepSeek 解读证据"}</button>{explanation.data ? <div className="mt-4 rounded bg-slate-950 p-4 text-sm leading-7 text-slate-300 whitespace-pre-wrap">{explanation.data.explanation.status === "ok" ? explanation.data.explanation.text : explanation.data.explanation.status === "rejected" ? `解释被证据门禁拦截：出现证据包外数字 ${explanation.data.explanation.validation?.unverified_numbers?.join("、") ?? "（详见接口结果）"}。确定性分析仍然有效。` : `解释层状态：${explanation.data.explanation.status}；缺少 ${explanation.data.explanation.missing?.join("、") ?? "可用连接"}`}</div> : null}<p className="mt-2 text-xs text-slate-500">只有通过数字引用校验的解释才会展示。模型不参与计算，也不能下单。</p></section>
+          <section className={panel}><h2 className="font-medium">DeepSeek 解释与反方审查</h2><textarea className={`${input} mt-3 min-h-20`} value={question} onChange={(e) => setQuestion(e.target.value)} /><div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={explanation.isPending} onClick={() => explanation.mutate()} className="rounded bg-violet-600 px-5 py-2 text-sm hover:bg-violet-500 disabled:opacity-40">{explanation.isPending ? "正在审查…" : "让 DeepSeek 解读证据"}</button><button type="button" disabled={saveRun.isPending} onClick={() => saveRun.mutate()} className="rounded border border-emerald-700 px-5 py-2 text-sm text-emerald-300 hover:bg-emerald-950 disabled:opacity-40">{saveRun.isPending ? "正在重算并冻结…" : "保存研究记录 + 反方审查"}</button></div>{explanation.data ? <div className="mt-4 rounded bg-slate-950 p-4 text-sm leading-7 text-slate-300 whitespace-pre-wrap">{explanation.data.explanation.status === "ok" ? explanation.data.explanation.text : explanation.data.explanation.status === "rejected" ? `解释被证据门禁拦截：出现证据包外数字 ${explanation.data.explanation.validation?.unverified_numbers?.join("、") ?? "（详见接口结果）"}。确定性分析仍然有效。` : `解释层状态：${explanation.data.explanation.status}；缺少 ${explanation.data.explanation.missing?.join("、") ?? "可用连接"}`}</div> : null}{saveRun.data ? <div className="mt-4 rounded border border-emerald-900 bg-emerald-950/30 p-3 text-sm text-emerald-200">已冻结研究记录 #{saveRun.data.id} · 指纹 {saveRun.data.fingerprint.slice(0, 12)}… · DeepSeek 状态 {saveRun.data.explanation_status}</div> : null}<p className="mt-2 text-xs text-slate-500">保存时服务端会重新计算，并冻结数据时点、全部假设、分析、反向估值和解释指纹。模型不参与计算，也不能下单。</p></section>
         </>
       ) : null}
+
+      {researchHistory.data?.items.length ? <section className={panel}><h2 className="font-medium">历史研究记录</h2><div className="mt-3 space-y-2">{researchHistory.data.items.map((run) => <div key={run.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-950/60 p-3 text-sm"><div><span className="text-sky-300">#{run.id}</span> {run.conclusion ?? run.conclusion_key}<div className="mt-1 text-xs text-slate-500">财报 {run.report_date ?? "—"} · 价格 ¥{num(run.price)} · {new Date(run.created_at).toLocaleString("zh-CN")}</div></div><div className="text-right text-xs text-slate-500">DeepSeek {run.explanation_status}<div className="font-mono">{run.fingerprint.slice(0, 12)}…</div></div></div>)}</div></section> : null}
     </div>
   );
 }
