@@ -217,9 +217,15 @@ if ($dbUrl -and $dbUrl -match '^sqlite') {
 # 3. Database migration
 Write-Host "Running alembic upgrade..."
 Set-Location $BackendDir
-& $venvPython -m alembic upgrade head
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "alembic upgrade head failed"
+# 实测事故：直接 `& python -m alembic` 时 alembic 把 INFO 写到 stderr，PowerShell 5.1 会把它
+# 包成 NativeCommandError，调用方看到的是「明明启动成功却 exit 1」。改用 Start-Process 重定向。
+New-Item -ItemType Directory -Force -Path $PidDir | Out-Null
+$alembic = Start-Process -FilePath $venvPython -ArgumentList "-m", "alembic", "upgrade", "head" `
+    -WorkingDirectory $BackendDir -NoNewWindow -Wait -PassThru `
+    -RedirectStandardOutput (Join-Path $PidDir "alembic.log") `
+    -RedirectStandardError (Join-Path $PidDir "alembic.err.log")
+if ($alembic.ExitCode -ne 0) {
+    Write-Error ("alembic upgrade head failed (exit {0})" -f $alembic.ExitCode)
     Write-Host "提示：若 backend\a_stock.db 是早期遗留库（表结构已是最新但 alembic_version 落后），" -ForegroundColor Yellow
     Write-Host "可先用 scripts\db_backup.py 备份，再删除该文件后重跑本脚本，让迁移从零建表。" -ForegroundColor Yellow
     Set-Location $RootDir
@@ -228,19 +234,29 @@ if ($LASTEXITCODE -ne 0) {
 Set-Location $RootDir
 
 # 4. Start backend
+# 实测事故（2026-09-15 19:34）：Start-Process 创建的子进程留在调用方的 Windows 作业对象里，
+# 调用方（自动化任务被回收 / 终端被关闭）结束时后端被连带杀掉，15:30 结算调度随之停摆。
+# 改为经 WMI 创建，进程归 WMI 提供程序所有；调用方退出后继续运行。
+# WMI 创建不继承本进程环境变量，因此按白名单显式透传脚本自己设过的那些。
 $backendLog = Join-Path $PidDir "backend.log"
-$backend = Start-Process -FilePath $venvPython `
-    -ArgumentList "-m","uvicorn","app.main:app","--host",$bindHost,"--port","$backendPort" `
-    -WorkingDirectory $BackendDir `
-    -RedirectStandardOutput $backendLog `
-    -RedirectStandardError (Join-Path $PidDir "backend.err.log") `
-    -WindowStyle Hidden -PassThru -ErrorAction Stop
-if (-not $backend -or -not $backend.Id) {
-    Write-Error "后端进程启动失败（Start-Process 未返回进程句柄）"
+$backendErr = Join-Path $PidDir "backend.err.log"
+$envNames = @("SERVE_STATIC", "HOST", "DATABASE_URL", "REQUIRE_AUTH", "ACCESS_PASSWORD",
+    "SESSION_SECRET", "PATH", "PYTHONIOENCODING", "LOG_LEVEL")
+$envSets = @()
+foreach ($name in $envNames) {
+    $value = [Environment]::GetEnvironmentVariable($name)
+    if ($value) { $envSets += ('set "{0}={1}"' -f $name, ($value -replace '"', '')) }
+}
+$inner = '{0} && cd /d "{1}" && "{2}" -m uvicorn app.main:app --host {3} --port {4} >> "{5}" 2>> "{6}"' -f `
+    ($envSets -join " && "), $BackendDir, $venvPython, $bindHost, $backendPort, $backendLog, $backendErr
+$spawn = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = "cmd.exe /c $inner" }
+if ($spawn.ReturnValue -ne 0 -or -not $spawn.ProcessId) {
+    Write-Error ("后端进程启动失败（Win32_Process.Create ReturnValue={0}）" -f $spawn.ReturnValue)
     exit 1
 }
-Set-Content -Path (Join-Path $PidDir "backend.pid") -Value $backend.Id
-Write-Host "Backend PID=$($backend.Id), waiting for readiness..."
+$backendPid = [int]$spawn.ProcessId
+Set-Content -Path (Join-Path $PidDir "backend.pid") -Value $backendPid
+Write-Host "Backend PID=$backendPid (WMI 脱离启动)，等待就绪..."
 
 # 5. Wait for /api/health/ready
 $readyOk = $false
@@ -255,8 +271,8 @@ for ($i = 1; $i -le 60; $i++) {
     } catch {
         $lastError = $_.Exception.Message
     }
-    if ($backend.HasExited) {
-        Write-Error ("Backend exited (code {0})" -f $backend.ExitCode)
+    if (-not (Get-Process -Id $backendPid -ErrorAction SilentlyContinue)) {
+        Write-Error ("Backend exited (wrapper PID {0} 已不在)" -f $backendPid)
         Get-Content $backendLog -Tail 30 | Write-Host
         exit 1
     }
@@ -265,10 +281,15 @@ for ($i = 1; $i -le 60; $i++) {
 if (-not $readyOk) {
     Write-Error ("Backend not ready in 60s: {0}" -f $lastError)
     Get-Content $backendLog -Tail 30 | Write-Host
-    Stop-Process -Id $backend.Id -Force -ErrorAction SilentlyContinue
+    & taskkill /T /F /PID $backendPid 2>&1 | Out-Null
     exit 1
 }
 Write-Host "Backend ready: http://127.0.0.1:8000/api/health/ready"
+# 就绪之后再记录 python 子进程 PID（创建包装进程的瞬间它还没起来，早查会得到空值）
+$pythonPid = (Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.ParentProcessId -eq $backendPid } | Select-Object -First 1).ProcessId
+Set-Content -Path (Join-Path $PidDir "backend.python.pid") -Value $pythonPid
+Write-Host "后端 python PID=$pythonPid（backend.pid 存包装进程，stop_all 用 taskkill /T 整树停止）"
 
 # 5.5 正式部署：前端由后端托管，不需要再起 Vite
 if ($Prod) {
