@@ -280,13 +280,25 @@
       "reproducible_on_this_machine": true,
       "evidence_source": "backend/a_stock.db（paper_accounts=2 / paper_positions=21 / paper_orders=33 / paper_trades=27 / paper_rebalance_plans=2 / daily_settlements=6；forward_observations 计数=0，含新旧两个冻结标签）；outputs/handoff/_paper_counts.py、_register_freeze_tag.py 可复核",
       "limitations": [
-        "闭环已跑通（10/10 成交、对账未解释差异 0.00），但前向交易日只计「严格晚于起点、已收盘（≥15:00）、为交易日」的日期，当前 0/60",
+        "2026-09-13 之前的模拟成交与建仓日落在非交易日（周日），属守卫修复前的历史遗留，已由审计单列",
+        "前向观察仍只有 1/60 个交易日，远不足以支持任何『已验证』结论",
         "工程闭环冻结后才开始累计；成交逻辑重大修改后必须重新计时（2026-09-14 因接入滑点与过户费已重新计时两次，旧标签计数均为 0，未损失观察日）",
         "模拟盘已与回测对齐**滑点与过户费**；**部分成交仍未建模**（回测有参与率上限、模拟盘一次性全额成交），成交假设尚未完全对齐",
-        "模拟盘成交按行情价格即时撮合，未模拟排队与部分成交的市场微观结构"
+        "模拟盘成交按行情价格即时撮合，未模拟排队与部分成交的市场微观结构",
+        "闭环已跑通（10/10 成交、对账未解释差异 0.00），但前向交易日只计「严格晚于起点、已收盘（≥15:00）、为交易日」的日期，当前 0/60"
       ],
       "failure_reason": "前向观察窗口刚开始（当前冻结标签 2026-09-14-paper-costs-v1），累计 0/60 —— 样本量不足，不能对策略是否有效下任何结论。",
-      "ui_rule": "不得用历史重放代替前向观察，也不得用开发截止日期倒推达标。"
+      "ui_rule": "不得用历史重放代替前向观察，也不得用开发截止日期倒推达标。",
+      "freeze_tag_history": [
+        {
+          "freeze_tag": "2026-09-14-paper-costs-v2",
+          "first_countable_day": "2026-09-15",
+          "first_counted_day_observed": "2026-09-15",
+          "trading_days_counted_at_2026_09_15": 1,
+          "target_trading_days": 60,
+          "verified_by": "2026-09-15 15:30（北京时间）日终结算后实测：GET /api/paper/forward-observation 返回 trading_days_counted=1、last_counted_day=2026-09-15、remaining=59；完整性审计的『前向观察天数与交易日历一致』检查亦为 0 违规"
+        }
+      ]
     }
   ]
 }
