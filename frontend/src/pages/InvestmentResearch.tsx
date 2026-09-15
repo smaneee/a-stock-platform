@@ -19,6 +19,7 @@ import {
 import type { InvestmentEvidenceItem, ResearchRebalanceConstraints, ValuationInput } from "../lib/types";
 import ThesisCardPanel from "../components/ThesisCardPanel";
 import ValuationApplicabilityPanel from "../components/ValuationApplicabilityPanel";
+import InfoTip from "../components/InfoTip";
 
 const panel = "rounded-lg border border-slate-800 bg-slate-900 p-4";
 const input = "w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none";
@@ -209,7 +210,12 @@ export default function InvestmentResearchPage() {
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold">投资决策工作台</h1>
-        <p className="mt-1 text-sm text-slate-400">从企业质量、证据可靠性、三情景价值和当前价格隐含预期四个角度研究。所有估值假设均可见，结果不构成投资建议。</p>
+        <p className="mt-1 text-sm text-slate-400">按“载入数据 → 设置假设 → 生成分析 → DeepSeek 审查 → 冻结记录 → 组合草案”完成研究。</p>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
+          {["1 载入数据", "2 设置假设", "3 生成分析", "4 AI 审查", "5 冻结记录", "6 组合草案"].map((step) => (
+            <span key={step} className="rounded-full border border-slate-800 bg-slate-900 px-3 py-1">{step}</span>
+          ))}
+        </div>
       </div>
 
       <form onSubmit={submitSymbol} className={`${panel} flex flex-wrap items-end gap-3`}>
@@ -232,15 +238,15 @@ export default function InvestmentResearchPage() {
           <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <div className={panel}><div className="text-xs text-slate-500">标的</div><div className="mt-1 text-lg">{snapshot.name} <span className="text-sm text-slate-400">{snapshot.symbol}</span></div><div className="text-xs text-slate-500">{snapshot.industry ?? "行业未知"}</div></div>
             <div className={panel}><div className="text-xs text-slate-500">现价</div><div className="mt-1 text-2xl text-sky-300">¥{num(snapshot.price)}</div><div className="text-xs text-slate-500">PE {num(snapshot.pe_dynamic)} · PB {num(snapshot.pb)}</div></div>
-            <div className={panel}><div className="text-xs text-slate-500">企业质量</div><div className="mt-1 text-2xl">{num(detail.data.quality.score, 1)}</div><div className="text-xs text-slate-500">{detail.data.quality.grade} · {detail.data.quality.profile_label}</div></div>
-            <div className={panel}><div className="text-xs text-slate-500">证据置信度</div><div className="mt-1 text-2xl">{num(detail.data.evidence_confidence.score, 1)}</div><div className="text-xs text-slate-500">{detail.data.evidence_confidence.label} · 不是上涨概率</div></div>
+            <div className={panel}><div className="text-xs text-slate-500">企业质量<InfoTip text="基于已入库财务指标计算的经营质量评分，用于比较基本面质量，不是股价预测。" /></div><div className="mt-1 text-2xl">{num(detail.data.quality.score, 1)}</div><div className="text-xs text-slate-500">{detail.data.quality.grade} · {detail.data.quality.profile_label}</div></div>
+            <div className={panel}><div className="text-xs text-slate-500">证据置信度<InfoTip text="反映数据覆盖、时效和来源完整程度。高置信度只表示证据较完整，不表示上涨机会更高。" /></div><div className="mt-1 text-2xl">{num(detail.data.evidence_confidence.score, 1)}</div><div className="text-xs text-slate-500">{detail.data.evidence_confidence.label} · 不是上涨概率</div></div>
             <div className={panel}><div className="text-xs text-slate-500">数据时点</div><div className="mt-1 text-lg">{snapshot.report_date ?? "—"}</div><div className="text-xs text-slate-500">快照 {snapshot.snapshot_date} · 覆盖 {pctText(detail.data.quality.coverage)}</div></div>
           </section>
 
           {snapshot.statement_detail ? <section className={`${panel} border-emerald-900/70`}><div className="flex flex-wrap items-start justify-between gap-2"><div><h2 className="font-medium text-emerald-300">财务三表已接入</h2><p className="mt-1 text-xs text-slate-500">报告期 {snapshot.statement_detail.report_date} · {snapshot.statement_detail.source}</p></div><button type="button" disabled={statements.isPending} onClick={() => statements.mutate()} className="rounded border border-slate-700 px-3 py-1.5 text-xs hover:bg-slate-800">重新刷新</button></div><div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5"><div><span className="text-xs text-slate-500">经营现金流</span><div>{num((snapshot.statement_detail.operating_cash_flow ?? 0) / 1e8, 1)} 亿</div></div><div><span className="text-xs text-slate-500">资本开支</span><div>{num((snapshot.statement_detail.capital_expenditure ?? 0) / 1e8, 1)} 亿</div></div><div><span className="text-xs text-slate-500">自由现金流率</span><div>{pctText(snapshot.statement_detail.fcf_margin, 2)}</div></div><div><span className="text-xs text-slate-500">已识别净负债</span><div>{num((snapshot.statement_detail.identified_net_debt ?? 0) / 1e8, 1)} 亿</div></div><div><span className="text-xs text-slate-500">商誉/净资产</span><div>{snapshot.statement_detail.goodwill_to_equity === null ? "—" : `${num(snapshot.statement_detail.goodwill_to_equity, 2)}%`}</div></div></div><p className="mt-3 text-[11px] text-slate-600">{snapshot.statement_detail.net_debt_note}</p></section> : <section className={`${panel} border-amber-900/70`}><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-medium text-amber-300">财务三表尚未加载</h2><p className="mt-1 text-xs text-slate-500">加载后会自动填入自由现金流率与已识别净负债，并提高证据覆盖率。</p></div><button type="button" disabled={statements.isPending} onClick={() => statements.mutate()} className="rounded bg-amber-600 px-4 py-2 text-sm hover:bg-amber-500 disabled:opacity-40">{statements.isPending ? "正在读取…" : "读取最新三表"}</button></div></section>}
 
           <section className={panel}>
-            <div className="flex flex-wrap items-start justify-between gap-2"><div><h2 className="font-medium">估值假设</h2><p className="mt-1 text-xs text-amber-300">三表数值会自动带入，但增长率、折现率和永续增长率仍是研究假设，必须由你复核。</p></div><div className="text-xs text-slate-500">营收 {num(valuation.revenue / 1e8, 1)} 亿元 · 股本 {num(valuation.shares / 1e8, 2)} 亿股</div></div>
+            <div className="flex flex-wrap items-start justify-between gap-2"><div><h2 className="font-medium">估值假设<InfoTip text="增长率、自由现金流率、折现率等会显著改变估值结果。系统会带入可用财务数据，人工假设仍需你核对。" /></h2><p className="mt-1 text-xs text-amber-300">三表数值会自动带入；人工假设必须复核。</p></div><div className="text-xs text-slate-500">营收 {num(valuation.revenue / 1e8, 1)} 亿元 · 股本 {num(valuation.shares / 1e8, 2)} 亿股</div></div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {fields.map(([key, label, hint]) => (
                 <label key={key} className="text-sm text-slate-400">{label}
@@ -266,7 +272,7 @@ export default function InvestmentResearchPage() {
           </section>
           <section className="grid gap-3 lg:grid-cols-2"><div className={panel}><h2 className="mb-3 font-medium text-emerald-300">支持证据</h2><EvidenceList items={report["4_evidence"].support} tone="good" /></div><div className={panel}><h2 className="mb-3 font-medium text-rose-300">反对证据</h2><EvidenceList items={report["4_evidence"].oppose} tone="bad" /></div></section>
           <section className="grid gap-3 lg:grid-cols-3"><div className={panel}><h2 className="mb-2 font-medium">尚未验证</h2><ul className="list-disc space-y-1 pl-5 text-sm text-slate-400">{report["6_open_items"].unverified.map((x) => <li key={x}>{x}</li>)}</ul></div><div className={panel}><h2 className="mb-2 font-medium">论点失效条件</h2><ul className="list-disc space-y-1 pl-5 text-sm text-slate-400">{report["6_open_items"].invalidation_conditions.map((x) => <li key={x}>{x}</li>)}</ul></div><div className={panel}><h2 className="mb-2 font-medium">复核触发器</h2><ul className="list-disc space-y-1 pl-5 text-sm text-slate-400">{report["6_open_items"].review_triggers.map((x) => <li key={x}>{x}</li>)}</ul></div></section>
-          <section className={panel}><h2 className="font-medium">DeepSeek 解释与反方审查</h2><textarea className={`${input} mt-3 min-h-20`} value={question} onChange={(e) => setQuestion(e.target.value)} /><div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={explanation.isPending} onClick={() => explanation.mutate()} className="rounded bg-violet-600 px-5 py-2 text-sm hover:bg-violet-500 disabled:opacity-40">{explanation.isPending ? "正在审查…" : "让 DeepSeek 解读证据"}</button><button type="button" disabled={saveRun.isPending} onClick={() => saveRun.mutate()} className="rounded border border-emerald-700 px-5 py-2 text-sm text-emerald-300 hover:bg-emerald-950 disabled:opacity-40">{saveRun.isPending ? "正在重算并冻结…" : "保存研究记录 + 反方审查"}</button></div>{explanation.data ? <div className="mt-4 rounded bg-slate-950 p-4 text-sm leading-7 text-slate-300 whitespace-pre-wrap">{explanation.data.explanation.status === "ok" ? explanation.data.explanation.text : explanation.data.explanation.status === "rejected" ? `解释被证据门禁拦截：出现证据包外数字 ${explanation.data.explanation.validation?.unverified_numbers?.join("、") ?? "（详见接口结果）"}。确定性分析仍然有效。` : `解释层状态：${explanation.data.explanation.status}；缺少 ${explanation.data.explanation.missing?.join("、") ?? "可用连接"}`}</div> : null}{saveRun.data ? <div className="mt-4 rounded border border-emerald-900 bg-emerald-950/30 p-3 text-sm text-emerald-200">已冻结研究记录 #{saveRun.data.id} · 指纹 {saveRun.data.fingerprint.slice(0, 12)}… · DeepSeek 状态 {saveRun.data.explanation_status}</div> : null}<p className="mt-2 text-xs text-slate-500">保存时服务端会重新计算，并冻结数据时点、全部假设、分析、反向估值和解释指纹。模型不参与计算，也不能下单。</p></section>
+          <section className={panel}><h2 className="font-medium">DeepSeek 解释与反方审查<InfoTip text="模型根据冻结证据生成主审与独立反方意见。所有数字和证据 id 都要通过后台校验；模型不参与估值计算和下单。" /></h2><textarea aria-label="给 DeepSeek 的研究问题" className={`${input} mt-3 min-h-20`} value={question} onChange={(e) => setQuestion(e.target.value)} /><div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={explanation.isPending} onClick={() => explanation.mutate()} className="rounded bg-violet-600 px-5 py-2 text-sm hover:bg-violet-500 disabled:opacity-40">{explanation.isPending ? "正在审查…" : "让 DeepSeek 解读证据"}</button><button type="button" disabled={saveRun.isPending} onClick={() => saveRun.mutate()} className="rounded border border-emerald-700 px-5 py-2 text-sm text-emerald-300 hover:bg-emerald-950 disabled:opacity-40">{saveRun.isPending ? "正在重算并冻结…" : "保存研究记录 + 反方审查"}</button></div>{explanation.data ? <div className="mt-4 rounded bg-slate-950 p-4 text-sm leading-7 text-slate-300 whitespace-pre-wrap">{explanation.data.explanation.status === "ok" ? explanation.data.explanation.text : explanation.data.explanation.status === "rejected" ? `解释被证据门禁拦截：出现证据包外数字 ${explanation.data.explanation.validation?.unverified_numbers?.join("、") ?? "（详见接口结果）"}。确定性分析仍然有效。` : `解释层状态：${explanation.data.explanation.status}；缺少 ${explanation.data.explanation.missing?.join("、") ?? "可用连接"}`}</div> : null}{saveRun.data ? <div className="mt-4 rounded border border-emerald-900 bg-emerald-950/30 p-3 text-sm text-emerald-200">已冻结研究记录 #{saveRun.data.id} · 指纹 {saveRun.data.fingerprint.slice(0, 12)}… · DeepSeek 状态 {saveRun.data.explanation_status}</div> : null}<p className="mt-2 text-xs text-slate-500">保存时服务端会重新计算，并冻结数据时点、全部假设、分析、反向估值和解释指纹。模型不参与计算，也不能下单。</p></section>
 
       {report ? (
         <ValuationApplicabilityPanel
@@ -294,7 +300,7 @@ export default function InvestmentResearchPage() {
               </select>
             </label>
             <details className="flex-1 text-xs text-slate-400">
-              <summary className="cursor-pointer text-amber-300">组合风险约束（必须显式可见）</summary>
+              <summary className="cursor-pointer text-amber-300">组合风险约束<InfoTip text="展开后可设置单股和行业上限、单笔损失、组合回撤、相关性及流动性限制。每项都会参与草案计算。" /></summary>
               <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 {draftFields.map(([key, label, step]) => <label key={key}>{label}<input className={`${input} mt-1`} type="number" step={step} value={draftConstraints[key]} onChange={(event) => updateDraftConstraint(key, event.target.value)} /></label>)}
               </div>
@@ -340,34 +346,7 @@ export default function InvestmentResearchPage() {
       </section>
 
       <section className={panel}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="font-medium">复核提醒（自动扫描）</h2>
-            <p className="mt-1 text-xs text-slate-500">每个交易日收盘后自动扫描全部研究记录：新财报、价格偏离 ≥ ±20%、结论变化、数据过期、记录陈旧都会进这个待办列表。这里也可以手动扫一次。</p>
-          </div>
-          <button type="button" disabled={scanReminders.isPending} onClick={() => scanReminders.mutate()} className="rounded bg-sky-700 px-4 py-2 text-sm hover:bg-sky-600 disabled:opacity-40">{scanReminders.isPending ? "扫描中…" : "立即扫描"}</button>
-        </div>
-        {scanReminders.data ? <p className="mt-2 text-xs text-emerald-300">扫描完成（{scanReminders.data.detected_on}）：标的 {scanReminders.data.symbols_scanned} 个，新建提醒 {scanReminders.data.reminders_created} 条{scanReminders.data.skipped.length ? `，跳过 ${scanReminders.data.skipped.length} 个（缺当前快照）` : ""}</p> : null}
-        {reminders.data ? (
-          <div className="mt-3 space-y-2">
-            <div className="text-xs text-slate-400">待办 {reminders.data.unacknowledged_count} 条 / 共 {reminders.data.count} 条</div>
-            {reminders.data.items.map((item) => (
-              <div key={item.id} className={`flex flex-wrap items-center justify-between gap-2 rounded border p-3 text-sm ${item.acknowledged ? "border-slate-800 bg-slate-950/40 text-slate-500" : item.severity === "high" ? "border-amber-800 bg-amber-950/20" : "border-slate-800 bg-slate-950/60"}`}>
-                <div>
-                  <span className="text-slate-300">#{item.symbol}</span> · 记录 #{item.run_id} · <span className={item.severity === "high" ? "text-amber-300" : "text-slate-400"}>[{item.severity}]</span> {item.label}
-                  <div className="mt-1 text-xs text-slate-500">{item.detail} · 检测日 {item.detected_on}</div>
-                </div>
-                {item.acknowledged ? <span className="text-xs text-slate-600">已查看</span> : <button type="button" disabled={ackReminder.isPending} onClick={() => ackReminder.mutate(item.id)} className="rounded border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40">标记已查看</button>}
-              </div>
-            ))}
-            {reminders.data.items.length === 0 ? <p className="text-xs text-slate-500">暂无提醒。研究记录冻结后，条件触发时会自动出现在这里。</p> : null}
-            <p className="text-xs text-slate-500">{reminders.data.note}</p>
-          </div>
-        ) : null}
-      </section>
-
-      <section className={panel}>
-        <h2 className="font-medium">组合草案（研究记录 → 模拟盘）</h2>
+        <h2 className="font-medium">组合草案<InfoTip text="读取冻结研究和当前模拟持仓，检查研究门禁与风险约束后给出只读草案。不会创建或执行订单。" /></h2>
         <p className="mt-1 text-xs text-slate-500">在历史研究记录里点「组合草案」：后端用当前持仓与约束检查集中度、行业暴露与流动性，只生成待审批草案，不写订单、不自动执行。</p>
           {rebalanceDraft.data && draftedRunId !== null ? <div className="mt-3 rounded border border-amber-800 bg-amber-950/20 p-3 text-sm"><div className="font-medium text-amber-300">研究记录 #{draftedRunId} · {rebalanceDraft.data.action} · 当前 {pctText(rebalanceDraft.data.current_weight)} → 草案 {pctText(rebalanceDraft.data.target_weight)}</div><ul className="mt-2 space-y-1 text-xs">{rebalanceDraft.data.checks.map((check) => <li key={check.name} className={check.status === "pass" ? "text-emerald-300" : "text-rose-300"}>{check.status === "pass" ? "通过" : "拦截"} · {check.detail}</li>)}</ul>{rebalanceDraft.data.proposed_order ? <div className="mt-3 rounded bg-slate-950 p-2 text-slate-300">模拟增持草案：{rebalanceDraft.data.proposed_order.symbol} × {rebalanceDraft.data.proposed_order.quantity} 股，参考金额 ¥{num(rebalanceDraft.data.proposed_order.indicative_value, 0)}</div> : <div className="mt-3 text-slate-400">当前约束下不生成新增订单。</div>}<p className="mt-2 text-xs text-slate-500">{rebalanceDraft.data.note} {rebalanceDraft.data.disclaimer}</p></div> : null}
       </section>

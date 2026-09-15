@@ -5,6 +5,7 @@
  * 增仓门禁（position_gate）也在这里展示：缺关键数据/引用无效/方法不适用 → 明确"不允许增仓"。
  */
 import type { ThesisCard, ThesisPositionGate } from "../lib/types";
+import InfoTip from "./InfoTip";
 
 const panel = "rounded-lg border border-slate-800 bg-slate-900 p-4";
 
@@ -32,7 +33,9 @@ export default function ThesisCardPanel({
     <section className={panel}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="font-medium">研究决策卡（结构化）</h2>
+          <h2 className="font-medium">研究决策卡
+            <InfoTip text="把研究类型、期限、正反证据、估值方法、失效条件和增仓门禁固定成可校验字段。模型只能写解释，不能修改数字。" />
+          </h2>
           <p className="mt-1 text-xs text-slate-500">
             策略类型、期限、证据 id、假设、情景、失效条件、缺失数据由代码生成；模型只写论点与预期差。
           </p>
@@ -73,7 +76,9 @@ export default function ThesisCardPanel({
             <div className="text-slate-300">{card.as_of}</div>
           </div>
           <div>
-            <div className="text-xs text-slate-500">置信依据（不是上涨概率）</div>
+            <div className="text-xs text-slate-500">置信依据
+              <InfoTip text="这里衡量数据覆盖和证据可靠性，不代表未来上涨概率，也不能单独作为买入依据。" />
+            </div>
             <div className="text-slate-300">
               质量分 {card.confidence_basis.quality_score ?? "—"} ·
               覆盖率 {card.confidence_basis.quality_coverage ?? "—"} ·
@@ -167,7 +172,9 @@ export default function ThesisCardPanel({
 
       <div className={`mt-3 rounded border p-3 text-sm ${gate?.allowed ? "border-emerald-900 bg-emerald-950/20 text-emerald-200" : "border-rose-900 bg-rose-950/20 text-rose-200"}`}>
         <div className="font-medium">
-          增仓门禁：{gate ? (gate.allowed ? "允许（仅表示数据与校验通过，不等于建议增仓）" : "不允许") : "未计算"}
+          增仓门禁
+          <InfoTip text="只有关键数据完整、引用校验通过且估值方法适用时才放行组合草案。放行仍不等于建议买入，也不会自动下单。" />
+          ：{gate ? (gate.allowed ? "允许（仅表示数据与校验通过，不等于建议增仓）" : "不允许") : "未计算"}
         </div>
         {gate?.blockers?.length ? (
           <ul className="mt-1 list-disc space-y-1 pl-5 text-xs">

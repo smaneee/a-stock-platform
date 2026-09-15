@@ -10,6 +10,7 @@ import type {
   StructuredCondition,
   ValuationApplicabilityRules,
 } from "../lib/types";
+import InfoTip from "./InfoTip";
 
 const panel = "rounded-lg border border-slate-800 bg-slate-900 p-4";
 
@@ -39,7 +40,9 @@ export default function ValuationApplicabilityPanel({
 
   return (
     <section className={panel}>
-      <h2 className="font-medium">估值方法适用性与现价隐含预期（S2）</h2>
+      <h2 className="font-medium">估值适用性与隐含预期
+        <InfoTip text="先判断当前估值方法能否用于该行业，再反推市场价格要求企业达到的增长率。方法不适用时会明确拒绝给出价值判断。" />
+      </h2>
       <p className="mt-1 text-xs text-slate-500">
         适用性由代码按已入库报表数据判定；隐含增长率由反向估值求解，敏感性展示它对折现率的依赖。
       </p>
