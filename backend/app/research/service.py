@@ -63,8 +63,14 @@ def _run_detail(row: InvestmentResearchRun) -> dict:
 
 
 def recompute_current(db: Session, row: InvestmentResearchRun) -> tuple[dict, dict] | None:
-    """重算当前状态：返回（快照元数据, 统一分析）。缺快照返回 ``None``。"""
+    """重算当前状态：返回（快照元数据, 统一分析）。缺快照或假设无法还原时返回 ``None``。
+
+    为什么要容错：冻结记录里的估值假设是历史数据，可能出现**字段不全**（早期版本、
+    人工补录、迁移残留）。定时扫描是无人值守任务，不能因为一条历史记录假设不完整
+    就整轮崩掉 —— 这里返回 ``None``，由上层如实报告"无法复核"并记原因。
+    """
     from app.api.fundamentals import AnalysisRequest, PortfolioContextRequest, post_analysis
+    from pydantic import ValidationError
 
     snapshot = latest_snapshot(db, row.symbol)
     if snapshot is None:
@@ -78,8 +84,13 @@ def recompute_current(db: Session, row: InvestmentResearchRun) -> tuple[dict, di
         "source": snapshot.source,
     }
     assumptions = row.assumptions or {}
+    try:
+        valuation = _valuation_request(assumptions)
+    except ValidationError as exc:
+        logger.warning("研究记录 #%s 的冻结假设无法还原：%s", row.id, exc.error_count())
+        return None
     request = AnalysisRequest(
-        valuation=_valuation_request(assumptions),
+        valuation=valuation,
         portfolio=PortfolioContextRequest(horizon=assumptions.get("horizon") or ""),
     )
     return meta, post_analysis(row.symbol, request, db)
@@ -147,6 +158,7 @@ def scan_reminders(db: Session, *, today: date | None = None, limit: int = 200) 
     """扫描每个标的最新记录，把触发的条件写入提醒表（幂等）。"""
     day = today or now_cst().date()
     created = 0
+    updated = 0
     skipped: list[dict] = []
     scanned: list[dict] = []
     for row in latest_runs_by_symbol(db, limit=limit):
@@ -161,6 +173,23 @@ def scan_reminders(db: Session, *, today: date | None = None, limit: int = 200) 
             "fired": result["fired_count"],
         })
         for trigger in result["fired_triggers"]:
+            # S4 验收「重复事件不重复提醒」：同一个未确认(未处理)的条件再被检出时，
+            # 只更新文案，**不再新增一条** —— 否则同一个悬而未决的问题会每天堆一条。
+            # 已确认过的条件若再次触发，则视为"重新出现的同一问题"，允许新开一条，
+            # 这样复核记录里能看出"处理过、又发生了"。
+            open_row = db.execute(
+                select(ResearchReviewReminder).where(
+                    ResearchReviewReminder.run_id == row.id,
+                    ResearchReviewReminder.trigger_name == trigger["name"],
+                    ResearchReviewReminder.acknowledged.is_(False),
+                )
+            ).scalars().first()
+            if open_row is not None:
+                open_row.detail = trigger["detail"][:255]
+                open_row.label = trigger["label"][:120]
+                open_row.severity = trigger["severity"]
+                updated += 1
+                continue
             exists = db.execute(
                 select(ResearchReviewReminder).where(
                     ResearchReviewReminder.run_id == row.id,
@@ -169,7 +198,7 @@ def scan_reminders(db: Session, *, today: date | None = None, limit: int = 200) 
                 )
             ).scalar_one_or_none()
             if exists is not None:
-                # 同一天重复扫描：只更新文案（比如偏离幅度变大），不重复计数
+                # 同一天、已确认过的同条件重复扫描：只更新文案，不重复计数
                 exists.detail = trigger["detail"][:255]
                 exists.label = trigger["label"][:120]
                 continue
@@ -191,6 +220,7 @@ def scan_reminders(db: Session, *, today: date | None = None, limit: int = 200) 
         "detected_on": day.isoformat(),
         "symbols_scanned": len(scanned),
         "reminders_created": created,
+        "reminders_updated": updated,
         "skipped": skipped,
         "details": scanned,
     }
