@@ -44,6 +44,7 @@ from app.research.preregistration import (
     summarize_correction,
 )
 from app.research.review import build_review
+from app.research.thesis import build_thesis_card, card_from_payload, position_gate
 from app.research.service import (
     acknowledge_reminder,
     list_reminders,
@@ -194,6 +195,13 @@ def _detail(row: InvestmentResearchRun) -> dict:
         "analysis": row.analysis,
         "reverse_valuation": row.reverse_valuation,
         "explanation": row.explanation,
+        "thesis_card": row.thesis_card,
+        "model_total_tokens": row.model_total_tokens,
+        "position_gate": (
+            position_gate(card_from_payload(row.thesis_card))
+            if row.thesis_card
+            else None
+        ),
         "immutability_note": "研究记录创建后不提供修改接口；新的观点应创建新记录并比较指纹。",
     }
 
@@ -314,6 +322,29 @@ async def create_investment_research_run(
         "question": body.question,
         "include_explanation": body.include_explanation,
     }
+    # S1：结构化决策卡（骨架由代码生成；模型文字经证据 id 与数字双重校验）
+    pack = build_evidence_pack(analysis, generated_at=now_cst().isoformat())
+    primary_text = ""
+    variant_text = ""
+    if explanation and explanation.get("status") == "ok":
+        primary_text = str(explanation.get("text") or "")
+        variant_text = str((explanation.get("primary") or {}).get("text") or "")
+    thesis_card = build_thesis_card(
+        analysis,
+        pack,
+        horizon=body.horizon or None,
+        model_text=primary_text,
+        variant_text=variant_text,
+        model_usage={
+            "latency_ms": None,
+            "total_tokens": ((explanation or {}).get("usage") or {}).get("total_tokens"),
+            "note": "只记录 token 用量；费率未经核实，不做金额估算",
+        },
+        fetched_at=now_cst().isoformat(),
+        text_origin="model_primary_and_critic" if primary_text else "deterministic_skeleton",
+    )
+    gate = position_gate(thesis_card)
+
     frozen = {
         "assumptions": assumptions,
         "analysis": analysis,
@@ -332,6 +363,8 @@ async def create_investment_research_run(
         analysis=analysis,
         reverse_valuation=reverse,
         explanation=explanation,
+        thesis_card=thesis_card.model_dump(mode="json"),
+        model_total_tokens=((explanation or {}).get("usage") or {}).get("total_tokens"),
     )
     db.add(row)
     _commit_with_lock_retry(db)

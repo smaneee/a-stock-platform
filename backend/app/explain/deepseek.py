@@ -215,11 +215,31 @@ def build_evidence_pack(analysis: dict, *, generated_at: str) -> EvidencePack:
     )
 
 
+def _is_rounding_of(value: float, raw: str, allowed: set[float]) -> bool:
+    """``value`` 是否是某个证据包数值**按模型写的精度**四舍五入的结果。
+
+    为什么不用固定百分比容差（2026-09-15 实测缺陷）：证据包里 92.84 存在时，
+    模型写"胜率 92%"落在 1% 容差内会被误放行。改成"必须等于某个真实值在同一精度下的
+    四舍五入"后：92.8 / 11.3 这类正常取舍仍通过，而 92 这种改口径的数字会被拦下。
+    """
+    digits = len(raw.split(".", 1)[1]) if "." in raw else 0
+    for candidate in allowed:
+        if value == candidate:
+            return True
+        try:
+            if round(candidate, digits) == value:
+                return True
+        except (TypeError, ValueError):  # pragma: no cover - 数值异常时按不匹配处理
+            continue
+    return False
+
+
 def validate_citations(text: str, pack: EvidencePack) -> dict:
     """校验解释里的数字是否都能追溯到证据包。
 
-    允许：证据包里的数值（相对误差 1% 内）和固定结构的 1–7 项编号。
-    不允许：任何其他数字 —— 那意味着模型自己造了数。
+    允许：证据包里数值的**同精度四舍五入**（如 11.33 → 11.3）、固定结构编号 1–7、
+    以及证据包里出现过的日期分量（由 :meth:`EvidencePack.allowed_numbers` 递归收集）。
+    不允许：任何其他数字 —— 那意味着模型自己造了数或改了口径。
     """
     allowed = pack.allowed_numbers()
     unverified: list[str] = []
@@ -231,10 +251,7 @@ def validate_citations(text: str, pack: EvidencePack) -> dict:
             continue
         if value.is_integer() and int(value) in STRUCTURAL_INTEGERS:
             continue
-        if not any(
-            abs(value - candidate) <= max(TOLERANCE * abs(candidate), 1e-9)
-            for candidate in allowed
-        ):
+        if not _is_rounding_of(value, cleaned, allowed):
             unverified.append(raw)
     return {
         "checked_numbers": len(NUMBER_RE.findall(text or "")),

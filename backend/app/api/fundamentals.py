@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -25,10 +26,13 @@ from app.database.models import FundamentalSnapshot
 from app.database.session import get_db
 from app.config import get_settings
 from app.explain.deepseek import (
+    STATUS_OK,
     DeepSeekExplainer,
     ExplainerConfig,
     build_evidence_pack,
 )
+from app.research.thesis import build_thesis_card, position_gate
+from app.research.thesis import StrategyType  # noqa: E402
 from app.fundamentals.decision import (
     DecisionInputs,
     PortfolioContext,
@@ -579,6 +583,9 @@ def post_analysis(
 
 
 class ExplainRequest(AnalysisRequest):
+    #: S1：策略类型必须显式声明（quality_value/cyclical_recovery/event_driven/trend），
+    #: 不自动推断，避免用长期估值结论替短线判断辩护
+    strategy_type: StrategyType | None = None
     """在统一分析之上，请求一段**有引用的解释**（数字仍全部来自确定性计算）。"""
 
     question: str = Field(default="", max_length=500)
@@ -648,15 +655,42 @@ def explain_status() -> dict:
 async def post_explain(
     symbol: str, payload: ExplainRequest, db: Session = Depends(get_db)
 ) -> dict:
-    """返回「确定性分析 + 解释」。解释失败/未配置/引用不合格都如实标注，不影响分析结果。"""
+    """返回「确定性分析 + 结构化决策卡 + 解释」。解释失败/未配置/引用不合格都如实标注。"""
     analysis = post_analysis(symbol, payload, db)
     pack = build_evidence_pack(analysis, generated_at=now_cst().isoformat())
+    started = time.perf_counter()
     explanation = await _explainer().explain(pack, question=payload.question or None)
+    latency_ms = round((time.perf_counter() - started) * 1000, 1)
+    usage = dict(explanation.get("usage") or {})
+    usage["latency_ms"] = latency_ms
+    usage["note"] = "只记录 token 用量与耗时；费率未经核实，不做金额估算"
+
+    # S1：把结果装进结构化决策卡（数值全部来自确定性计算；模型只写论点与预期差两段文字）
+    primary_text = ""
+    variant_text = ""
+    if explanation.get("status") == STATUS_OK:
+        primary_text = str(explanation.get("text") or "")
+        critic = explanation.get("critic") or {}
+        variant_text = str(critic.get("text") or "")
+    card = build_thesis_card(
+        analysis,
+        pack,
+        strategy_type=payload.strategy_type,
+        horizon=(payload.portfolio.horizon if payload.portfolio else None) or None,
+        model_text=primary_text,
+        variant_text=variant_text,
+        model_usage=usage,
+        fetched_at=now_cst().isoformat(),
+        text_origin="model_primary_and_critic" if primary_text else "deterministic_skeleton",
+    )
     return {
         "analysis": analysis,
         "evidence_pack": pack.to_payload(),
         "explanation": explanation,
+        "thesis_card": card.model_dump(mode="json"),
+        "position_gate": position_gate(card),
         "boundary": (
-            "解释层只能引用证据包里的数字；不参与计算、不写库、不影响策略门禁，也没有下单权限"
+            "解释层只能引用证据包里的数字与证据 id；不参与计算、不写库、"
+            "不影响策略门禁，也没有下单权限。决策卡骨架由代码生成，模型只写论点与预期差。"
         ),
     }

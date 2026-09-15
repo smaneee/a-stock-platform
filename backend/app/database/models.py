@@ -882,6 +882,12 @@ class InvestmentResearchRun(Base):
     analysis: Mapped[dict] = mapped_column(JSON, nullable=False)
     reverse_valuation: Mapped[dict] = mapped_column(JSON, nullable=False)
     explanation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #: S1 结构化研究决策卡（0028）：策略类型/期限/论点/预期差/证据 id/假设/估值方法/
+    #: 情景结果 id/失效条件/复核触发/缺失数据/决策/置信依据/模型与提示词版本
+    thesis_card: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #: 模型调用耗时与 token 用量（方案 §四 S1 验收要求记录成本）
+    model_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    model_total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utc_now)
 
 
