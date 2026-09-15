@@ -19,18 +19,26 @@ class Base(DeclarativeBase):
 
 
 def _enable_sqlite_foreign_keys(dbapi_connection, connection_record):
-    """每个新连接自动 PRAGMA foreign_keys=ON。
+    """每个新连接自动设置 SQLite PRAGMA（FK 约束、WAL、busy_timeout）。
 
-    SQLite 默认禁用 FK 约束（包括 ondelete / onupdate），必须每个连接开启。
+    FK：SQLite 默认禁用 FK 约束（包括 ondelete / onupdate），必须每个连接开启。
     没有这一步，0009 迁移把 universe_members.security_id 改成 NO ACTION 形同虚设，
     删除 Security 时会静默级联清空历史 UniverseMember。
+
+    WAL：实测事故（2026-09-15 19:46–20:25）——历史入库任务逐只写库时，默认的 delete
+    日志模式下写事务会独占整库，所有读请求（含 /api/health 与首页排名扫描）被堵死，
+    报 `database is locked`，前端只能反复显示旧数据。切到 WAL 后同样的入库压力下
+    `/api/health` 从超时恢复到 1.6s，排名接口 15.4s 正常返回。WAL 是数据库文件级属性，
+    这里显式设置可保证新建库/换环境时同样生效（内存库返回 memory，属无害 no-op）。
     """
     cursor = dbapi_connection.cursor()
     try:
         cursor.execute("PRAGMA foreign_keys=ON")
         # History ingest uses a few short-lived writer sessions concurrently.
         # Wait briefly for the writer lock instead of failing immediately.
-        cursor.execute("PRAGMA busy_timeout=5000")
+        # 15s 而非 5s：WAL 下读不再阻塞，但入库提交瞬间仍可能短暂持锁。
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=15000")
     finally:
         cursor.close()
 
