@@ -128,6 +128,8 @@ export interface InvestmentAnalysisResponse {
       basis: string;
       upside_vs_price: Record<string, number | null>;
       applicability: { applicable: boolean; model: string; caveat: string };
+      /** S2：规则化适用性判定（拒绝/警示/未知三态，含判据与数据来源） */
+      applicability_rules?: ValuationApplicabilityRules | null;
     };
     portfolio_risk: { position_ceiling: { ceiling_pct: number | null; reason: string } };
   };
@@ -143,6 +145,8 @@ export interface InvestmentAnalysisResponse {
     unverified: string[];
     invalidation_conditions: string[];
     review_triggers: string[];
+    /** S2：每条失效条件带阈值、来源与证据 id，可直接核对 */
+    structured_conditions?: StructuredCondition[];
   };
   disclaimer: string;
 }
@@ -152,10 +156,53 @@ export interface ReverseValuationResponse {
   implied_growth: number | null;
   target_price: number;
   matched_price?: number;
+  pricing_error?: number;
   growth_bounds: [number, number];
   value_at_bounds: [number, number];
   note: string;
   applicability: { applicable: boolean; model: string; caveat: string };
+  /** S2：同一价格在不同折现率下隐含的增长（单点数字会骗人） */
+  implied_growth_sensitivity?: {
+    target_price: number;
+    rows: Array<{
+      discount_rate: number;
+      status: string;
+      implied_growth: number | null;
+      value_at_bounds?: number[];
+    }>;
+    solved_count: number;
+    implied_growth_range: [number, number] | null;
+    note: string;
+  };
+  how_to_read?: string;
+  fixed_assumptions?: Record<string, unknown>;
+}
+
+/** S2：规则化适用性判定结果 */
+export interface ValuationApplicabilityRules {
+  applicable: boolean;
+  verdict: "ok" | "warning" | "rejected" | "unknown";
+  model: string;
+  rejected_reason: string | null;
+  requires_normalization: boolean;
+  caveats: string[];
+  data_used: Record<string, unknown>;
+  missing_data: string[];
+  rule_note: string;
+}
+
+/** S2：结构化失效条件（阈值 + 来源 + 证据 id） */
+export interface StructuredCondition {
+  metric: string;
+  label: string;
+  operator: string;
+  threshold: number | null;
+  current: number | null;
+  unit?: string | null;
+  source: string;
+  evidence_id: string;
+  check: string;
+  text: string;
 }
 
 export interface InvestmentExplainResponse {

@@ -18,6 +18,7 @@ import {
 } from "../lib/api";
 import type { InvestmentEvidenceItem, ResearchRebalanceConstraints, ValuationInput } from "../lib/types";
 import ThesisCardPanel from "../components/ThesisCardPanel";
+import ValuationApplicabilityPanel from "../components/ValuationApplicabilityPanel";
 
 const panel = "rounded-lg border border-slate-800 bg-slate-900 p-4";
 const input = "w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none";
@@ -266,6 +267,14 @@ export default function InvestmentResearchPage() {
           <section className="grid gap-3 lg:grid-cols-2"><div className={panel}><h2 className="mb-3 font-medium text-emerald-300">支持证据</h2><EvidenceList items={report["4_evidence"].support} tone="good" /></div><div className={panel}><h2 className="mb-3 font-medium text-rose-300">反对证据</h2><EvidenceList items={report["4_evidence"].oppose} tone="bad" /></div></section>
           <section className="grid gap-3 lg:grid-cols-3"><div className={panel}><h2 className="mb-2 font-medium">尚未验证</h2><ul className="list-disc space-y-1 pl-5 text-sm text-slate-400">{report["6_open_items"].unverified.map((x) => <li key={x}>{x}</li>)}</ul></div><div className={panel}><h2 className="mb-2 font-medium">论点失效条件</h2><ul className="list-disc space-y-1 pl-5 text-sm text-slate-400">{report["6_open_items"].invalidation_conditions.map((x) => <li key={x}>{x}</li>)}</ul></div><div className={panel}><h2 className="mb-2 font-medium">复核触发器</h2><ul className="list-disc space-y-1 pl-5 text-sm text-slate-400">{report["6_open_items"].review_triggers.map((x) => <li key={x}>{x}</li>)}</ul></div></section>
           <section className={panel}><h2 className="font-medium">DeepSeek 解释与反方审查</h2><textarea className={`${input} mt-3 min-h-20`} value={question} onChange={(e) => setQuestion(e.target.value)} /><div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={explanation.isPending} onClick={() => explanation.mutate()} className="rounded bg-violet-600 px-5 py-2 text-sm hover:bg-violet-500 disabled:opacity-40">{explanation.isPending ? "正在审查…" : "让 DeepSeek 解读证据"}</button><button type="button" disabled={saveRun.isPending} onClick={() => saveRun.mutate()} className="rounded border border-emerald-700 px-5 py-2 text-sm text-emerald-300 hover:bg-emerald-950 disabled:opacity-40">{saveRun.isPending ? "正在重算并冻结…" : "保存研究记录 + 反方审查"}</button></div>{explanation.data ? <div className="mt-4 rounded bg-slate-950 p-4 text-sm leading-7 text-slate-300 whitespace-pre-wrap">{explanation.data.explanation.status === "ok" ? explanation.data.explanation.text : explanation.data.explanation.status === "rejected" ? `解释被证据门禁拦截：出现证据包外数字 ${explanation.data.explanation.validation?.unverified_numbers?.join("、") ?? "（详见接口结果）"}。确定性分析仍然有效。` : `解释层状态：${explanation.data.explanation.status}；缺少 ${explanation.data.explanation.missing?.join("、") ?? "可用连接"}`}</div> : null}{saveRun.data ? <div className="mt-4 rounded border border-emerald-900 bg-emerald-950/30 p-3 text-sm text-emerald-200">已冻结研究记录 #{saveRun.data.id} · 指纹 {saveRun.data.fingerprint.slice(0, 12)}… · DeepSeek 状态 {saveRun.data.explanation_status}</div> : null}<p className="mt-2 text-xs text-slate-500">保存时服务端会重新计算，并冻结数据时点、全部假设、分析、反向估值和解释指纹。模型不参与计算，也不能下单。</p></section>
+
+      {report ? (
+        <ValuationApplicabilityPanel
+          rules={report["3_dimensions"].valuation.applicability_rules}
+          reverse={reverse ?? null}
+          conditions={report["6_open_items"].structured_conditions}
+        />
+      ) : null}
 
       {explanation.data?.thesis_card ? (
         <ThesisCardPanel card={explanation.data.thesis_card} gate={explanation.data.position_gate ?? null} />
