@@ -358,3 +358,43 @@ def weighted_value(
     if total <= 0:
         return None
     return round(sum(s.output.per_share * w for s, w in zip(items, weights)) / total, 4)
+
+def implied_growth_grid(
+    base: ValuationAssumptions,
+    *,
+    target_price: float,
+    discount_values: Sequence[float],
+) -> dict:
+    """反向估值的**敏感性**：不同折现率下，当前价格隐含的收入增长率。
+
+    为什么需要：隐含增长率与折现率高度耦合，只给一个点会让人误以为"市场共识是 X%"。
+    这里给出网格，并标明哪些折现率下价格落在可解区间之外（不外推伪精确数字）。
+    """
+    rows: list[dict] = []
+    for discount in discount_values:
+        try:
+            result = implied_revenue_growth(
+                replace(base, discount_rate=discount), target_price=target_price
+            )
+        except ValuationError as exc:
+            rows.append({"discount_rate": discount, "status": "invalid", "reason": str(exc),
+                         "implied_growth": None})
+            continue
+        rows.append({
+            "discount_rate": discount,
+            "status": result["status"],
+            "implied_growth": result["implied_growth"],
+            "value_at_bounds": result["value_at_bounds"],
+        })
+    solved = [row for row in rows if row["status"] == "solved"]
+    growths = [row["implied_growth"] for row in solved]
+    return {
+        "target_price": round(target_price, 4),
+        "rows": rows,
+        "solved_count": len(solved),
+        "implied_growth_range": [min(growths), max(growths)] if growths else None,
+        "note": (
+            "同一价格在不同折现率下隐含的增长率差别很大 → 任何单点『市场隐含增速』都不成立；"
+            "未解出行表示该折现率下价格落在可解区间之外（未外推）"
+        ),
+    }

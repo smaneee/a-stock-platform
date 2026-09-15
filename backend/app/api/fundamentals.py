@@ -40,6 +40,10 @@ from app.research.thesis import (
     position_gate,
 )
 from app.research.thesis import StrategyType  # noqa: E402
+from app.fundamentals.applicability import (
+    ApplicabilityInputs,
+    assess_applicability,
+)
 from app.fundamentals.decision import (
     DecisionInputs,
     PortfolioContext,
@@ -72,6 +76,7 @@ from app.fundamentals.statement_details import (
     fetch_statement_detail,
 )
 from app.fundamentals.valuation import (
+    implied_growth_grid,
     ValuationAssumptions,
     ValuationError,
     implied_revenue_growth,
@@ -495,6 +500,19 @@ def post_reverse_valuation(
             "revenue_used": base.revenue,
         },
         "applicability": model_applicability(profile_for(row.industry)[0].key),
+        # S2：把"隐含增长率"做成敏感性 —— 同一价格在不同折现率下要求的增长差别很大，
+        # 单点数字会被误读成"市场共识"
+        "implied_growth_sensitivity": implied_growth_grid(
+            base,
+            target_price=row.price,
+            discount_values=[round(base.discount_rate + delta, 4)
+                             for delta in (-0.03, -0.015, 0.0, 0.015, 0.03)],
+        ),
+        "how_to_read": (
+            "fixed_assumptions 是反解时固定的假设；implied_growth 是当前价格在这些假设下"
+            "要求企业达到的增长率，**不是增长预测**；implied_growth_sensitivity 展示它对"
+            "折现率的敏感程度，未解出的格子表示该折现率下价格落在可解区间之外（未外推）"
+        ),
         "disclaimer": DISCLAIMER,
     }
 
@@ -569,6 +587,32 @@ def post_analysis(
             horizon=payload.portfolio.horizon,
             liquidity_needed_soon=payload.portfolio.liquidity_needed_soon,
         )
+    # S2：规则化适用性判定（只用已入库的报表数据；缺数据返回 unknown，不猜）
+    debt_parts = [
+        row.short_loan, row.long_loan, row.bonds_payable,
+        row.noncurrent_liab_due_year, row.lease_liabilities,
+    ]
+    known_debt = [part for part in debt_parts if part is not None]
+    free_cash_flow = (
+        row.operating_cash_flow - (row.capital_expenditure or 0.0)
+        if row.operating_cash_flow is not None
+        else None
+    )
+    net_debt = sum(known_debt) - (row.monetary_funds or 0.0) if known_debt else None
+    applicability = assess_applicability(
+        ApplicabilityInputs(
+            industry=row.industry,
+            free_cash_flow=free_cash_flow,
+            net_debt=net_debt,
+            equity=row.statement_equity if row.statement_equity is not None else row.equity,
+            net_profit=row.net_profit_parent,
+            report_date=(
+                row.statement_report_date.isoformat()
+                if row.statement_report_date
+                else (row.report_date.isoformat() if row.report_date else None)
+            ),
+        )
+    ).to_dict()
     return build_analysis(
         DecisionInputs(
             symbol=row.symbol,
@@ -585,6 +629,7 @@ def post_analysis(
             portfolio=portfolio,
             portfolio_notes=tuple(payload.portfolio_notes),
             statement_detail=statement_payload,
+            applicability=applicability,
         )
     )
 

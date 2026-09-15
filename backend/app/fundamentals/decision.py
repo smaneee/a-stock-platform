@@ -113,6 +113,8 @@ class DecisionInputs:
     #: 估值假设的来源说明（事实/估计/模型推断），无估值时为空
     valuation_basis: str = ""
     portfolio: PortfolioContext | None = None
+    #: S2：规则化适用性判定结果（来自 app.fundamentals.applicability）
+    applicability: dict | None = None
     #: 组合相对收益/相关性等外部输入（未提供时如实标注"未接入"）
     portfolio_notes: tuple[str, ...] = field(default_factory=tuple)
     #: 与基本面快照同报告期的三表派生值；None 表示尚未接入或报告期不一致。
@@ -170,6 +172,23 @@ def model_applicability(profile_key: str) -> dict:
         },
     }
     return table.get(profile_key, table["general"])
+
+
+#: 研究状态的"吸引力"排序（越大越积极）。S2 不变式：**同一基本面只提高价格时，该序不能上升**。
+CONCLUSION_RANK: dict[str, int] = {
+    "insufficient": 0,
+    "expired": 0,
+    "model_not_applicable": 0,
+    "need_valuation": 1,
+    "overvalued": 2,
+    "fair": 3,
+    "attractive": 4,
+}
+
+
+def conclusion_rank(key: str | None) -> int:
+    """结论键 → 吸引力序（未知键按最低处理，不假装积极）。"""
+    return CONCLUSION_RANK.get(str(key or ""), 0)
 
 
 def position_ceiling(
@@ -274,6 +293,73 @@ def _invalidation_conditions(inputs: DecisionInputs) -> list[str]:
         )
     if not conditions:
         conditions.append("关键指标缺失，论点本身不成立（先补数据）")
+    return conditions
+
+
+#: 结构化失效条件里允许的比较符
+INVALIDATION_OPERATORS = ("<", "<=", ">", ">=")
+
+
+def structured_invalidation_conditions(inputs: DecisionInputs) -> list[dict]:
+    """把失效条件从"一句中文"升级成**可核对的结构**。
+
+    方案 §四 S2：把通用风险描述转换成有证据和时间的可验证条件。每条至少包含：
+    指标、比较符、阈值、当前值、**阈值来源**（画像阈值=研究假设 / 用户假设 / 历史统计）
+    与证据 id（与冻结证据包同一套 id，可直接核对）。
+    """
+    conditions: list[dict] = []
+    subs = inputs.quality.subscores
+
+    def add(metric: str, operator: str, threshold: float, *, source: str, text: str) -> None:
+        item = subs.get(metric) or {}
+        current = item.get("value")
+        if current is None or threshold is None:
+            return
+        conditions.append({
+            "metric": metric,
+            "label": item.get("label") or metric,
+            "operator": operator,
+            "threshold": threshold,
+            "current": current,
+            "unit": item.get("unit"),
+            "source": source,
+            "evidence_id": f"fact:{metric}",
+            "check": f"{item.get('label') or metric} {operator} {threshold}{item.get('unit') or ''}",
+            "text": text,
+        })
+
+    roe = subs.get("roe") or {}
+    if roe.get("threshold_poor") is not None:
+        add("roe", "<", float(roe["threshold_poor"]), source="行业画像阈值（研究假设）",
+            text=f"净资产收益率跌破 {roe['threshold_poor']}% → 论点失效")
+    debt = subs.get("debt_ratio") or {}
+    if debt.get("threshold_poor") is not None:
+        add("debt_ratio", ">", float(debt["threshold_poor"]), source="行业画像阈值（研究假设）",
+            text=f"资产负债率升破 {debt['threshold_poor']}% → 论点失效")
+    profit = subs.get("profit_yoy") or {}
+    if profit.get("value") is not None and profit["value"] > 0:
+        add("profit_yoy", "<", 0.0, source="用户可验证条件（研究假设）",
+            text="归母净利润同比转负 → 需重新评估")
+    ocf = subs.get("ocf_to_profit") or {}
+    if ocf.get("value") is not None and ocf["value"] >= 1.0:
+        add("ocf_to_profit", "<", 0.5, source="研究假设（盈利质量门槛）",
+            text="经营现金流/净利润 跌破 0.5 倍 → 盈利质量论点失效")
+    if inputs.valuation and inputs.valuation.base is not None and inputs.price:
+        base_value = inputs.valuation.base.output.per_share
+        conditions.append({
+            "metric": "price_vs_base_value",
+            "label": "现价 vs 基准情景价值",
+            "operator": ">",
+            "threshold": base_value,
+            "current": inputs.price,
+            "unit": "元",
+            "source": "本平台计算（基准情景 DCF）",
+            "evidence_id": "calc:dcf_基准",
+            "check": f"现价 > {base_value} 元",
+            "text": f"现价高于基准情景价值 {base_value} 元 → 安全边际消失",
+        })
+    for item in conditions:
+        assert item["operator"] in INVALIDATION_OPERATORS  # 防呆：只允许规定的比较符
     return conditions
 
 
@@ -407,6 +493,8 @@ def build_analysis(inputs: DecisionInputs) -> dict:
                 "applicability": model_applicability(
                     profile_for(inputs.industry)[0].key
                 ),
+                # S2：规则化判定（拒绝/警示/未知，含判据与数据来源）
+                "applicability_rules": inputs.applicability,
                 "reason": None if inputs.valuation is not None
                           else "未提供显式估值假设 → 不给价值区间（禁止用单一指标代替估值）",
             },
@@ -443,6 +531,7 @@ def build_analysis(inputs: DecisionInputs) -> dict:
         "6_open_items": {
             "unverified": unverified,
             "invalidation_conditions": _invalidation_conditions(inputs),
+            "structured_conditions": structured_invalidation_conditions(inputs),
             "review_triggers": _review_triggers(inputs),
             "horizon_discipline": (
                 "投资期限必须在建仓时锁定；**禁止因为亏损而把交易改称长期投资**。"
