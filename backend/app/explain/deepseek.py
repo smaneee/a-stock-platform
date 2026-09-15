@@ -180,7 +180,6 @@ def build_evidence_pack(analysis: dict, *, generated_at: str) -> EvidencePack:
                 "formula": result.get("formula"),
                 "overrides": scenario.get("overrides"),
                 "assumptions": result.get("assumptions"),
-                "cash_flows": result.get("cash_flows"),
             }
         )
 

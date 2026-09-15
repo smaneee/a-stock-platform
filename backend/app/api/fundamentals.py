@@ -601,9 +601,9 @@ def _local_harness_config() -> ExplainerConfig | None:
         model="deepseek-flash",
         base_url=f"http://127.0.0.1:{port}/v1",
         timeout_seconds=60.0,
-        # DeepSeek V4 会把推理 token 也计入 max_tokens；1200 在复杂证据包上可能
-        # 推理耗尽后正文为空。留足额度，正文仍由引用门禁约束。
-        max_output_tokens=4096,
+        # DeepSeek V4 默认开启高思考，推理 token 也计入 max_tokens；复杂证据包实测
+        # 4096 会在正文前耗尽。保留思考模式并留足额度，正文仍由引用门禁约束。
+        max_output_tokens=8192,
     )
 
 
