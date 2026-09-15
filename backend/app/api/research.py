@@ -15,9 +15,10 @@ import logging
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import OperationalError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import PROJECT_DIR
@@ -31,7 +32,7 @@ from app.api.fundamentals import (
     post_analysis,
     post_reverse_valuation,
 )
-from app.database.models import InvestmentResearchRun
+from app.database.models import HistoricalBar, InvestmentResearchRun, PaperAccount, PaperPosition
 from app.database.session import get_db
 from app.explain.deepseek import build_evidence_pack
 from app.fundamentals.repository import latest_snapshot
@@ -43,6 +44,13 @@ from app.research.preregistration import (
     summarize_correction,
 )
 from app.research.review import build_review
+from app.research.rebalance import (
+    ResearchDraftConstraints,
+    ResearchDraftInputs,
+    aligned_return_correlation,
+    build_research_draft,
+)
+from app.paper_trading.portfolio import PortfolioService
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +149,20 @@ class CreateInvestmentResearchRunRequest(BaseModel):
         max_length=500,
     )
     include_explanation: bool = True
+
+
+class ResearchRebalanceDraftRequest(BaseModel):
+    """用户显式给出的组合约束；服务端不猜风险偏好。"""
+
+    account_id: int
+    max_symbol_weight: float = Field(0.10, gt=0, le=0.20)
+    max_industry_weight: float = Field(0.30, gt=0, le=0.50)
+    max_loss_per_trade: float = Field(0.01, gt=0, le=0.05)
+    stop_distance: float = Field(0.10, ge=0.03, le=0.30)
+    max_portfolio_drawdown: float = Field(0.12, ge=0.05, le=0.30)
+    max_correlation: float = Field(0.75, ge=0, le=0.95)
+    max_liquidity_participation: float = Field(0.01, gt=0, le=0.10)
+    correlation_lookback_days: int = Field(60, ge=20, le=250)
 
 
 def _summary(row: InvestmentResearchRun) -> dict:
@@ -334,6 +356,152 @@ def get_investment_research_run(
     if row is None:
         raise HTTPException(status_code=404, detail=f"未找到研究记录：{run_id}")
     return _detail(row)
+
+
+def _daily_closes(db: Session, symbol: str, limit: int) -> dict[str, float]:
+    rows = db.execute(
+        select(HistoricalBar.trade_date, HistoricalBar.close)
+        .where(
+            HistoricalBar.symbol == symbol,
+            HistoricalBar.period == "daily",
+            HistoricalBar.adjust == "qfq",
+        )
+        .order_by(HistoricalBar.trade_date.desc())
+        .limit(limit + 1)
+    ).all()
+    return {day.isoformat(): float(close) for day, close in rows if float(close) > 0}
+
+
+def _average_amount_20(db: Session, symbol: str) -> float | None:
+    rows = db.scalars(
+        select(HistoricalBar.amount)
+        .where(
+            HistoricalBar.symbol == symbol,
+            HistoricalBar.period == "daily",
+            HistoricalBar.adjust == "qfq",
+            HistoricalBar.amount > 0,
+        )
+        .order_by(HistoricalBar.trade_date.desc())
+        .limit(20)
+    ).all()
+    values = [float(value) for value in rows if float(value) > 0]
+    return sum(values) / len(values) if len(values) >= 10 else None
+
+
+@router.post("/runs/{run_id}/rebalance-draft")
+async def create_research_rebalance_draft(
+    run_id: int,
+    body: ResearchRebalanceDraftRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    """把一条冻结研究映射为只读模拟调仓草案，不写订单、不自动执行。"""
+    run = db.get(InvestmentResearchRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"未找到研究记录：{run_id}")
+    account = db.get(PaperAccount, body.account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail=f"未找到模拟账户：{body.account_id}")
+
+    positions = db.scalars(
+        select(PaperPosition).where(PaperPosition.account_id == body.account_id)
+    ).all()
+    quantities: dict[str, int] = {}
+    for position in positions:
+        quantities[position.symbol] = quantities.get(position.symbol, 0) + position.quantity
+    symbols = sorted(set(quantities) | {run.symbol})
+    quotes = await request.app.state.provider_manager.get_quotes(symbols)
+    missing_quotes = [
+        symbol
+        for symbol in symbols
+        if symbol not in quotes or quotes[symbol].is_stale or quotes[symbol].price <= 0
+    ]
+    if missing_quotes:
+        raise HTTPException(
+            status_code=422,
+            detail=f"缺少有效实时行情：{', '.join(missing_quotes[:5])}",
+        )
+
+    snapshot = PortfolioService(db).calculate_snapshot(account, quotes)
+    if snapshot.total_asset <= 0:
+        raise HTTPException(status_code=422, detail="模拟账户总资产必须大于 0")
+    current_quantity = quantities.get(run.symbol, 0)
+    current_value = current_quantity * quotes[run.symbol].price
+    current_weight = current_value / snapshot.total_asset
+    invested_weight = sum(snapshot.current_position_value.values()) / snapshot.total_asset
+
+    industry_by_symbol: dict[str, str | None] = {}
+    for symbol in quantities:
+        item = latest_snapshot(db, symbol)
+        industry_by_symbol[symbol] = item.industry if item is not None else None
+    target_snapshot = latest_snapshot(db, run.symbol)
+    target_industry = target_snapshot.industry if target_snapshot is not None else None
+    industry_weight = None
+    if target_industry and all(industry_by_symbol.get(symbol) for symbol in quantities):
+        industry_value = sum(
+            snapshot.current_position_value.get(symbol, 0.0)
+            for symbol in quantities
+            if industry_by_symbol.get(symbol) == target_industry
+        )
+        industry_weight = industry_value / snapshot.total_asset
+
+    peers = [symbol for symbol, quantity in quantities.items() if symbol != run.symbol and quantity > 0]
+    target_closes = _daily_closes(db, run.symbol, body.correlation_lookback_days)
+    correlations: list[tuple[str, float, int]] = []
+    for symbol in peers:
+        value, observations = aligned_return_correlation(
+            target_closes,
+            _daily_closes(db, symbol, body.correlation_lookback_days),
+        )
+        if value is not None:
+            correlations.append((symbol, value, observations))
+    # 正相关才会叠加同向暴露；负相关具有分散作用，也不能掩盖另一个较高的正相关持仓。
+    strongest = max(correlations, key=lambda item: item[1], default=None)
+
+    draft = build_research_draft(
+        ResearchDraftInputs(
+            conclusion_key=run.conclusion_key,
+            symbol=run.symbol,
+            price=quotes[run.symbol].price,
+            total_asset=snapshot.total_asset,
+            current_quantity=current_quantity,
+            current_weight=current_weight,
+            industry=target_industry,
+            industry_weight=industry_weight,
+            invested_weight=invested_weight,
+            average_amount_20=_average_amount_20(db, run.symbol),
+            max_correlation=strongest[1] if strongest else None,
+            correlation_observations=strongest[2] if strongest else 0,
+            held_peer_count=len(peers),
+        ),
+        ResearchDraftConstraints(
+            max_symbol_weight=body.max_symbol_weight,
+            max_industry_weight=body.max_industry_weight,
+            max_loss_per_trade=body.max_loss_per_trade,
+            stop_distance=body.stop_distance,
+            max_portfolio_drawdown=body.max_portfolio_drawdown,
+            max_correlation=body.max_correlation,
+            max_liquidity_participation=body.max_liquidity_participation,
+        ),
+    )
+    return {
+        "research_run": _summary(run),
+        "account": {
+            "id": account.id,
+            "name": account.name,
+            "total_asset": snapshot.total_asset,
+            "invested_weight": round(invested_weight, 6),
+        },
+        "correlation": {
+            "strongest_symbol": strongest[0] if strongest else None,
+            "strongest_value": strongest[1] if strongest else None,
+            "observations": strongest[2] if strongest else 0,
+            "held_peer_count": len(peers),
+        },
+        "constraints": body.model_dump(),
+        **draft,
+        "disclaimer": "调仓草案只用于研究与模拟，不构成投资建议，也不会自动提交任何订单。",
+    }
 
 
 @router.get("/runs/{run_id}/review")

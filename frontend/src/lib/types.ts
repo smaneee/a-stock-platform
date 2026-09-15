@@ -236,6 +236,38 @@ export interface InvestmentResearchRun extends InvestmentResearchRunSummary {
   immutability_note: string;
 }
 
+export interface ResearchRebalanceConstraints {
+  account_id: number;
+  max_symbol_weight: number;
+  max_industry_weight: number;
+  max_loss_per_trade: number;
+  stop_distance: number;
+  max_portfolio_drawdown: number;
+  max_correlation: number;
+  max_liquidity_participation: number;
+  correlation_lookback_days: number;
+}
+
+export interface ResearchRebalanceDraft {
+  research_run: InvestmentResearchRunSummary;
+  account: { id: number; name: string; total_asset: number; invested_weight: number };
+  action: "INCREASE_DRAFT" | "HOLD" | "BLOCKED";
+  current_weight: number;
+  target_weight: number;
+  caps: Record<string, number>;
+  checks: Array<{ name: string; status: "pass" | "block"; detail: string }>;
+  proposed_order: {
+    side: "BUY";
+    symbol: string;
+    quantity: number;
+    indicative_price: number;
+    indicative_value: number;
+  } | null;
+  execution_allowed: false;
+  note: string;
+  disclaimer: string;
+}
+
 export interface Watchlist {
   id: number;
   name: string;

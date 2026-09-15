@@ -67,6 +67,8 @@ import type {
   InvestmentResearchRun,
   InvestmentResearchRunSummary,
   InvestmentReview,
+  ResearchRebalanceConstraints,
+  ResearchRebalanceDraft,
 } from "./types";
 import { authHeaders, getToken, setToken } from "./auth";
 
@@ -208,6 +210,14 @@ export const listInvestmentResearch = (symbol: string, limit = 10) =>
 /** 复核某条研究记录：是否该重新研究、触发条件、与上次记录的差异（只读）。 */
 export const fetchInvestmentReview = (runId: number) =>
   request<InvestmentReview>(`/research/runs/${runId}/review`);
+
+export const createResearchRebalanceDraft = (
+  runId: number,
+  constraints: ResearchRebalanceConstraints,
+) => request<ResearchRebalanceDraft>(`/research/runs/${runId}/rebalance-draft`, {
+  method: "POST",
+  body: JSON.stringify(constraints),
+});
 
 // ---------- 股票筛选 ----------
 

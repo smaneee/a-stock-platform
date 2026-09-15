@@ -3,15 +3,17 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
   analyzeInvestment,
+  createResearchRebalanceDraft,
   explainInvestment,
   fetchFundamentalDetail,
   fetchInvestmentReview,
   listInvestmentResearch,
+  listPaperAccounts,
   refreshStatementDetail,
   reverseValuation,
   saveInvestmentResearch,
 } from "../lib/api";
-import type { InvestmentEvidenceItem, ValuationInput } from "../lib/types";
+import type { InvestmentEvidenceItem, ResearchRebalanceConstraints, ValuationInput } from "../lib/types";
 
 const panel = "rounded-lg border border-slate-800 bg-slate-900 p-4";
 const input = "w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none";
@@ -40,6 +42,17 @@ export default function InvestmentResearchPage() {
   const [symbol, setSymbol] = useState("000333");
   const [horizon, setHorizon] = useState("3 年以上");
   const [question, setQuestion] = useState("请用投资委员会视角说明最关键的正反证据和未验证事项。只引用证据包已有数字和 id，不要计算、换算或新增任何数字。");
+  const [paperAccountId, setPaperAccountId] = useState<number | null>(null);
+  const [draftConstraints, setDraftConstraints] = useState<Omit<ResearchRebalanceConstraints, "account_id">>({
+    max_symbol_weight: 0.10,
+    max_industry_weight: 0.30,
+    max_loss_per_trade: 0.01,
+    stop_distance: 0.10,
+    max_portfolio_drawdown: 0.12,
+    max_correlation: 0.75,
+    max_liquidity_participation: 0.01,
+    correlation_lookback_days: 60,
+  });
   const [valuation, setValuation] = useState<ValuationInput>({
     revenue: 0,
     revenue_growth: 0.06,
@@ -65,6 +78,13 @@ export default function InvestmentResearchPage() {
     queryFn: () => listInvestmentResearch(symbol),
     enabled: Boolean(detail.data),
   });
+  const paperAccounts = useQuery({ queryKey: ["paper-accounts"], queryFn: listPaperAccounts });
+
+  useEffect(() => {
+    if (paperAccountId === null && paperAccounts.data?.length) {
+      setPaperAccountId(paperAccounts.data[0].id);
+    }
+  }, [paperAccountId, paperAccounts.data]);
 
   useEffect(() => {
     const snapshot = detail.data?.snapshot;
@@ -113,10 +133,22 @@ export default function InvestmentResearchPage() {
     mutationFn: (runId: number) => fetchInvestmentReview(runId),
     onSuccess: (_data, runId) => setReviewedId(runId),
   });
+  const [draftedRunId, setDraftedRunId] = useState<number | null>(null);
+  const rebalanceDraft = useMutation({
+    mutationFn: (runId: number) => {
+      if (paperAccountId === null) throw new Error("请先创建或选择模拟账户");
+      return createResearchRebalanceDraft(runId, { account_id: paperAccountId, ...draftConstraints });
+    },
+    onSuccess: (_data, runId) => setDraftedRunId(runId),
+  });
 
   const updateNumber = (key: keyof ValuationInput, value: string) => {
     setValuation((current) => ({ ...current, [key]: Number(value) }));
   };
+  const updateDraftConstraint = (
+    key: keyof Omit<ResearchRebalanceConstraints, "account_id">,
+    value: string,
+  ) => setDraftConstraints((current) => ({ ...current, [key]: Number(value) }));
   const submitSymbol = (event: FormEvent) => {
     event.preventDefault();
     const normalized = symbolInput.trim().replace(/\D/g, "").padStart(6, "0").slice(-6);
@@ -124,12 +156,13 @@ export default function InvestmentResearchPage() {
     analysis.reset();
     explanation.reset();
     saveRun.reset();
+    rebalanceDraft.reset();
   };
 
   const snapshot = detail.data?.snapshot;
   const report = analysis.data?.report;
   const reverse = analysis.data?.reverse;
-  const error = detail.error ?? statements.error ?? analysis.error ?? explanation.error ?? saveRun.error;
+  const error = detail.error ?? statements.error ?? analysis.error ?? explanation.error ?? saveRun.error ?? rebalanceDraft.error;
   const errorText = error instanceof Error ? error.message : null;
   const fields: Array<[keyof ValuationInput, string, string]> = [
     ["revenue_growth", "基准增长率", "小数，例如 0.06 = 6%"],
@@ -138,6 +171,20 @@ export default function InvestmentResearchPage() {
     ["terminal_growth", "永续增长率", "必须低于折现率"],
     ["net_debt", "净负债（元）", "有息负债减现金；净现金填负数"],
     ["years", "显式预测年数", "通常 5–10 年"],
+  ];
+  const draftFields: Array<[
+    keyof Omit<ResearchRebalanceConstraints, "account_id">,
+    string,
+    number,
+  ]> = [
+    ["max_symbol_weight", "单股上限", 0.01],
+    ["max_industry_weight", "行业上限", 0.01],
+    ["max_loss_per_trade", "单笔损失预算", 0.005],
+    ["stop_distance", "止损距离", 0.01],
+    ["max_portfolio_drawdown", "组合回撤预算", 0.01],
+    ["max_correlation", "相关性上限", 0.05],
+    ["max_liquidity_participation", "成交额参与率", 0.005],
+    ["correlation_lookback_days", "相关性观察日", 1],
   ];
 
   return (
@@ -205,7 +252,36 @@ export default function InvestmentResearchPage() {
         </>
       ) : null}
 
-      {researchHistory.data?.items.length ? <section className={panel}><h2 className="font-medium">历史研究记录</h2><p className="mt-1 text-xs text-slate-500">记录一旦冻结不可修改；点「复核」让后端用当前数据重算，看是否需要重新研究、以及和上一条记录差在哪。</p><div className="mt-3 space-y-2">{researchHistory.data.items.map((run) => <div key={run.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-950/60 p-3 text-sm"><div><span className="text-sky-300">#{run.id}</span> {run.conclusion ?? run.conclusion_key}<div className="mt-1 text-xs text-slate-500">财报 {run.report_date ?? "—"} · 价格 ¥{num(run.price)} · {new Date(run.created_at).toLocaleString("zh-CN")}</div></div><div className="flex items-center gap-3 text-right text-xs text-slate-500"><div>DeepSeek {run.explanation_status}<div className="font-mono">{run.fingerprint.slice(0, 12)}…</div></div><button type="button" disabled={review.isPending} onClick={() => review.mutate(run.id)} className="rounded border border-sky-800 px-3 py-1 text-xs text-sky-300 hover:bg-sky-950 disabled:opacity-40">{review.isPending ? "复核中…" : "复核"}</button></div></div>)}</div>{review.data && reviewedId !== null ? <div className="mt-3 rounded border border-sky-900 bg-sky-950/20 p-3 text-sm text-slate-300"><div className="font-medium text-sky-300">复核记录 #{review.data.run.id}：{review.data.needs_review === null ? "无法复核（缺少当前快照）" : review.data.needs_review ? `需要重新研究（触发 ${review.data.fired_count ?? review.data.fired_triggers.length} 项）` : "暂不需要重新研究"}</div>{review.data.fired_triggers.length ? <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-200">{review.data.fired_triggers.map((t) => <li key={t.name}>[{t.severity}] {t.label}：{t.detail}</li>)}</ul> : <p className="mt-2 text-xs text-slate-500">所有触发条件均未满足。</p>}<div className="mt-2 text-xs text-slate-400">{review.data.diff.summary}{review.data.has_previous_run ? "" : "（无上一条记录，已与当前重算结果对照）"}</div>{review.data.diff.changes.length ? <ul className="mt-2 space-y-1 text-xs text-slate-400">{review.data.diff.changes.slice(0, 8).map((c) => <li key={c.field}><span className="text-slate-600">[{c.importance}]</span> {c.label}：{String(c.before)} → {String(c.after)}</li>)}</ul> : null}<p className="mt-2 text-xs text-slate-500">{review.data.note}{review.data.disclaimer ? ` ${review.data.disclaimer}` : ""}</p></div> : null}</section> : null}
+      {researchHistory.data?.items.length ? (
+        <section className={panel}>
+          <h2 className="font-medium">历史研究记录与组合草案</h2>
+          <p className="mt-1 text-xs text-slate-500">记录冻结后不可修改；复核会重算当前状态，组合草案只计算约束后的模拟仓位，不会写订单。</p>
+          <div className="mt-3 flex flex-wrap items-end gap-3 rounded border border-slate-800 bg-slate-950/50 p-3">
+            <label className="min-w-48 text-xs text-slate-400">模拟账户
+              <select className={`${input} mt-1`} value={paperAccountId ?? ""} onChange={(event) => setPaperAccountId(Number(event.target.value))}>
+                <option value="">请选择</option>
+                {paperAccounts.data?.map((account) => <option key={account.id} value={account.id}>{account.name}（#{account.id}）</option>)}
+              </select>
+            </label>
+            <details className="flex-1 text-xs text-slate-400">
+              <summary className="cursor-pointer text-amber-300">组合风险约束（必须显式可见）</summary>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {draftFields.map(([key, label, step]) => <label key={key}>{label}<input className={`${input} mt-1`} type="number" step={step} value={draftConstraints[key]} onChange={(event) => updateDraftConstraint(key, event.target.value)} /></label>)}
+              </div>
+            </details>
+          </div>
+          <div className="mt-3 space-y-2">
+            {researchHistory.data.items.map((run) => (
+              <div key={run.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-950/60 p-3 text-sm">
+                <div><span className="text-sky-300">#{run.id}</span> {run.conclusion ?? run.conclusion_key}<div className="mt-1 text-xs text-slate-500">财报 {run.report_date ?? "—"} · 价格 ¥{num(run.price)} · {new Date(run.created_at).toLocaleString("zh-CN")}</div></div>
+                <div className="flex items-center gap-2 text-right text-xs text-slate-500"><div>DeepSeek {run.explanation_status}<div className="font-mono">{run.fingerprint.slice(0, 12)}…</div></div><button type="button" disabled={review.isPending} onClick={() => review.mutate(run.id)} className="rounded border border-sky-800 px-3 py-1 text-sky-300 hover:bg-sky-950 disabled:opacity-40">复核</button><button type="button" disabled={rebalanceDraft.isPending || paperAccountId === null} onClick={() => rebalanceDraft.mutate(run.id)} className="rounded border border-amber-700 px-3 py-1 text-amber-300 hover:bg-amber-950 disabled:opacity-40">组合草案</button></div>
+              </div>
+            ))}
+          </div>
+          {review.data && reviewedId !== null ? <div className="mt-3 rounded border border-sky-900 bg-sky-950/20 p-3 text-sm text-slate-300"><div className="font-medium text-sky-300">复核记录 #{review.data.run.id}：{review.data.needs_review === null ? "无法复核（缺少当前快照）" : review.data.needs_review ? `需要重新研究（触发 ${review.data.fired_count ?? review.data.fired_triggers.length} 项）` : "暂不需要重新研究"}</div>{review.data.fired_triggers.length ? <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-200">{review.data.fired_triggers.map((t) => <li key={t.name}>[{t.severity}] {t.label}：{t.detail}</li>)}</ul> : <p className="mt-2 text-xs text-slate-500">所有触发条件均未满足。</p>}<div className="mt-2 text-xs text-slate-400">{review.data.diff.summary}{review.data.has_previous_run ? "" : "（无上一条记录，已与当前重算结果对照）"}</div>{review.data.diff.changes.length ? <ul className="mt-2 space-y-1 text-xs text-slate-400">{review.data.diff.changes.slice(0, 8).map((c) => <li key={c.field}><span className="text-slate-600">[{c.importance}]</span> {c.label}：{String(c.before)} → {String(c.after)}</li>)}</ul> : null}<p className="mt-2 text-xs text-slate-500">{review.data.note}{review.data.disclaimer ? ` ${review.data.disclaimer}` : ""}</p></div> : null}
+          {rebalanceDraft.data && draftedRunId !== null ? <div className="mt-3 rounded border border-amber-800 bg-amber-950/20 p-3 text-sm"><div className="font-medium text-amber-300">研究记录 #{draftedRunId} · {rebalanceDraft.data.action} · 当前 {pctText(rebalanceDraft.data.current_weight)} → 草案 {pctText(rebalanceDraft.data.target_weight)}</div><ul className="mt-2 space-y-1 text-xs">{rebalanceDraft.data.checks.map((check) => <li key={check.name} className={check.status === "pass" ? "text-emerald-300" : "text-rose-300"}>{check.status === "pass" ? "通过" : "拦截"} · {check.detail}</li>)}</ul>{rebalanceDraft.data.proposed_order ? <div className="mt-3 rounded bg-slate-950 p-2 text-slate-300">模拟增持草案：{rebalanceDraft.data.proposed_order.symbol} × {rebalanceDraft.data.proposed_order.quantity} 股，参考金额 ¥{num(rebalanceDraft.data.proposed_order.indicative_value, 0)}</div> : <div className="mt-3 text-slate-400">当前约束下不生成新增订单。</div>}<p className="mt-2 text-xs text-slate-500">{rebalanceDraft.data.note} {rebalanceDraft.data.disclaimer}</p></div> : null}
+        </section>
+      ) : null}
     </div>
   );
 }
