@@ -163,7 +163,7 @@ export default function WinRatePanel() {
           <div className="mt-3 space-y-1 text-xs text-slate-500">
             <div>
               数据：{data.bars_adjust} 日线 · 生成 {data.generated_at_cst} · 信号日 {data.market_session.signal_day}
-              {data.market_session.live ? "（含盘中）" : "（按收盘价）"} · 行情覆盖 {pct(data.coverage_ratio)}
+              {data.market_session.live ? "（已合并最新行情）" : "（按收盘价）"} · 行情覆盖 {pct(data.coverage_ratio)}
               · 参与回放 {data.pool_size} 只 / 入榜 {data.evaluated} 只 / 跳过 {data.skipped_count} 只
             </div>
             <div>

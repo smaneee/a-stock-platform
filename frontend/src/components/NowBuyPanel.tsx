@@ -49,6 +49,15 @@ function formatTime(raw: string | null | undefined): string {
   return raw.replace("T", " ").slice(0, 19);
 }
 
+function calendarLagDays(current: string | null | undefined, latest: string | null | undefined): number {
+  if (!current || !latest) return 0;
+  const left = Date.parse(`${current}T00:00:00+08:00`);
+  const right = Date.parse(`${latest}T00:00:00+08:00`);
+  return Number.isFinite(left) && Number.isFinite(right)
+    ? Math.max(0, Math.round((left - right) / 86_400_000))
+    : 0;
+}
+
 function Field({
   label,
   value,
@@ -186,6 +195,7 @@ export default function NowBuyPanel() {
   });
 
   const data = query.data;
+  const historyLagDays = data ? calendarLagDays(data.session_day, data.bars_last_day) : 0;
   const error = query.error as ApiError | null;
   const unavailable = error instanceof ApiError && error.status === 503;
 
@@ -272,6 +282,12 @@ export default function NowBuyPanel() {
               请先排查数据源可用性（盘前或数据源故障时常见）。
             </div>
           ) : null}
+          {historyLagDays > 3 ? (
+            <div className="mt-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+              本地日线停在 {data.bars_last_day ?? "未知"}，距当前行情日 {data.session_day} 已有 {historyLagDays} 个自然日。
+              排名虽然会重新扫描，但历史窗口未补齐时名单可能长期相似；请运行每日数据流水线。
+            </div>
+          ) : null}
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
             <SentimentBadge sentiment={data.sentiment} />
             <span>
@@ -280,7 +296,7 @@ export default function NowBuyPanel() {
               入围 {data.refined} / 初筛 {data.screened} / 全市场 {data.universe_size} · 覆盖率{" "}
               {num((data.coverage_ratio ?? 0) * 100, 1)}% · 日线
               {data.bars_adjust === "qfq" ? "前复权" : "不复权"}
-              {data.live ? " · 已并入盘中行情" : " · 按最近交易日收盘评估"}
+              {data.live ? " · 已合并最新行情" : " · 按最近交易日收盘评估"}
             </span>
           </div>
 
