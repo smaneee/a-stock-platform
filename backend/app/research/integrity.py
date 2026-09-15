@@ -266,6 +266,64 @@ def check_evidence_contract(path: Path | None = None) -> CheckResult:
     )
 
 
+def evaluate_settlements(rows: list[dict], days: set[date]) -> tuple[list[str], list[str]]:
+    """纯函数：结算日必须是交易日，且**不得是"当时还没到"的未来日期**。
+
+    背景（2026-09-15 实测）：库里存在 `created_at=2026-09-13` 却写着
+    `trading_date=2026-09-15 / 09-16` 的结算记录 —— 这是典型的"用未来日期记账"，
+    会让净值曲线出现尚未发生的点。与成交/建仓日一样按"修复前后"分开列。
+    """
+    violations: list[str] = []
+    legacy: list[str] = []
+    for row in rows:
+        settlement_id = row.get("id")
+        trading_date = row.get("trading_date")
+        created_at = row.get("created_at")
+        if trading_date is None:
+            violations.append(f"结算 #{settlement_id} 缺少结算日 → 无法验证")
+            continue
+        if trading_date not in days:
+            message = f"结算 #{settlement_id} 结算日 {trading_date} 不是交易日"
+            (legacy if trading_date < LEGACY_TRADE_CUTOFF else violations).append(
+                message + ("（历史遗留）" if trading_date < LEGACY_TRADE_CUTOFF else "")
+            )
+            continue
+        if created_at is not None:
+            created_day = created_at.date() if isinstance(created_at, datetime) else created_at
+            if trading_date > created_day:
+                message = (
+                    f"结算 #{settlement_id} 结算日 {trading_date} 晚于记录创建日 {created_day}"
+                    " → 用未来日期记账"
+                )
+                (legacy if created_day < LEGACY_TRADE_CUTOFF else violations).append(
+                    message + ("（历史遗留）" if created_day < LEGACY_TRADE_CUTOFF else "")
+                )
+    return violations, legacy
+
+
+def check_settlements(db: Session) -> CheckResult:
+    """日终结算的日期必须真实存在且不得是未来日期。"""
+    from app.database.models import DailySettlementRecord
+
+    days = _trading_days(db)
+    rows = db.scalars(select(DailySettlementRecord)).all()
+    violations, legacy = evaluate_settlements(
+        [{"id": r.id, "trading_date": r.trading_date, "created_at": r.created_at} for r in rows],
+        days,
+    )
+    return CheckResult(
+        name="settlements_dates",
+        label="结算日必须是交易日且不得是未来日期",
+        checked=len(rows),
+        violations=violations[:SAMPLE_LIMIT],
+        legacy=legacy[:SAMPLE_LIMIT],
+        legacy_count=len(legacy),
+        note=(
+            "结算日代表净值曲线上的一个点，若晚于记录创建日，等于把尚未发生的日期记进了曲线"
+        ),
+    )
+
+
 def check_research_run_time_validity(db: Session) -> CheckResult:
     """研究记录的时点自洽性：快照日不得晚于记录创建日（否则等于用了未来数据）。"""
     from app.database.models import InvestmentResearchRun
@@ -303,6 +361,7 @@ def run_audit(db: Session, *, today: date | None = None, evidence_path: Path | N
         check_bars_on_trading_days(db),
         check_forward_observations(db, today=today),
         check_research_run_time_validity(db),
+        check_settlements(db),
         check_evidence_contract(evidence_path),
     ]
     total_violations = sum(len(check.violations) for check in checks)

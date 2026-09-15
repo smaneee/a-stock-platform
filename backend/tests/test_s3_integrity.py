@@ -265,7 +265,7 @@ def test_run_audit_reports_clean_when_nothing_wrong(tmp_path, db_session):
     report = run_audit(db_session, today=date(2026, 9, 15), evidence_path=path)
     assert report["clean"] is True, report["checks"]
     assert report["violation_count"] == 0
-    assert len(report["checks"]) == 6
+    assert len(report["checks"]) == 7
     assert "不视为通过" in report["note"]
 
 
@@ -333,3 +333,50 @@ def test_broker_defaults_to_last_trading_day_on_weekend(db_session):
         resolved = _to_trading_date(None, db_session)
     assert resolved != SATURDAY_AFTER_FIX
     assert resolved in {D1, D2}          # 回落到日历里的最近交易日
+
+# ── 结算日：必须是交易日，且不得是未来日期 ───────────────────────────────
+
+
+def test_settlement_on_non_trading_day_is_caught(db_session):
+    from app.database.models import DailySettlementRecord
+    from app.research.integrity import check_settlements
+
+    _seed_calendar(db_session, days=(D1, D2))
+    account_id = _account(db_session)
+    db_session.add_all([
+        DailySettlementRecord(account_id=account_id, trading_date=D2, total_asset=1000,
+                              positions_settled=0, created_at=datetime(2026, 9, 19, 16, 0)),
+        DailySettlementRecord(account_id=account_id, trading_date=SATURDAY_AFTER_FIX,
+                              total_asset=1000, positions_settled=0,
+                              created_at=datetime(2026, 9, 19, 16, 0)),
+    ])
+    db_session.commit()
+    result = check_settlements(db_session)
+    assert result.checked == 2
+    assert any("2026-09-19" in item for item in result.violations)
+
+
+def test_settlement_dated_after_its_creation_is_a_future_entry(db_session):
+    """用未来日期记账：结算日晚于记录创建日 → 净值曲线会多出尚未发生的点。"""
+    from app.research.integrity import evaluate_settlements
+
+    violations, legacy = evaluate_settlements(
+        [{"id": 1, "trading_date": date(2026, 9, 16),
+          "created_at": datetime(2026, 9, 15, 16, 0)}],
+        {date(2026, 9, 15), date(2026, 9, 16)},
+    )
+    assert len(violations) == 1 and "未来日期" in violations[0]
+    assert legacy == []
+
+
+def test_pre_fix_future_settlements_are_legacy(db_session):
+    """修复日之前产生的未来日期结算单独列为历史遗留。"""
+    from app.research.integrity import evaluate_settlements
+
+    violations, legacy = evaluate_settlements(
+        [{"id": 5, "trading_date": date(2026, 9, 15),
+          "created_at": datetime(2026, 9, 13, 13, 52)}],
+        {date(2026, 9, 15)},
+    )
+    assert violations == []
+    assert len(legacy) == 1 and "历史遗留" in legacy[0]
