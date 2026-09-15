@@ -265,7 +265,7 @@ def test_run_audit_reports_clean_when_nothing_wrong(tmp_path, db_session):
     report = run_audit(db_session, today=date(2026, 9, 15), evidence_path=path)
     assert report["clean"] is True, report["checks"]
     assert report["violation_count"] == 0
-    assert len(report["checks"]) == 7
+    assert len(report["checks"]) == 9
     assert "不视为通过" in report["note"]
 
 
@@ -380,3 +380,40 @@ def test_pre_fix_future_settlements_are_legacy(db_session):
     )
     assert violations == []
     assert len(legacy) == 1 and "历史遗留" in legacy[0]
+
+# ── 成交价区间 & 前复权跳变（S3 审计的第三、四项） ──────────────────────
+
+
+def test_trade_price_outside_daily_range_is_caught():
+    from app.research.integrity import evaluate_trade_prices
+
+    violations, unverifiable = evaluate_trade_prices([
+        {"id": 1, "symbol": "000333", "price": 10.5, "trade_date": D2, "low": 10.0, "high": 10.8},
+        {"id": 2, "symbol": "000333", "price": 12.0, "trade_date": D2, "low": 10.0, "high": 10.8},
+    ])
+    assert len(violations) == 1 and "12.0" in violations[0]
+    assert unverifiable == []
+
+
+def test_trade_without_comparable_bar_is_unverifiable_not_passing():
+    from app.research.integrity import evaluate_trade_prices
+
+    violations, unverifiable = evaluate_trade_prices([
+        {"id": 9, "symbol": "000333", "price": 10.0, "trade_date": SATURDAY, "low": None, "high": None},
+    ])
+    assert violations == []
+    assert len(unverifiable) == 1 and "没有可比日线" in unverifiable[0]
+
+
+def test_impossible_price_jump_is_caught_and_warmup_skipped():
+    from app.research.integrity import evaluate_price_jumps
+
+    rows = [
+        # 第 0..4 根在预热区间内：即使跳变也不报（上市首日无涨跌幅限制）
+        {"symbol": "X", "trade_date": D1, "close": 1.0, "prev_close": 10.0, "index": 0},
+        {"symbol": "X", "trade_date": D2, "close": 1.0, "prev_close": 1.0, "index": 5},
+        {"symbol": "X", "trade_date": date(2026, 9, 19), "close": 0.2, "prev_close": 1.0, "index": 6},
+    ]
+    violations = evaluate_price_jumps(rows)
+    assert len(violations) == 1
+    assert "2026-09-19" in violations[0] and "-80.0%" in violations[0]

@@ -301,6 +301,194 @@ def evaluate_settlements(rows: list[dict], days: set[date]) -> tuple[list[str], 
     return violations, legacy
 
 
+#: 单日涨跌幅的"不可能"阈值：A 股最宽限制 30%（创业板/科创板），
+#: 再留 1 个百分点容差；超过即说明复权序列或行情数据有问题（不是正常波动）。
+IMPOSSIBLE_JUMP = 0.31
+#: 每个标的跳过最前面这么多根 K 线（上市首日无涨跌幅限制 / 历史不足）
+JUMP_WARMUP_BARS = 5
+
+
+def evaluate_trade_prices(rows: list[dict]) -> tuple[list[str], list[str]]:
+    """纯函数：成交价必须落在当日 K 线的 [low, high] 区间内。
+
+    ``rows`` 每条形如 ``{"id", "symbol", "price", "trade_date", "low", "high"}``，
+    其中 low/high 为 ``None`` 表示**当天没有可比 K 线**（记无法验证，不当作通过）。
+    """
+    violations: list[str] = []
+    unverifiable: list[str] = []
+    for row in rows:
+        trade_id, symbol, price = row.get("id"), row.get("symbol"), row.get("price")
+        low, high = row.get("low"), row.get("high")
+        if price is None:
+            violations.append(f"成交 #{trade_id}（{symbol}）缺少成交价 → 无法验证")
+            continue
+        if low is None or high is None:
+            unverifiable.append(
+                f"成交 #{trade_id}（{symbol}）{row.get('trade_date')} 没有可比日线 → 无法验证"
+            )
+            continue
+        # 费用/滑点不会把价格推出当日区间；给 0.5% 容差覆盖数据源舍入
+        tolerance = max(abs(price) * 0.005, 0.01)
+        if price < low - tolerance or price > high + tolerance:
+            violations.append(
+                f"成交 #{trade_id}（{symbol}）成交价 {price} 落在当日区间 "
+                f"[{low}, {high}] 之外"
+            )
+    return violations, unverifiable
+
+
+def check_trade_prices(db: Session, *, sample: int = 200) -> CheckResult:
+    """抽查成交价是否落在当日 K 线区间内（防凭空造出来的成交价）。"""
+    from sqlalchemy import and_
+
+    trades = db.execute(
+        select(PaperTrade.id, PaperTrade.symbol, PaperTrade.price, PaperTrade.executed_at)
+        .order_by(PaperTrade.id.desc())
+        .limit(sample)
+    ).all()
+    rows: list[dict] = []
+    for trade_id, symbol, price, executed_at in trades:
+        trade_day = executed_at.date() if isinstance(executed_at, datetime) else executed_at
+        bar = db.execute(
+            select(HistoricalBar.low, HistoricalBar.high)
+            .where(
+                and_(
+                    HistoricalBar.symbol == symbol,
+                    HistoricalBar.period == "daily",
+                    HistoricalBar.adjust == "qfq",
+                    HistoricalBar.trade_date == trade_day,
+                )
+            )
+            .limit(1)
+        ).first()
+        rows.append({
+            "id": trade_id,
+            "symbol": symbol,
+            "price": float(price) if price is not None else None,
+            "trade_date": trade_day,
+            "low": float(bar[0]) if bar is not None and bar[0] is not None else None,
+            "high": float(bar[1]) if bar is not None and bar[1] is not None else None,
+        })
+    violations, unverifiable = evaluate_trade_prices(rows)
+    return CheckResult(
+        name="trade_prices_within_daily_range",
+        label="成交价必须落在当日 K 线区间内",
+        checked=len(rows),
+        violations=violations[:SAMPLE_LIMIT],
+        unverifiable=len(unverifiable),
+        note=(
+            f"抽查最近 {sample} 笔成交；没有可比日线的记为无法验证（不计为通过）："
+            + ("、".join(unverifiable[:3]) if unverifiable else "无")
+        ),
+    )
+
+
+def evaluate_price_jumps(rows: list[dict]) -> list[str]:
+    """纯函数：相邻交易日收益率的绝对值不得突破 A 股最宽限制。
+
+    ``rows`` 每条形如 ``{"symbol", "trade_date", "close", "prev_close", "index"}``。
+    """
+    violations: list[str] = []
+    for row in rows:
+        if row.get("index", 0) < JUMP_WARMUP_BARS:
+            continue
+        close, prev = row.get("close"), row.get("prev_close")
+        if not close or not prev or prev <= 0 or close <= 0:
+            continue
+        change = close / prev - 1.0
+        if abs(change) > IMPOSSIBLE_JUMP:
+            violations.append(
+                f"{row['symbol']} {row['trade_date']} 单日变动 {change:+.1%} "
+                f"超过 A 股最宽限制（复权序列或行情数据可疑）"
+            )
+    return violations
+
+
+def _series_tail(db: Session, symbol: str, adjust: str, limit: int) -> list[tuple]:
+    """取某标的某复权口径的最近 N 根日线（升序）：(日期, 收盘, 成交量)。"""
+    bars = db.execute(
+        select(HistoricalBar.trade_date, HistoricalBar.close, HistoricalBar.volume)
+        .where(
+            HistoricalBar.symbol == symbol,
+            HistoricalBar.period == "daily",
+            HistoricalBar.adjust == adjust,
+        )
+        .order_by(HistoricalBar.trade_date.desc())
+        .limit(limit)
+    ).all()
+    return [
+        (day, float(close) if close is not None else None,
+         float(volume) if volume is not None else None)
+        for day, close, volume in reversed(bars)
+    ]
+
+
+def _classify_jump(db: Session, symbol: str, ordered: list[tuple], raw_map: dict, message: str) -> str:
+    """给跳变补上"是什么原因"的上下文，避免把公司行为误判成脏数据。
+
+    * 前一根成交量为 0 → 停牌（复牌前后常有公司行为）；
+    * 原始（不复权）序列在同一位置也跳变 → 说明**前复权没有生效**（复权因子缺失），
+      而不是"复权算错"；两者处理方式不同。
+    """
+    parts = message
+    try:
+        day = message.split()[1]
+        index = next(i for i, (d, _c, _v) in enumerate(ordered) if str(d) == day)
+    except (StopIteration, IndexError):
+        return parts + "｜（未能定位该日上下文）"
+    prev_volume = ordered[index - 1][2] if index > 0 else None
+    if prev_volume == 0:
+        parts += "｜前一交易日成交量为 0（停牌），复牌前后常有公司行为，需人工核对"
+    qfq_change = None
+    raw_change = None
+    if index > 0:
+        prev_close = ordered[index - 1][1]
+        if prev_close and ordered[index][1]:
+            qfq_change = ordered[index][1] / prev_close - 1.0
+        raw_prev = raw_map.get(ordered[index - 1][0])
+        raw_now = raw_map.get(ordered[index][0])
+        if raw_prev and raw_now:
+            raw_change = raw_now / raw_prev - 1.0
+    if qfq_change is not None and raw_change is not None and abs(raw_change) > 0.5 * abs(qfq_change):
+        parts += "｜原始（不复权）序列同样跳变 → **前复权未生效**（复权因子缺失），不是复权算错"
+    return parts
+
+
+def check_price_jumps(db: Session, *, symbols: int = 30, per_symbol: int = 60) -> CheckResult:
+    """抽查前复权序列是否出现"不可能的单日跳变"（复权因子/脏数据问题的表征）。"""
+    head = db.execute(
+        select(HistoricalBar.symbol).distinct().order_by(HistoricalBar.symbol).limit(symbols)
+    ).scalars().all()
+    violations: list[str] = []
+    checked = 0
+    for symbol in head:
+        ordered = _series_tail(db, symbol, "qfq", per_symbol)
+        rows = [
+            {
+                "symbol": symbol,
+                "trade_date": day,
+                "close": close,
+                "prev_close": ordered[index - 1][1] if index > 0 else None,
+                "index": index,
+            }
+            for index, (day, close, _volume) in enumerate(ordered)
+        ]
+        checked += len(rows)
+        raw_map = {day: close for day, close, _v in _series_tail(db, symbol, "none", per_symbol)}
+        for message in evaluate_price_jumps(rows):
+            violations.append(_classify_jump(db, symbol, ordered, raw_map, message))
+    return CheckResult(
+        name="price_jumps_within_limits",
+        label="前复权序列不得出现超出涨跌幅限制的单日跳变",
+        checked=checked,
+        violations=violations[:SAMPLE_LIMIT],
+        note=(
+            f"抽查 {len(head)} 个标的 × 最近 {per_symbol} 根日线；"
+            f"跳过每个标的的最前 {JUMP_WARMUP_BARS} 根（上市首日无限制）；阈值 {IMPOSSIBLE_JUMP:.0%}"
+        ),
+    )
+
+
 def check_settlements(db: Session) -> CheckResult:
     """日终结算的日期必须真实存在且不得是未来日期。"""
     from app.database.models import DailySettlementRecord
@@ -362,6 +550,8 @@ def run_audit(db: Session, *, today: date | None = None, evidence_path: Path | N
         check_forward_observations(db, today=today),
         check_research_run_time_validity(db),
         check_settlements(db),
+        check_trade_prices(db),
+        check_price_jumps(db),
         check_evidence_contract(evidence_path),
     ]
     total_violations = sum(len(check.violations) for check in checks)
