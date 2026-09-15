@@ -170,6 +170,12 @@ class ScreenerResponse(BaseModel):
     session_day: str = Field(..., description="行情所属交易日（最近交易日）")
     signal_day: str = Field(..., description="买点评估所针对的交易日")
     bars_last_day: str | None = Field(..., description="本地日线的最后一个交易日")
+    required_bars_day: str | None = Field(
+        ..., description="允许发布实时候选排名所要求的最晚历史交易日"
+    )
+    data_fresh: bool = Field(
+        ..., description="历史数据是否满足实时排名门禁；False 时 picks 必须为空"
+    )
     bars_adjust: str = Field(..., description="本地日线复权口径：qfq（前复权）/ none（不复权）")
     live: bool = Field(..., description="是否有标的的行情带来了当日 K 线")
     generated_at: str = Field(..., description="扫描完成时间（UTC，历史字段，保留兼容）")
@@ -296,6 +302,10 @@ def _to_response(
         session_day=result.session_day.isoformat(),
         signal_day=result.signal_day.isoformat(),
         bars_last_day=result.bars_last_day.isoformat() if result.bars_last_day else None,
+        required_bars_day=(
+            result.required_bars_day.isoformat() if result.required_bars_day else None
+        ),
+        data_fresh=result.data_fresh,
         bars_adjust=result.bars_adjust,
         live=result.live,
         generated_at=result.generated_at,

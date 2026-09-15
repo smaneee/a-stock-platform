@@ -499,6 +499,73 @@ async def test_run_scan_marks_live_when_quote_carries_new_day():
 
 
 @pytest.mark.asyncio
+async def test_run_scan_withholds_picks_when_history_misses_previous_trading_day():
+    """历史窗口断档时，即使实时行情齐全也不能发布看似最新的排名。"""
+    factory = _make_session_factory()
+    symbols = ["600000"]
+    closes = _closes()
+    _seed(factory, symbols, closes)
+    with factory() as db:
+        db.add(TradingDate(trade_date=date(2026, 9, 15)))
+        db.commit()
+    live_price = round(closes[-1] * 1.02, 4)
+    service = ScreenerService(
+        session_factory=factory,
+        quote_fetcher=_stub_fetcher(
+            {
+                "600000": {
+                    "price": live_price,
+                    "open": live_price,
+                    "high": live_price,
+                    "low": live_price,
+                    "previous_close": closes[-1],
+                    "volume": 9_999_999.0,
+                    "amount": live_price * 9_999_999.0,
+                }
+            }
+        ),
+        tdx_pool_size=0,
+        clock=lambda: date(2026, 9, 15),
+    )
+
+    result = await service.run(ScreenerConfig(top_n=1, min_triggers=1))
+
+    assert result.required_bars_day == DAY_NEXT
+    assert result.bars_last_day == DAY_LAST
+    assert result.data_fresh is False
+    assert result.picks == []
+    assert any("已停止发布候选" in note for note in result.notes)
+
+
+@pytest.mark.asyncio
+async def test_run_scan_rejects_quotes_marked_stale():
+    factory = _make_session_factory()
+    closes = _closes()
+    _seed(factory, ["600000"], closes)
+    price = closes[-1]
+    service = _service(
+        factory,
+        _stub_fetcher(
+            {
+                "600000": {
+                    "price": price,
+                    "open": price,
+                    "high": price,
+                    "low": price,
+                    "previous_close": closes[-2],
+                    "volume": 9_999_999.0,
+                    "amount": price * 9_999_999.0,
+                    "is_stale": True,
+                }
+            }
+        ),
+    )
+
+    with pytest.raises(ScreenerUnavailable, match="全部为过期缓存"):
+        await service.run(ScreenerConfig(top_n=1))
+
+
+@pytest.mark.asyncio
 async def test_run_raises_when_no_quote_available():
     factory = _make_session_factory()
     closes = _closes()

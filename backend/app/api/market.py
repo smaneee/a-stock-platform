@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -44,6 +44,7 @@ from app.market_data.eastmoney_market import (
 )
 from app.market_rules.calendar import TradingCalendar
 from app.market_rules.session_state import (
+    CST,
     candidate_label,
     now_cst,
     resolve_phase,
@@ -337,7 +338,14 @@ def _serialize_quote_freshness(quote, phase, symbol: str, elapsed_ms: float, thr
 
     source_time = to_cst(getattr(quote, "market_time", None))
     received = getattr(quote, "received_at", None)
-    received_cst = to_cst(received)
+    # QuoteData.received_at 默认来自 utc_now()：数据库约定是 UTC naive。
+    # to_cst() 对普通 naive 时间按“已是北京时间”处理，因此这里必须先显式补 UTC，
+    # 否则会把 12:55 UTC 错标成 12:55+08:00，而正确值应为 20:55+08:00。
+    received_cst = (
+        received.replace(tzinfo=UTC).astimezone(CST)
+        if received is not None and received.tzinfo is None
+        else to_cst(received)
+    )
     age = None
     age_status = "unknown"
     if source_time is not None and phase.tradable:

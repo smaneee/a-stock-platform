@@ -320,6 +320,10 @@ class ScreenerResult:
     session_day: date
     signal_day: date
     bars_last_day: date | None
+    #: 为构造当日实时 K 线，历史序列至少必须覆盖到这个交易日。
+    required_bars_day: date | None
+    #: 历史序列是否覆盖 required_bars_day；False 时不得发布候选排名。
+    data_fresh: bool
     live: bool
     generated_at: str
     #: 扫描完成时间（北京时间，ISO8601 带 +08:00）；UI 必须显示这个而不是 UTC，
@@ -848,6 +852,10 @@ class ScreenerService:
                 raise ScreenerUnavailable("本地交易日历为空，无法判断交易日")
             today = self._clock()
             session_day, signal_day = self._resolve_days(calendar, today)
+            try:
+                required_bars_day = calendar.prev_trading_day(session_day)
+            except ValueError:
+                required_bars_day = session_day
             if session_day != today:
                 notes.append(
                     f"今日（{today.isoformat()}）休市，买点按下一交易日 "
@@ -875,6 +883,17 @@ class ScreenerService:
         series_map, bars_last_day, bars_seconds, bars_adjust = await bars_task
         if not quotes:
             raise ScreenerUnavailable("所有数据源都没有返回行情，请稍后重试")
+        stale_quote_count = sum(1 for quote in quotes.values() if quote.is_stale)
+        if stale_quote_count:
+            quotes = {
+                symbol: quote for symbol, quote in quotes.items() if not quote.is_stale
+            }
+            notes.append(f"已剔除数据源标记为过期的行情 {stale_quote_count} 只")
+        if not quotes:
+            raise ScreenerUnavailable("行情全部为过期缓存，无法生成实时排名")
+        data_fresh = bool(
+            bars_last_day is not None and bars_last_day >= required_bars_day
+        )
         notes.append(
             f"股票池快照 {snapshot_day.isoformat()}，可交易 A 股 {len(universe)} 只，"
             f"本次取到行情 {len(quotes)} 只"
@@ -931,6 +950,13 @@ class ScreenerService:
             replace(pick, rank=index + 1)
             for index, pick in enumerate(picks[: cfg.top_n])
         ]
+        if not data_fresh:
+            notes.append(
+                f"历史日线仅到 {bars_last_day.isoformat() if bars_last_day else '未知'}，"
+                f"实时排名至少需要覆盖到 {required_bars_day.isoformat()}；"
+                "已停止发布候选，等待每日数据流水线补齐"
+            )
+            picks = []
         refine_seconds = time.perf_counter() - refine_started
 
         notes.append(
@@ -964,6 +990,8 @@ class ScreenerService:
             session_day=session_day,
             signal_day=signal_day,
             bars_last_day=bars_last_day,
+            required_bars_day=required_bars_day,
+            data_fresh=data_fresh,
             live=live_count > 0,
             generated_at=utc_now().isoformat(),
             generated_at_cst=now_cst().isoformat(timespec="seconds"),

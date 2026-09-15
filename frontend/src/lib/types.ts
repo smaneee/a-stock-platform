@@ -1662,6 +1662,10 @@ export interface ScreenerResponse {
   /** 买点评估所针对的交易日 */
   signal_day: string;
   bars_last_day: string | null;
+  /** 发布实时排名要求历史序列至少覆盖到该交易日 */
+  required_bars_day: string | null;
+  /** 历史数据新鲜度门禁；false 时后端不会返回候选 */
+  data_fresh: boolean;
   /** 本地日线复权口径：qfq（前复权）/ none（不复权） */
   bars_adjust: string;
   live: boolean;

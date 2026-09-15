@@ -299,6 +299,20 @@ def test_freshness_marks_missing_source_time_as_unknown():
     assert "接收时间" in env["client_display_note"]
 
 
+def test_freshness_converts_received_at_from_utc_naive_to_cst():
+    """QuoteData.received_at 是 UTC naive，对外必须转换后再标 +08:00。"""
+    quote = QuoteData(
+        symbol="600519",
+        source="tdx",
+        market_time=datetime(2026, 9, 15, 14, 59),
+        received_at=datetime(2026, 9, 15, 12, 55, 42),
+    )
+
+    env = _freshness(quote)
+
+    assert env["received_at"] == "2026-09-15T20:55:42+08:00"
+
+
 def test_freshness_skips_age_when_market_not_open():
     quote = QuoteData(
         symbol="600519",

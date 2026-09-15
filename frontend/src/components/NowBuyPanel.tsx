@@ -183,12 +183,13 @@ function PickCard({ pick, evidenceLabel }: { pick: ScreenerPick; evidenceLabel: 
 
 export default function NowBuyPanel() {
   const [topN, setTopN] = useState(8);
-  const [refreshMs, setRefreshMs] = useState(60_000);
+  const [refreshMs, setRefreshMs] = useState(30_000);
 
   const query = useQuery({
     queryKey: ["realtime-picks-home", topN],
     queryFn: () => fetchRealtimePicks({ top_n: topN }),
     refetchInterval: refreshMs === 0 ? false : refreshMs,
+    refetchIntervalInBackground: false,
     placeholderData: keepPreviousData,
     staleTime: 15_000,
     retry: 1,
@@ -282,10 +283,15 @@ export default function NowBuyPanel() {
               请先排查数据源可用性（盘前或数据源故障时常见）。
             </div>
           ) : null}
-          {historyLagDays > 3 ? (
+          {data.data_fresh === false ? (
+            <div className="mt-3 rounded border border-rose-500/50 bg-rose-500/10 px-3 py-2 text-sm text-rose-100">
+              <strong>！实时排名已暂停发布。</strong> 本地日线停在 {data.bars_last_day ?? "未知"}，
+              当前排名至少需要 {data.required_bars_day ?? "最近交易日"}；历史数据补齐前不展示候选，
+              避免把过期结果误认为最优股票。
+            </div>
+          ) : historyLagDays > 3 ? (
             <div className="mt-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
               本地日线停在 {data.bars_last_day ?? "未知"}，距当前行情日 {data.session_day} 已有 {historyLagDays} 个自然日。
-              排名虽然会重新扫描，但历史窗口未补齐时名单可能长期相似；请运行每日数据流水线。
             </div>
           ) : null}
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
@@ -300,7 +306,7 @@ export default function NowBuyPanel() {
             </span>
           </div>
 
-          {data.picks.length === 0 ? (
+          {data.data_fresh === false ? null : data.picks.length === 0 ? (
             <div className="mt-3 rounded border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-500">
               当前市场状态下没有满足全部触发条件的候选。这本身是一种结论：宁可空仓也不要硬凑。
             </div>
