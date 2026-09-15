@@ -1666,6 +1666,12 @@ export interface ScreenerResponse {
   required_bars_day: string | null;
   /** 历史数据新鲜度门禁；false 时后端不会返回候选 */
   data_fresh: boolean;
+  /** 是否复用最近一次成功扫描 */
+  served_from_cache?: boolean;
+  cache_age_seconds?: number;
+  /** 返回缓存时，后台是否正在重算 */
+  refresh_in_progress?: boolean;
+  refresh_error?: string | null;
   /** 本地日线复权口径：qfq（前复权）/ none（不复权） */
   bars_adjust: string;
   live: boolean;

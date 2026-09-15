@@ -24,6 +24,7 @@ const select =
 
 const TOP_N_OPTIONS = [5, 8, 10, 15, 20];
 const REFRESH_OPTIONS = [
+  { value: 15_000, label: "15 秒" },
   { value: 30_000, label: "30 秒" },
   { value: 60_000, label: "60 秒" },
   { value: 120_000, label: "2 分钟" },
@@ -183,7 +184,7 @@ function PickCard({ pick, evidenceLabel }: { pick: ScreenerPick; evidenceLabel: 
 
 export default function NowBuyPanel() {
   const [topN, setTopN] = useState(8);
-  const [refreshMs, setRefreshMs] = useState(30_000);
+  const [refreshMs, setRefreshMs] = useState(15_000);
 
   const query = useQuery({
     queryKey: ["realtime-picks-home", topN],
@@ -296,6 +297,19 @@ export default function NowBuyPanel() {
           ) : null}
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
             <SentimentBadge sentiment={data.sentiment} />
+            {data.served_from_cache ? (
+              <span
+                className="rounded border border-sky-800 bg-sky-950/40 px-2 py-0.5 text-sky-300"
+                title="页面先显示最近一次成功扫描，后端同时重算全市场；下一轮自动刷新会取得新排名。生成时间不会伪装成当前时间。"
+              >
+                ！最近结果 {num(data.cache_age_seconds, 0)} 秒
+                {data.refresh_in_progress ? " · 后台重算中" : ""}
+              </span>
+            ) : (
+              <span className="rounded border border-emerald-900 bg-emerald-950/30 px-2 py-0.5 text-emerald-300">
+                本轮全市场实算
+              </span>
+            )}
             <span>
               生成于 {formatTime(data.generated_at_cst || data.generated_at)}（北京时间）· 耗时{" "}
               {num(data.scan_seconds, 1)} 秒 ·
@@ -305,6 +319,11 @@ export default function NowBuyPanel() {
               {data.live ? " · 已合并最新行情" : " · 按最近交易日收盘评估"}
             </span>
           </div>
+          {data.refresh_error ? (
+            <div className="mt-2 rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+              ！最近一次后台刷新失败：{data.refresh_error}。当前显示的是上次成功结果，请以“生成于”时间判断新鲜度。
+            </div>
+          ) : null}
 
           {data.data_fresh === false ? null : data.picks.length === 0 ? (
             <div className="mt-3 rounded border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-500">

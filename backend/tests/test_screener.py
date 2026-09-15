@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import date, timedelta
 
 import pytest
@@ -563,6 +564,68 @@ async def test_run_scan_rejects_quotes_marked_stale():
 
     with pytest.raises(ScreenerUnavailable, match="全部为过期缓存"):
         await service.run(ScreenerConfig(top_n=1))
+
+
+@pytest.mark.asyncio
+async def test_second_scan_returns_short_cache_without_refetching_quotes():
+    factory = _make_session_factory()
+    closes = _closes()
+    symbols = ["600000"]
+    _seed(factory, symbols, closes)
+    calls = 0
+    spec = _holiday_spec(symbols, closes)
+
+    async def fetch(requested):
+        nonlocal calls
+        calls += 1
+        return await _stub_fetcher(spec)(requested)
+
+    service = _service(factory, fetch)
+    config = ScreenerConfig(top_n=1, min_triggers=1)
+
+    first = await service.run(config)
+    second = await service.run(config)
+
+    assert first.served_from_cache is False
+    assert second.served_from_cache is True
+    assert second.cache_age_seconds >= 0
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_background_refresh_keeps_marked_last_success(monkeypatch):
+    import app.realtime.screener as screener_module
+
+    monkeypatch.setattr(screener_module, "RESULT_CACHE_TTL_SECONDS", -1.0)
+    factory = _make_session_factory()
+    closes = _closes()
+    symbols = ["600000"]
+    _seed(factory, symbols, closes)
+    calls = 0
+    spec = _holiday_spec(symbols, closes)
+
+    async def fetch(requested):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise RuntimeError("upstream offline")
+        return await _stub_fetcher(spec)(requested)
+
+    service = _service(factory, fetch)
+    config = ScreenerConfig(top_n=1, min_triggers=1)
+    first = await service.run(config)
+    stale = await service.run(config)
+    for _ in range(100):
+        if service._refresh_errors:  # noqa: SLF001 - 等待后台失败被可观测状态接住
+            break
+        await asyncio.sleep(0.01)
+    after_failure = await service.run(config)
+
+    assert stale.served_from_cache is True
+    assert stale.refresh_in_progress is True
+    assert after_failure.picks == first.picks
+    assert after_failure.served_from_cache is True
+    assert "upstream offline" in (after_failure.refresh_error or "")
 
 
 @pytest.mark.asyncio

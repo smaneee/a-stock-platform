@@ -176,6 +176,12 @@ class ScreenerResponse(BaseModel):
     data_fresh: bool = Field(
         ..., description="历史数据是否满足实时排名门禁；False 时 picks 必须为空"
     )
+    served_from_cache: bool = Field(
+        False, description="本次是否立即返回最近一次成功扫描结果"
+    )
+    cache_age_seconds: float = Field(0.0, description="缓存结果年龄（秒）")
+    refresh_in_progress: bool = Field(False, description="后台是否正在重算同参数排名")
+    refresh_error: str | None = Field(None, description="最近一次后台刷新失败原因")
     bars_adjust: str = Field(..., description="本地日线复权口径：qfq（前复权）/ none（不复权）")
     live: bool = Field(..., description="是否有标的的行情带来了当日 K 线")
     generated_at: str = Field(..., description="扫描完成时间（UTC，历史字段，保留兼容）")
@@ -306,6 +312,10 @@ def _to_response(
             result.required_bars_day.isoformat() if result.required_bars_day else None
         ),
         data_fresh=result.data_fresh,
+        served_from_cache=result.served_from_cache,
+        cache_age_seconds=result.cache_age_seconds,
+        refresh_in_progress=result.refresh_in_progress,
+        refresh_error=result.refresh_error,
         bars_adjust=result.bars_adjust,
         live=result.live,
         generated_at=result.generated_at,

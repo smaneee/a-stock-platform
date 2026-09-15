@@ -345,10 +345,22 @@ class ScreenerResult:
     #: 此时候选排序不构成研究依据（盘前实测曾出现 5/5550 仍返回 200）
     coverage_ratio: float = 0.0
     coverage_ok: bool = False
+    #: True 表示本次响应复用了最近一次成功扫描，而非声称刚刚完成了全市场计算。
+    served_from_cache: bool = False
+    cache_age_seconds: float = 0.0
+    #: 返回缓存的同时，是否已有同参数扫描在后台更新。
+    refresh_in_progress: bool = False
+    #: 上一次后台刷新错误；有缓存时用于解释为何结果尚未更新。
+    refresh_error: str | None = None
 
 
 #: 覆盖率门槛：低于该比例视为「不足以支撑候选排序结论」
 MIN_COVERAGE_RATIO = 0.5
+
+# 完成后的结果短暂复用；超过该时间触发后台重算。后台失败时最多允许展示 5 分钟内
+# 的最近成功结果，并由响应字段明确标成缓存，避免上游瞬断把首页直接打成 500。
+RESULT_CACHE_TTL_SECONDS = 10.0
+RESULT_CACHE_MAX_STALE_SECONDS = 300.0
 
 
 def coverage_status(quoted: int, universe_size: int) -> tuple[float, bool, str]:
@@ -729,6 +741,8 @@ class ScreenerService:
         # 会各自再跑一遍全市场扫描，互相拖慢并放大数据源压力。
         # 同一份参数的并发调用共享同一次扫描；参数不同的请求仍各自执行（互不阻塞）。
         self._inflight: dict[str, asyncio.Task[ScreenerResult]] = {}
+        self._result_cache: dict[str, tuple[float, ScreenerResult]] = {}
+        self._refresh_errors: dict[str, str] = {}
         self._coalesced_scans = 0
 
     @property
@@ -819,27 +833,73 @@ class ScreenerService:
     # ─────────── 主流程 ───────────
 
     async def run(self, config: ScreenerConfig | None = None) -> ScreenerResult:
-        """执行一次扫描；**同参数的并发调用共享同一次扫描**（single-flight）。
+        """返回候选；短缓存命中立即返回，过期后采用后台刷新。
 
-        为什么需要：2026-09-14 连续竞价实测全市场扫描 P50 32.8s / P95 66.3s，
-        而首页默认 60 秒自动刷新；不合并时自动刷新与手动刷新会并发跑多轮全市场
-        扫描，互相拖慢并放大数据源压力。
+        首次请求等待真实扫描。已有成功结果且年龄不超过 5 分钟时，接口立即返回
+        带缓存年龄的旧结果并在后台启动新扫描；前端下一轮轮询取得新结果。这样既不
+        用旧数据冒充实时，也不让一次 20~30 秒的全市场扫描阻塞每次页面刷新。
         """
         cfg = config or ScreenerConfig()
         cfg.validate()
         key = self._config_cache_key(cfg)
+        now = time.monotonic()
+        cached = self._result_cache.get(key)
         existing = self._inflight.get(key)
+
+        if cached is not None:
+            cached_at, result = cached
+            age = max(0.0, now - cached_at)
+            if age <= RESULT_CACHE_TTL_SECONDS:
+                return replace(
+                    result,
+                    served_from_cache=True,
+                    cache_age_seconds=round(age, 3),
+                    refresh_in_progress=bool(existing and not existing.done()),
+                    refresh_error=self._refresh_errors.get(key),
+                )
+            if age <= RESULT_CACHE_MAX_STALE_SECONDS:
+                if existing is None or existing.done():
+                    existing = self._start_refresh(key, cfg)
+                return replace(
+                    result,
+                    served_from_cache=True,
+                    cache_age_seconds=round(age, 3),
+                    refresh_in_progress=True,
+                    refresh_error=self._refresh_errors.get(key),
+                )
+
         if existing is not None and not existing.done():
             self._coalesced_scans += 1
             logger.info("扫描合并：复用进行中的同参数扫描（第 %d 次）", self._coalesced_scans)
             return await asyncio.shield(existing)
-        task = asyncio.create_task(self._run_scan(cfg))
+        return await asyncio.shield(self._start_refresh(key, cfg))
+
+    def _start_refresh(
+        self, key: str, cfg: ScreenerConfig
+    ) -> asyncio.Task[ScreenerResult]:
+        task = asyncio.create_task(self._refresh_and_cache(key, cfg))
         self._inflight[key] = task
+        task.add_done_callback(lambda done: self._finish_refresh(key, done))
+        return task
+
+    async def _refresh_and_cache(
+        self, key: str, cfg: ScreenerConfig
+    ) -> ScreenerResult:
+        result = await self._run_scan(cfg)
+        self._result_cache[key] = (time.monotonic(), result)
+        self._refresh_errors.pop(key, None)
+        return result
+
+    def _finish_refresh(self, key: str, task: asyncio.Task[ScreenerResult]) -> None:
+        if self._inflight.get(key) is task:
+            self._inflight.pop(key, None)
+        if task.cancelled():
+            return
         try:
-            return await asyncio.shield(task)
-        finally:
-            if self._inflight.get(key) is task:
-                self._inflight.pop(key, None)
+            task.result()
+        except Exception as exc:  # noqa: BLE001 - 后台失败由缓存响应显式报告
+            self._refresh_errors[key] = f"{type(exc).__name__}: {exc}"[:500]
+            logger.warning("候选排名后台刷新失败，保留最近成功结果：%s", exc)
 
     async def _run_scan(self, cfg: ScreenerConfig) -> ScreenerResult:
         """实际执行一次全市场扫描。"""
