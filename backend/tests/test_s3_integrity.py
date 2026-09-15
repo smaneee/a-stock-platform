@@ -25,7 +25,8 @@ from app.research.integrity import (
 D1 = date(2026, 9, 10)
 D2 = date(2026, 9, 11)
 #: 2026-09-12/13 是周末 → 不是交易日
-SATURDAY = date(2026, 9, 12)
+SATURDAY = date(2026, 9, 12)          # 守卫修复前（历史遗留）
+SATURDAY_AFTER_FIX = date(2026, 9, 19)  # 守卫修复后的周六（应判违规）
 
 
 def _seed_calendar(db, days=(D1, D2)) -> None:
@@ -54,23 +55,26 @@ def test_trades_on_non_trading_day_are_caught(db_session):
         PaperTrade(account_id=account_id, order_id=1, symbol="000333", side="buy",
                    quantity=100, price=10, executed_at=datetime(2026, 9, 11, 14, 30)),
         PaperTrade(account_id=account_id, order_id=2, symbol="000333", side="buy",
-                   quantity=100, price=10, executed_at=datetime(2026, 9, 12, 14, 30)),
+                   quantity=100, price=10,
+                   executed_at=datetime(2026, 9, 19, 14, 30)),  # 修复后的周六
     ])
     db_session.commit()
     result = check_paper_trades_on_trading_days(db_session)
     assert result.checked == 2
     assert result.ok is False
-    assert any("2026-09-12" in item for item in result.violations)
+    assert any("2026-09-19" in item for item in result.violations)
+    assert result.legacy_count == 0
 
 
 def test_trade_without_time_is_unverifiable_not_passing():
     """库里该列是 NOT NULL（NULL 不可构造）→ 用纯函数直接验证防御分支。"""
     from app.research.integrity import evaluate_trade_days
 
-    violations = evaluate_trade_days(
+    violations, legacy = evaluate_trade_days(
         [(1, "000333", None), (2, "000333", datetime(2026, 9, 11, 14, 30))],
         {D1, D2},
     )
+    assert legacy == []
     assert len(violations) == 1
     assert "无法验证" in violations[0]
     assert "000333" in violations[0]
@@ -261,7 +265,7 @@ def test_run_audit_reports_clean_when_nothing_wrong(tmp_path, db_session):
     report = run_audit(db_session, today=date(2026, 9, 15), evidence_path=path)
     assert report["clean"] is True, report["checks"]
     assert report["violation_count"] == 0
-    assert len(report["checks"]) == 5
+    assert len(report["checks"]) == 6
     assert "不视为通过" in report["note"]
 
 
@@ -270,10 +274,62 @@ def test_run_audit_aggregates_violations_and_stays_read_only(tmp_path, db_sessio
     account_id = _account(db_session)
     db_session.add(PaperTrade(account_id=account_id, order_id=1, symbol="000333",
                               side="buy", quantity=100, price=10,
-                              executed_at=datetime(2026, 9, 12, 14, 30)))  # 周六
+                              executed_at=datetime(2026, 9, 19, 14, 30)))  # 修复后的周六
     db_session.commit()
     before = db_session.query(PaperTrade).count()
     report = run_audit(db_session, today=date(2026, 9, 15), evidence_path=tmp_path / "missing.json")
     assert report["clean"] is False
     assert report["violation_count"] >= 2          # 成交违规 + 证据文件缺失
     assert db_session.query(PaperTrade).count() == before   # 审计不写库
+
+# ── 历史遗留与修复后违规必须分开 ───────────────────────────────────────────
+
+
+def test_pre_fix_weekend_trades_are_legacy_not_violations(db_session):
+    from app.research.integrity import LEGACY_TRADE_CUTOFF, evaluate_trade_days
+
+    violations, legacy = evaluate_trade_days(
+        [(1, "000333", datetime(2026, 9, 13, 13, 50)),      # 修复前周日
+         (2, "000333", datetime(2026, 9, 19, 14, 30))],     # 修复后周六
+        {D1, D2},
+    )
+    assert len(violations) == 1 and "2026-09-19" in violations[0]
+    assert len(legacy) == 1 and "2026-09-13" in legacy[0]
+    assert LEGACY_TRADE_CUTOFF == date(2026, 9, 15)
+
+
+def test_position_acquisition_day_must_be_a_trading_day(db_session):
+    from app.database.models import PaperPosition
+    from app.research.integrity import check_position_acquisition_days
+
+    _seed_calendar(db_session)
+    account_id = _account(db_session)
+    db_session.add_all([
+        PaperPosition(account_id=account_id, symbol="000333", quantity=100,
+                      available_quantity=0, avg_cost=10, acquisition_date=D2),
+        PaperPosition(account_id=account_id, symbol="600519", quantity=100,
+                      available_quantity=0, avg_cost=10,
+                      acquisition_date=SATURDAY_AFTER_FIX),
+    ])
+    db_session.commit()
+    result = check_position_acquisition_days(db_session)
+    assert result.checked == 2
+    assert any("600519" in item for item in result.violations)
+    assert not any("000333" in item for item in result.violations)
+
+
+def test_broker_defaults_to_last_trading_day_on_weekend(db_session):
+    """守卫回归：HTTP 下单不传 trading_date 时，不得回落成周末当天。
+
+    这是本项目真实出现过的缺陷（acquisition_date=2026-09-13 周日），
+    修复方式是回落到"今天或之前最近的交易日"。
+    """
+    from app.paper_trading.broker import _to_trading_date
+    from unittest.mock import patch
+
+    _seed_calendar(db_session, days=(D1, D2))   # 日历必须先有数据，否则会退回"今天"
+    with patch("app.paper_trading.broker.date") as fake_date:
+        fake_date.today.return_value = SATURDAY_AFTER_FIX   # 周六
+        resolved = _to_trading_date(None, db_session)
+    assert resolved != SATURDAY_AFTER_FIX
+    assert resolved in {D1, D2}          # 回落到日历里的最近交易日

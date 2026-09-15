@@ -38,6 +38,10 @@ SAMPLE_LIMIT = 10
 #: 负结果必须保留的状态
 NEGATIVE_STATUSES = ("failed_oos", "inconclusive")
 
+#: 交易日守卫的**修复生效日**（broker._to_trading_date 改为回落到最近交易日，见该函数 docstring）。
+#: 此前产生的非交易日成交属于"历史遗留"：仍然列出来，但不与"当前仍在产生违规"混为一谈。
+LEGACY_TRADE_CUTOFF = date(2026, 9, 15)
+
 
 @dataclass
 class CheckResult:
@@ -47,6 +51,9 @@ class CheckResult:
     violations: list[str] = field(default_factory=list)
     note: str = ""
     unverifiable: int = 0
+    #: 历史遗留（修复生效日之前产生、当前规则下不合规但已无法回溯修正）
+    legacy: list[str] = field(default_factory=list)
+    legacy_count: int = 0
 
     @property
     def ok(self) -> bool:
@@ -60,6 +67,8 @@ class CheckResult:
             "violations": self.violations,
             "violation_count": len(self.violations),
             "unverifiable": self.unverifiable,
+            "legacy": self.legacy,
+            "legacy_count": self.legacy_count,
             "note": self.note,
             "ok": self.ok,
         }
@@ -78,14 +87,20 @@ def evaluate_trade_days(
     防御分支也能被单元测试覆盖。
     """
     violations: list[str] = []
+    legacy: list[str] = []
     for trade_id, symbol, executed_at in rows:
         if executed_at is None:
             violations.append(f"成交 #{trade_id}（{symbol}）缺少成交时间 → 无法验证")
             continue
         trade_day = executed_at.date() if isinstance(executed_at, datetime) else executed_at
-        if trade_day not in days:
-            violations.append(f"成交 #{trade_id}（{symbol}）日期 {trade_day} 不是交易日")
-    return violations
+        if trade_day in days:
+            continue
+        message = f"成交 #{trade_id}（{symbol}）日期 {trade_day} 不是交易日"
+        if trade_day < LEGACY_TRADE_CUTOFF:
+            legacy.append(f"{message}（{LEGACY_TRADE_CUTOFF} 之前的守卫修复前数据）")
+        else:
+            violations.append(message)
+    return violations, legacy
 
 
 def check_paper_trades_on_trading_days(db: Session) -> CheckResult:
@@ -94,13 +109,57 @@ def check_paper_trades_on_trading_days(db: Session) -> CheckResult:
     rows = db.execute(
         select(PaperTrade.id, PaperTrade.symbol, PaperTrade.executed_at)
     ).all()
-    violations = evaluate_trade_days([tuple(row) for row in rows], days)
+    violations, legacy = evaluate_trade_days([tuple(row) for row in rows], days)
     return CheckResult(
         name="trades_on_trading_days",
         label="成交日期必须在交易日历内",
         checked=len(rows),
         violations=violations[:SAMPLE_LIMIT],
-        note=f"日历共 {len(days)} 个交易日；违规样例最多列 {SAMPLE_LIMIT} 条",
+        legacy=legacy[:SAMPLE_LIMIT],
+        legacy_count=len(legacy),
+        note=(
+            f"日历共 {len(days)} 个交易日；{LEGACY_TRADE_CUTOFF} 之前的非交易日成交"
+            "单列为历史遗留（守卫修复前产生），不计入违规"
+        ),
+    )
+
+
+def check_position_acquisition_days(db: Session) -> CheckResult:
+    """持仓的**建仓归属交易日**必须是交易日（非交易日建仓会污染 T+1 判定）。
+
+    与成交时间戳的区别：`executed_at` 是墙钟时间（非交易日的离线模拟下单是允许的），
+    而 `acquisition_date` 是"这笔仓位算哪一天的"，它有严格的交易日语义。
+    """
+    from app.database.models import PaperPosition
+
+    days = _trading_days(db)
+    rows = db.execute(
+        select(PaperPosition.id, PaperPosition.symbol, PaperPosition.acquisition_date)
+    ).all()
+    violations: list[str] = []
+    legacy: list[str] = []
+    for position_id, symbol, acquisition_date in rows:
+        if acquisition_date is None:
+            violations.append(f"持仓 #{position_id}（{symbol}）缺少建仓日期 → 无法验证")
+            continue
+        if acquisition_date in days:
+            continue
+        message = f"持仓 #{position_id}（{symbol}）建仓日 {acquisition_date} 不是交易日"
+        if acquisition_date < LEGACY_TRADE_CUTOFF:
+            legacy.append(f"{message}（{LEGACY_TRADE_CUTOFF} 之前的历史数据）")
+        else:
+            violations.append(message)
+    return CheckResult(
+        name="position_acquisition_days",
+        label="持仓建仓日必须在交易日历内",
+        checked=len(rows),
+        violations=violations[:SAMPLE_LIMIT],
+        legacy=legacy[:SAMPLE_LIMIT],
+        legacy_count=len(legacy),
+        note=(
+            "executed_at 是墙钟时间（离线模拟下单允许非交易日）；"
+            "acquisition_date 是归属交易日，必须落在日历内"
+        ),
     )
 
 
@@ -240,6 +299,7 @@ def run_audit(db: Session, *, today: date | None = None, evidence_path: Path | N
     """跑完全部检查，返回可追溯的审计结果（只读）。"""
     checks = [
         check_paper_trades_on_trading_days(db),
+        check_position_acquisition_days(db),
         check_bars_on_trading_days(db),
         check_forward_observations(db, today=today),
         check_research_run_time_validity(db),
@@ -253,6 +313,7 @@ def run_audit(db: Session, *, today: date | None = None, evidence_path: Path | N
         "clean": total_violations == 0,
         "violation_count": total_violations,
         "unverifiable_total": sum(check.unverifiable for check in checks),
+        "legacy_total": sum(check.legacy_count for check in checks),
         "note": (
             "审计只读、不修改任何数据；违规项逐条给出原因。"
             "字段缺失记为「无法验证」，不视为通过。"
